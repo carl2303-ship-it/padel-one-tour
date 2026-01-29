@@ -1,0 +1,691 @@
+import { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/authContext';
+import {
+  X,
+  Download,
+  Search,
+  Users,
+  Mail,
+  Phone,
+  Trophy,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  MessageCircle,
+  Tag,
+  Calendar,
+} from 'lucide-react';
+
+const PLAYER_CATEGORIES = [
+  { value: 'M6', label: 'M6', gender: 'M' },
+  { value: 'M5', label: 'M5', gender: 'M' },
+  { value: 'M4', label: 'M4', gender: 'M' },
+  { value: 'M3', label: 'M3', gender: 'M' },
+  { value: 'M2', label: 'M2', gender: 'M' },
+  { value: 'M1', label: 'M1', gender: 'M' },
+  { value: 'F6', label: 'F6', gender: 'F' },
+  { value: 'F5', label: 'F5', gender: 'F' },
+  { value: 'F4', label: 'F4', gender: 'F' },
+  { value: 'F3', label: 'F3', gender: 'F' },
+  { value: 'F2', label: 'F2', gender: 'F' },
+  { value: 'F1', label: 'F1', gender: 'F' },
+] as const;
+
+type PlayerCategory = typeof PLAYER_CATEGORIES[number]['value'] | null;
+
+interface PlayerRecord {
+  id: string;
+  normalizedName: string;
+  displayName: string;
+  email: string | null;
+  phone_number: string | null;
+  player_category: PlayerCategory;
+  tournaments: { id: string; name: string; date: string }[];
+  organizerPlayerId: string | null;
+}
+
+interface OrganizerPlayer {
+  id: string;
+  name: string;
+  email: string | null;
+  phone_number: string | null;
+  player_category: PlayerCategory;
+}
+
+interface OrganizerPlayersModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+function normalizeName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlayersModalProps) {
+  const { user } = useAuth();
+  const [players, setPlayers] = useState<PlayerRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTournament, setSelectedTournament] = useState<string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [tournaments, setTournaments] = useState<{ id: string; name: string; date: string }[]>([]);
+  const [expandedPlayers, setExpandedPlayers] = useState<Set<string>>(new Set());
+  const [showFilters, setShowFilters] = useState(false);
+  const [savingCategory, setSavingCategory] = useState<string | null>(null);
+
+  const fetchAllPlayers = useCallback(async () => {
+    if (!user) return;
+
+    setLoading(true);
+
+    const { data: userTournaments } = await supabase
+      .from('tournaments')
+      .select('id, name, start_date')
+      .eq('user_id', user.id)
+      .order('start_date', { ascending: false });
+
+    if (!userTournaments || userTournaments.length === 0) {
+      setPlayers([]);
+      setTournaments([]);
+      setLoading(false);
+      return;
+    }
+
+    setTournaments(userTournaments.map(t => ({ id: t.id, name: t.name, date: t.start_date })));
+    const tournamentIds = userTournaments.map(t => t.id);
+
+    const [playersResult, teamsResult, organizerPlayersResult] = await Promise.all([
+      supabase
+        .from('players')
+        .select('id, name, email, phone_number, tournament_id')
+        .in('tournament_id', tournamentIds)
+        .order('name'),
+      supabase
+        .from('teams')
+        .select(`
+          id,
+          tournament_id,
+          player1:players!teams_player1_id_fkey(id, name, email, phone_number),
+          player2:players!teams_player2_id_fkey(id, name, email, phone_number)
+        `)
+        .in('tournament_id', tournamentIds),
+      supabase
+        .from('organizer_players')
+        .select('id, name, email, phone_number, player_category')
+        .eq('organizer_id', user.id),
+    ]);
+
+    const playersData = playersResult.data;
+    const teamsData = teamsResult.data;
+    const organizerPlayersData = organizerPlayersResult.data || [];
+
+    const organizerPlayersMap = new Map<string, OrganizerPlayer>();
+    organizerPlayersData.forEach(op => {
+      organizerPlayersMap.set(normalizeName(op.name), op as OrganizerPlayer);
+    });
+
+    const playerMap = new Map<string, PlayerRecord>();
+
+    const addPlayerToMap = (
+      name: string,
+      email: string | null,
+      phone: string | null,
+      tournamentId: string
+    ) => {
+      const tournament = userTournaments.find(t => t.id === tournamentId);
+      if (!tournament || !name) return;
+
+      const normalizedName = normalizeName(name);
+      const organizerPlayer = organizerPlayersMap.get(normalizedName);
+
+      const existing = playerMap.get(normalizedName);
+      if (existing) {
+        if (!existing.tournaments.find(t => t.id === tournamentId)) {
+          existing.tournaments.push({ id: tournament.id, name: tournament.name, date: tournament.start_date });
+          // Ordenar por data (mais recente primeiro)
+          existing.tournaments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        }
+        if (!existing.email && email) existing.email = email;
+        if (!existing.phone_number && phone) existing.phone_number = phone;
+      } else {
+        playerMap.set(normalizedName, {
+          id: normalizedName,
+          normalizedName,
+          displayName: name.trim(),
+          email: organizerPlayer?.email || email,
+          phone_number: organizerPlayer?.phone_number || phone,
+          player_category: organizerPlayer?.player_category || null,
+          tournaments: [{ id: tournament.id, name: tournament.name, date: tournament.start_date }],
+          organizerPlayerId: organizerPlayer?.id || null,
+        });
+      }
+    };
+
+    playersData?.forEach(p => {
+      addPlayerToMap(p.name, p.email, p.phone_number, p.tournament_id);
+    });
+
+    teamsData?.forEach((team: any) => {
+      if (team.player1) {
+        addPlayerToMap(
+          team.player1.name,
+          team.player1.email,
+          team.player1.phone_number,
+          team.tournament_id
+        );
+      }
+      if (team.player2) {
+        addPlayerToMap(
+          team.player2.name,
+          team.player2.email,
+          team.player2.phone_number,
+          team.tournament_id
+        );
+      }
+    });
+
+    const uniquePlayers = Array.from(playerMap.values());
+    uniquePlayers.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    setPlayers(uniquePlayers);
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => {
+    if (isOpen && user) {
+      fetchAllPlayers();
+    }
+  }, [isOpen, user, fetchAllPlayers]);
+
+  const updatePlayerCategory = async (player: PlayerRecord, category: PlayerCategory) => {
+    if (!user) return;
+
+    setSavingCategory(player.id);
+
+    try {
+      if (player.organizerPlayerId) {
+        await supabase
+          .from('organizer_players')
+          .update({
+            player_category: category,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', player.organizerPlayerId);
+      } else {
+        const { data } = await supabase
+          .from('organizer_players')
+          .insert({
+            organizer_id: user.id,
+            name: player.displayName,
+            email: player.email,
+            phone_number: player.phone_number,
+            player_category: category,
+          })
+          .select()
+          .single();
+
+        if (data) {
+          setPlayers(prev =>
+            prev.map(p =>
+              p.id === player.id
+                ? { ...p, organizerPlayerId: data.id, player_category: category }
+                : p
+            )
+          );
+          setSavingCategory(null);
+          return;
+        }
+      }
+
+      setPlayers(prev =>
+        prev.map(p =>
+          p.id === player.id ? { ...p, player_category: category } : p
+        )
+      );
+    } catch (error) {
+      console.error('Error updating category:', error);
+    }
+
+    setSavingCategory(null);
+  };
+
+  const filteredPlayers = players.filter(player => {
+    const matchesSearch =
+      searchQuery === '' ||
+      player.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      player.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      player.phone_number?.includes(searchQuery);
+
+    const matchesTournament =
+      selectedTournament === 'all' ||
+      player.tournaments.some(t => t.id === selectedTournament);
+
+    const matchesCategory =
+      selectedCategory === 'all' ||
+      (selectedCategory === 'none' && !player.player_category) ||
+      player.player_category === selectedCategory;
+
+    return matchesSearch && matchesTournament && matchesCategory;
+  });
+
+  const exportToCSV = () => {
+    const headers = ['Nome', 'Email', 'Telefone', 'Categoria', 'Torneios'];
+    const rows = filteredPlayers.map(player => [
+      player.displayName,
+      player.email || '',
+      player.phone_number || '',
+      player.player_category || '',
+      player.tournaments.map(t => t.name).join('; '),
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `jogadores_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const copyEmails = () => {
+    const emails = filteredPlayers
+      .filter(p => p.email)
+      .map(p => p.email)
+      .join(', ');
+    navigator.clipboard.writeText(emails);
+    alert(`${filteredPlayers.filter(p => p.email).length} emails copiados!`);
+  };
+
+  const copyPhones = () => {
+    const phones = filteredPlayers
+      .filter(p => p.phone_number)
+      .map(p => p.phone_number)
+      .join(', ');
+    navigator.clipboard.writeText(phones);
+    alert(`${filteredPlayers.filter(p => p.phone_number).length} telefones copiados!`);
+  };
+
+  const openWhatsApp = (phone: string) => {
+    const cleanPhone = phone.replace(/[^0-9+]/g, '');
+    window.open(`https://wa.me/${cleanPhone}`, '_blank');
+  };
+
+  const getCategoryBadgeColor = (category: PlayerCategory) => {
+    if (!category) return 'bg-gray-100 text-gray-500';
+    const level = parseInt(category.charAt(1));
+    if (level >= 5) return 'bg-green-100 text-green-700';
+    if (level >= 3) return 'bg-blue-100 text-blue-700';
+    return 'bg-amber-100 text-amber-700';
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                <Users className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Todos os Jogadores</h2>
+                <p className="text-sm text-gray-500">
+                  {filteredPlayers.length} jogadores unicos
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Pesquisar por nome, email ou telefone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors sm:hidden"
+            >
+              <Filter className="w-5 h-5" />
+              Filtros
+              <ChevronDown className={`w-4 h-4 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+            </button>
+
+            <div className="hidden sm:flex gap-2">
+              <div className="relative">
+                <Trophy className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <select
+                  value={selectedTournament}
+                  onChange={(e) => setSelectedTournament(e.target.value)}
+                  className="pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[180px]"
+                >
+                  <option value="all">Todos os torneios</option>
+                  {tournaments.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+
+              <div className="relative">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[150px]"
+                >
+                  <option value="all">Todas categorias</option>
+                  <option value="none">Sem categoria</option>
+                  <optgroup label="Masculino">
+                    {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Feminino">
+                    {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {showFilters && (
+            <div className="mt-3 flex flex-col gap-2 sm:hidden">
+              <div className="relative">
+                <Trophy className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <select
+                  value={selectedTournament}
+                  onChange={(e) => setSelectedTournament(e.target.value)}
+                  className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                >
+                  <option value="all">Todos os torneios</option>
+                  {tournaments.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+              <div className="relative">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                >
+                  <option value="all">Todas categorias</option>
+                  <option value="none">Sem categoria</option>
+                  <optgroup label="Masculino">
+                    {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Feminino">
+                    {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 mt-4">
+            <button
+              onClick={exportToCSV}
+              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4" />
+              Exportar CSV
+            </button>
+            <button
+              onClick={copyEmails}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+            >
+              <Mail className="w-4 h-4" />
+              Copiar Emails ({filteredPlayers.filter(p => p.email).length})
+            </button>
+            <button
+              onClick={copyPhones}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+            >
+              <Phone className="w-4 h-4" />
+              Copiar Telefones ({filteredPlayers.filter(p => p.phone_number).length})
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+          ) : filteredPlayers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+              <Users className="w-16 h-16 text-gray-300 mb-4" />
+              <p className="text-lg font-medium">Nenhum jogador encontrado</p>
+              <p className="text-sm">Tente ajustar os filtros de pesquisa</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Nome
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Email
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Telefone
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Categoria
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Torneios
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Acoes
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredPlayers.map((player) => (
+                    <tr key={player.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <span className="text-blue-600 font-semibold text-sm">
+                              {player.displayName.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="font-medium text-gray-900">{player.displayName}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {player.email ? (
+                          <a
+                            href={`mailto:${player.email}`}
+                            className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
+                          >
+                            <Mail className="w-4 h-4" />
+                            <span className="text-sm">{player.email}</span>
+                          </a>
+                        ) : (
+                          <span className="text-gray-400 text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {player.phone_number ? (
+                          <span className="flex items-center gap-2 text-gray-700">
+                            <Phone className="w-4 h-4 text-gray-400" />
+                            <span className="text-sm">{player.phone_number}</span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="relative">
+                          <select
+                            value={player.player_category || ''}
+                            onChange={(e) => updatePlayerCategory(player, e.target.value as PlayerCategory || null)}
+                            disabled={savingCategory === player.id}
+                            className={`px-3 py-1.5 text-sm font-medium rounded-lg border-0 cursor-pointer focus:ring-2 focus:ring-blue-500 appearance-none pr-7 ${getCategoryBadgeColor(player.player_category)} ${savingCategory === player.id ? 'opacity-50' : ''}`}
+                          >
+                            <option value="">Sem cat.</option>
+                            <optgroup label="Masculino">
+                              {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
+                                <option key={c.value} value={c.value}>{c.label}</option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Feminino">
+                              {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
+                                <option key={c.value} value={c.value}>{c.label}</option>
+                              ))}
+                            </optgroup>
+                          </select>
+                          <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="relative">
+                          <button
+                            onClick={() => {
+                              const newExpanded = new Set(expandedPlayers);
+                              if (newExpanded.has(player.id)) {
+                                newExpanded.delete(player.id);
+                              } else {
+                                newExpanded.add(player.id);
+                              }
+                              setExpandedPlayers(newExpanded);
+                            }}
+                            className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                          >
+                            <Trophy className="w-4 h-4" />
+                            <span>{player.tournaments.length} torneio{player.tournaments.length !== 1 ? 's' : ''}</span>
+                            {expandedPlayers.has(player.id) ? (
+                              <ChevronUp className="w-4 h-4" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4" />
+                            )}
+                          </button>
+                          
+                          {expandedPlayers.has(player.id) && (
+                            <div className="absolute z-20 left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                              <div className="p-2 bg-gray-50 border-b border-gray-200 sticky top-0">
+                                <p className="text-xs font-semibold text-gray-600">
+                                  Torneios de {player.displayName} ({player.tournaments.length})
+                                </p>
+                              </div>
+                              <div className="divide-y divide-gray-100">
+                                {player.tournaments.map((t, idx) => {
+                                  const date = new Date(t.date);
+                                  const formattedDate = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+                                  return (
+                                    <div key={t.id} className="px-3 py-2 hover:bg-gray-50 flex items-center gap-3">
+                                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-xs font-bold text-blue-600">{idx + 1}</span>
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate" title={t.name}>
+                                          {t.name}
+                                        </p>
+                                        <p className="text-xs text-gray-500 flex items-center gap-1">
+                                          <Calendar className="w-3 h-3" />
+                                          {formattedDate}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          {player.phone_number && (
+                            <button
+                              onClick={() => openWhatsApp(player.phone_number!)}
+                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                              title="Abrir WhatsApp"
+                            >
+                              <MessageCircle className="w-5 h-5" />
+                            </button>
+                          )}
+                          {player.email && (
+                            <a
+                              href={`mailto:${player.email}`}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Enviar email"
+                            >
+                              <Mail className="w-5 h-5" />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-100 bg-gray-50">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
+            <div className="flex items-center gap-4">
+              <span>
+                <strong>{filteredPlayers.length}</strong> jogadores
+              </span>
+              <span>
+                <strong>{filteredPlayers.filter(p => p.email).length}</strong> com email
+              </span>
+              <span>
+                <strong>{filteredPlayers.filter(p => p.phone_number).length}</strong> com telefone
+              </span>
+              <span>
+                <strong>{filteredPlayers.filter(p => p.player_category).length}</strong> com categoria
+              </span>
+            </div>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

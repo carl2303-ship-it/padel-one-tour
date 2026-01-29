@@ -1,0 +1,710 @@
+import { supabase } from './supabase';
+
+// Função para calcular posições finais dos playoffs cruzados
+async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<boolean> {
+  console.log('[CROSSED_POSITIONS] Calculating positions for crossed playoffs');
+
+  // Buscar todos os jogos de playoffs cruzados completados
+  const { data: crossedMatches } = await supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .like('round', 'crossed_%');
+
+  if (!crossedMatches || crossedMatches.length === 0) {
+    console.log('[CROSSED_POSITIONS] No crossed playoff matches found');
+    return false;
+  }
+
+  const finalMatch = crossedMatches.find(m => m.round === 'crossed_r3_final');
+  const thirdPlaceMatch = crossedMatches.find(m => m.round === 'crossed_r3_3rd_place');
+  const fifthPlaceMatch = crossedMatches.find(m => m.round === 'crossed_r2_5th_place');
+
+  const getMatchWinnerLoser = (match: any) => {
+    if (!match) return { winners: [], losers: [] };
+    const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+    const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+    const t1Won = t1Games > t2Games;
+    
+    const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+    const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+    
+    return {
+      winners: t1Won ? team1Players : team2Players,
+      losers: t1Won ? team2Players : team1Players
+    };
+  };
+
+  // Buscar jogos dos grupos para desempate
+  const { data: groupMatches } = await supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .like('round', 'group_%');
+
+  const getPlayerGroupStats = (playerId: string) => {
+    let wins = 0, gamesWon = 0, gamesLost = 0;
+    (groupMatches || []).forEach(match => {
+      const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+      const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+      const t1Won = t1Games > t2Games;
+      
+      const isTeam1 = match.player1_individual_id === playerId || match.player2_individual_id === playerId;
+      const isTeam2 = match.player3_individual_id === playerId || match.player4_individual_id === playerId;
+      
+      if (isTeam1) {
+        gamesWon += t1Games;
+        gamesLost += t2Games;
+        if (t1Won) wins++;
+      } else if (isTeam2) {
+        gamesWon += t2Games;
+        gamesLost += t1Games;
+        if (!t1Won) wins++;
+      }
+    });
+    return { wins, gamesWon, gamesLost };
+  };
+
+  const sortByGroupCriteria = (playerIds: string[]) => {
+    return playerIds
+      .map(id => ({ id, ...getPlayerGroupStats(id) }))
+      .sort((a, b) => {
+        if (a.wins !== b.wins) return b.wins - a.wins;
+        const diffA = a.gamesWon - a.gamesLost;
+        const diffB = b.gamesWon - b.gamesLost;
+        if (diffA !== diffB) return diffB - diffA;
+        return b.gamesWon - a.gamesWon;
+      })
+      .map(p => p.id);
+  };
+
+  let currentPosition = 1;
+
+  // Vencedores da Final: 1º e 2º
+  if (finalMatch) {
+    const result = getMatchWinnerLoser(finalMatch);
+    const sortedWinners = sortByGroupCriteria(result.winners);
+    for (const playerId of sortedWinners) {
+      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+      await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+      currentPosition++;
+    }
+    
+    // Perdedores da Final: 3º e 4º (se não houver jogo de 3º/4º)
+    if (!thirdPlaceMatch) {
+      const sortedLosers = sortByGroupCriteria(result.losers);
+      for (const playerId of sortedLosers) {
+        console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+        await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+        currentPosition++;
+      }
+    }
+  }
+
+  // Jogo de 3º/4º
+  if (thirdPlaceMatch) {
+    const result = getMatchWinnerLoser(thirdPlaceMatch);
+    const sortedWinners = sortByGroupCriteria(result.winners);
+    for (const playerId of sortedWinners) {
+      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+      await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+      currentPosition++;
+    }
+    const sortedLosers = sortByGroupCriteria(result.losers);
+    for (const playerId of sortedLosers) {
+      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+      await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+      currentPosition++;
+    }
+  }
+
+  // Jogo de 5º/6º
+  if (fifthPlaceMatch) {
+    const result = getMatchWinnerLoser(fifthPlaceMatch);
+    const sortedWinners = sortByGroupCriteria(result.winners);
+    for (const playerId of sortedWinners) {
+      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+      await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+      currentPosition++;
+    }
+    const sortedLosers = sortByGroupCriteria(result.losers);
+    for (const playerId of sortedLosers) {
+      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
+      await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+      currentPosition++;
+    }
+  }
+
+  // Jogadores que não chegaram aos jogos finais ficam sem posição
+  // (perdedores de R1 que não avançaram para 5º/6º)
+  const r1Matches = crossedMatches.filter(m => m.round?.startsWith('crossed_r1_'));
+  for (const match of r1Matches) {
+    const result = getMatchWinnerLoser(match);
+    // Verificar se os perdedores de R1 já têm posição
+    for (const playerId of result.losers) {
+      const { data: player } = await supabase
+        .from('players')
+        .select('final_position')
+        .eq('id', playerId)
+        .single();
+      
+      if (!player?.final_position) {
+        // Atribuir posições 7-12 para perdedores de R1 que não foram ao 5º/6º
+        console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for R1 loser ${playerId}`);
+        await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
+        currentPosition++;
+      }
+    }
+  }
+
+  console.log('[CROSSED_POSITIONS] Completed successfully');
+  return true;
+}
+
+export async function clearIndividualFinalPositions(tournamentId: string, categoryId?: string | null) {
+  console.log('[CLEAR_POSITIONS] Clearing final positions for tournament:', tournamentId, 'category:', categoryId);
+
+  let query = supabase
+    .from('players')
+    .update({ final_position: null })
+    .eq('tournament_id', tournamentId);
+
+  if (categoryId) {
+    query = query.eq('category_id', categoryId);
+  }
+
+  const { error } = await query;
+
+  if (error) {
+    console.error('[CLEAR_POSITIONS] Error clearing positions:', error);
+    return false;
+  }
+
+  console.log('[CLEAR_POSITIONS] Positions cleared successfully');
+  return true;
+}
+
+export async function calculateIndividualFinalPositions(tournamentId: string, categoryId?: string | null) {
+  console.log('[CALCULATE_POSITIONS] Starting for tournament:', tournamentId, 'category:', categoryId);
+
+  const matchFilter: any = {
+    tournament_id: tournamentId,
+    status: 'completed',
+  };
+  if (categoryId) {
+    matchFilter.category_id = categoryId;
+  }
+
+  // Verificar primeiro se há playoffs cruzados
+  const { data: crossedFinalMatch } = await supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .eq('round', 'crossed_r3_final')
+    .maybeSingle();
+
+  // Se houver playoffs cruzados, usar essa lógica
+  if (crossedFinalMatch) {
+    console.log('[CALCULATE_POSITIONS] Found crossed playoffs final, using crossed playoffs logic');
+    return await calculateCrossedPlayoffPositions(tournamentId);
+  }
+
+  // Try to find final match with different round names
+  let finalMatch = null;
+  
+  // Try 'final' first
+  const { data: normalFinal } = await supabase
+    .from('matches')
+    .select('*')
+    .match(matchFilter)
+    .eq('round', 'final')
+    .maybeSingle();
+  
+  if (normalFinal) {
+    finalMatch = normalFinal;
+  } else {
+    // Try 'mixed_final'
+    const { data: mixedFinal } = await supabase
+      .from('matches')
+      .select('*')
+      .match(matchFilter)
+      .eq('round', 'mixed_final')
+      .maybeSingle();
+    
+    if (mixedFinal) {
+      finalMatch = mixedFinal;
+    }
+  }
+
+  if (!finalMatch) {
+    console.log('[CALCULATE_POSITIONS] No completed final match found');
+    return false;
+  }
+  
+  console.log('[CALCULATE_POSITIONS] Found final match with round:', finalMatch.round);
+
+  const getMatchWinner = (match: any): string[] => {
+    const team1Score = (match?.team1_score_set1 || 0) + (match?.team1_score_set2 || 0) + (match?.team1_score_set3 || 0);
+    const team2Score = (match?.team2_score_set1 || 0) + (match?.team2_score_set2 || 0) + (match?.team2_score_set3 || 0);
+
+    if (team1Score === 0 && team2Score === 0) return [];
+
+    if (team1Score > team2Score) {
+      return [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+    } else {
+      return [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+    }
+  };
+
+  const getMatchLoser = (match: any): string[] => {
+    const team1Score = (match?.team1_score_set1 || 0) + (match?.team1_score_set2 || 0) + (match?.team1_score_set3 || 0);
+    const team2Score = (match?.team2_score_set1 || 0) + (match?.team2_score_set2 || 0) + (match?.team2_score_set3 || 0);
+
+    if (team1Score === 0 && team2Score === 0) return [];
+
+    if (team1Score < team2Score) {
+      return [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+    } else {
+      return [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+    }
+  };
+
+  const finalWinners = getMatchWinner(finalMatch);
+  const finalLosers = getMatchLoser(finalMatch);
+
+  console.log('[CALCULATE_POSITIONS] Final winners:', finalWinners);
+  console.log('[CALCULATE_POSITIONS] Final losers:', finalLosers);
+
+  for (const playerId of finalWinners) {
+    await supabase
+      .from('players')
+      .update({ final_position: 1 })
+      .eq('id', playerId);
+  }
+
+  for (const playerId of finalLosers) {
+    await supabase
+      .from('players')
+      .update({ final_position: 2 })
+      .eq('id', playerId);
+  }
+
+  // Try to find 3rd place match with different round names
+  let thirdPlaceMatch = null;
+  
+  const { data: normal3rd } = await supabase
+    .from('matches')
+    .select('*')
+    .match(matchFilter)
+    .eq('round', '3rd_place')
+    .maybeSingle();
+  
+  if (normal3rd) {
+    thirdPlaceMatch = normal3rd;
+  } else {
+    const { data: mixed3rd } = await supabase
+      .from('matches')
+      .select('*')
+      .match(matchFilter)
+      .eq('round', 'mixed_3rd_place')
+      .maybeSingle();
+    
+    if (mixed3rd) {
+      thirdPlaceMatch = mixed3rd;
+    }
+  }
+
+  if (thirdPlaceMatch) {
+    console.log('[CALCULATE_POSITIONS] Found 3rd place match with round:', thirdPlaceMatch.round);
+    const thirdPlaceWinners = getMatchWinner(thirdPlaceMatch);
+    const fourthPlaceLosers = getMatchLoser(thirdPlaceMatch);
+
+    console.log('[CALCULATE_POSITIONS] 3rd place winners:', thirdPlaceWinners);
+    console.log('[CALCULATE_POSITIONS] 4th place losers:', fourthPlaceLosers);
+
+    for (const playerId of thirdPlaceWinners) {
+      await supabase
+        .from('players')
+        .update({ final_position: 3 })
+        .eq('id', playerId);
+    }
+
+    for (const playerId of fourthPlaceLosers) {
+      await supabase
+        .from('players')
+        .update({ final_position: 4 })
+        .eq('id', playerId);
+    }
+  }
+
+  const { data: fifthPlaceMatch } = await supabase
+    .from('matches')
+    .select('*')
+    .match(matchFilter)
+    .eq('round', '5th_place')
+    .maybeSingle();
+
+  if (fifthPlaceMatch) {
+    const fifthPlaceWinners = getMatchWinner(fifthPlaceMatch);
+    const sixthPlaceLosers = getMatchLoser(fifthPlaceMatch);
+
+    console.log('[CALCULATE_POSITIONS] 5th place winners:', fifthPlaceWinners);
+    console.log('[CALCULATE_POSITIONS] 6th place losers:', sixthPlaceLosers);
+
+    for (const playerId of fifthPlaceWinners) {
+      await supabase
+        .from('players')
+        .update({ final_position: 5 })
+        .eq('id', playerId);
+    }
+
+    for (const playerId of sixthPlaceLosers) {
+      await supabase
+        .from('players')
+        .update({ final_position: 6 })
+        .eq('id', playerId);
+    }
+  }
+
+  const { data: seventhPlaceMatch } = await supabase
+    .from('matches')
+    .select('*')
+    .match(matchFilter)
+    .eq('round', '7th_place')
+    .maybeSingle();
+
+  if (seventhPlaceMatch) {
+    const seventhPlaceWinners = getMatchWinner(seventhPlaceMatch);
+    const eighthPlaceLosers = getMatchLoser(seventhPlaceMatch);
+
+    console.log('[CALCULATE_POSITIONS] 7th place winners:', seventhPlaceWinners);
+    console.log('[CALCULATE_POSITIONS] 8th place losers:', eighthPlaceLosers);
+
+    for (const playerId of seventhPlaceWinners) {
+      await supabase
+        .from('players')
+        .update({ final_position: 7 })
+        .eq('id', playerId);
+    }
+
+    for (const playerId of eighthPlaceLosers) {
+      await supabase
+        .from('players')
+        .update({ final_position: 8 })
+        .eq('id', playerId);
+    }
+  }
+
+  console.log('[CALCULATE_POSITIONS] Completed successfully');
+  return true;
+}
+
+async function updatePlayerStanding(
+  leagueId: string,
+  playerId: string | null,
+  playerName: string | null,
+  points: number,
+  position: number
+) {
+  if (!playerName) return;
+
+  // ALWAYS look up by name first to avoid duplicates
+  const { data: existingPlayer } = await supabase
+    .from('players')
+    .select('id')
+    .ilike('name', playerName.trim())
+    .maybeSingle();
+
+  let finalPlayerId: string;
+
+  if (existingPlayer) {
+    finalPlayerId = existingPlayer.id;
+  } else if (playerId) {
+    // Use the provided ID if no player found by name
+    finalPlayerId = playerId;
+  } else {
+    // Create new player if none exists
+    const { data: newPlayer } = await supabase
+      .from('players')
+      .insert({ name: playerName.trim() })
+      .select('id')
+      .single();
+
+    if (!newPlayer) return;
+    finalPlayerId = newPlayer.id;
+  }
+
+  // Look up existing standing by player name to consolidate duplicates
+  const { data: existingStandings } = await supabase
+    .from('league_standings')
+    .select('*')
+    .eq('league_id', leagueId)
+    .eq('entity_type', 'player')
+    .ilike('entity_name', playerName.trim());
+
+  if (existingStandings && existingStandings.length > 0) {
+    // Use the first standing and consolidate
+    const primaryStanding = existingStandings[0];
+
+    // Calculate cumulative stats from all standings with this name
+    let totalPoints = points;
+    let totalTournaments = 1;
+    let bestPos = position;
+
+    existingStandings.forEach(standing => {
+      totalPoints += standing.total_points;
+      totalTournaments += standing.tournaments_played;
+      if (standing.best_position < bestPos) {
+        bestPos = standing.best_position;
+      }
+    });
+
+    // Update the primary standing
+    await supabase
+      .from('league_standings')
+      .update({
+        entity_id: finalPlayerId,
+        total_points: totalPoints,
+        tournaments_played: totalTournaments,
+        best_position: bestPos,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', primaryStanding.id);
+
+    // Delete duplicate standings
+    if (existingStandings.length > 1) {
+      const idsToDelete = existingStandings.slice(1).map(s => s.id);
+      await supabase
+        .from('league_standings')
+        .delete()
+        .in('id', idsToDelete);
+    }
+  } else {
+    // No existing standing, create new one
+    await supabase
+      .from('league_standings')
+      .insert({
+        league_id: leagueId,
+        entity_type: 'player',
+        entity_id: finalPlayerId,
+        entity_name: playerName.trim(),
+        total_points: points,
+        tournaments_played: 1,
+        best_position: position,
+      });
+  }
+}
+
+export async function updateLeagueStandings(tournamentId: string) {
+  console.log('updateLeagueStandings called for tournament:', tournamentId);
+
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('status')
+    .eq('id', tournamentId)
+    .single();
+
+  console.log('Tournament data:', tournament);
+
+  if (!tournament || tournament.status !== 'completed') {
+    console.log('Skipping - no tournament or not completed');
+    return;
+  }
+
+  const { data: tournamentLeagues } = await supabase
+    .from('tournament_leagues')
+    .select('league_id')
+    .eq('tournament_id', tournamentId);
+
+  if (!tournamentLeagues || tournamentLeagues.length === 0) {
+    console.log('Skipping - no leagues associated with this tournament');
+    return;
+  }
+
+  const uniqueLeagueIds = [...new Set(tournamentLeagues.map(tl => tl.league_id))];
+  console.log('Associated leagues:', uniqueLeagueIds);
+
+  for (const leagueId of uniqueLeagueIds) {
+    console.log('Calling recalculate_league_standings_for_league for:', leagueId);
+    const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
+      league_uuid: leagueId
+    });
+
+    if (error) {
+      console.error('Error recalculating league standings:', error);
+    } else {
+      console.log('Recalculated standings for league:', leagueId);
+    }
+  }
+
+  console.log('League standings updated for all associated leagues');
+}
+
+export async function recalculateLeagueStandingsForTournament(tournamentId: string) {
+  console.log('Recalculating standings for tournament:', tournamentId);
+
+  const { data: tournamentLeagues } = await supabase
+    .from('tournament_leagues')
+    .select('league_id')
+    .eq('tournament_id', tournamentId);
+
+  if (!tournamentLeagues || tournamentLeagues.length === 0) {
+    console.log('No leagues associated');
+    return;
+  }
+
+  const uniqueLeagueIds = [...new Set(tournamentLeagues.map(tl => tl.league_id))];
+  console.log('Recalculating for leagues:', uniqueLeagueIds);
+
+  for (const leagueId of uniqueLeagueIds) {
+    console.log('Calling recalculate_league_standings_for_league for:', leagueId);
+    const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
+      league_uuid: leagueId
+    });
+
+    if (error) {
+      console.error('Error recalculating league standings:', error);
+    } else {
+      console.log('Recalculated standings for league:', leagueId);
+    }
+  }
+
+  console.log('Recalculation complete');
+}
+
+async function updateLeagueStandingsIncremental(tournamentId: string) {
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('status')
+    .eq('id', tournamentId)
+    .single();
+
+  if (!tournament || tournament.status !== 'completed') {
+    return;
+  }
+
+  const { data: tournamentCategory } = await supabase
+    .from('tournament_categories')
+    .select('name')
+    .eq('tournament_id', tournamentId)
+    .maybeSingle();
+
+  const tournamentCategoryName = tournamentCategory?.name || null;
+
+  const { data: tournamentLeagues } = await supabase
+    .from('tournament_leagues')
+    .select('league_id, league_category')
+    .eq('tournament_id', tournamentId);
+
+  if (!tournamentLeagues || tournamentLeagues.length === 0) {
+    return;
+  }
+
+  const leagueIds = tournamentLeagues.map(tl => tl.league_id);
+
+  const { data: leagues } = await supabase
+    .from('leagues')
+    .select('id, scoring_system, categories, category_scoring_systems')
+    .in('id', leagueIds);
+
+  if (!leagues || leagues.length === 0) {
+    return;
+  }
+
+  const { data: teams } = await supabase
+    .from('teams')
+    .select(`
+      id,
+      name,
+      final_position,
+      player1_id,
+      player2_id,
+      player1:players!teams_player1_id_fkey(id, name),
+      player2:players!teams_player2_id_fkey(id, name)
+    `)
+    .eq('tournament_id', tournamentId)
+    .not('final_position', 'is', null);
+
+  const { data: individualPlayers } = await supabase
+    .from('players')
+    .select('id, name, final_position')
+    .eq('tournament_id', tournamentId)
+    .not('final_position', 'is', null);
+
+  for (const league of leagues) {
+    const tournamentLeagueEntry = tournamentLeagues.find(tl => tl.league_id === league.id);
+    const leagueCategory = tournamentLeagueEntry?.league_category || tournamentCategoryName;
+
+    let scoringSystem: Record<string, number> = league.scoring_system;
+
+    if (leagueCategory && league.category_scoring_systems && league.category_scoring_systems[leagueCategory]) {
+      scoringSystem = league.category_scoring_systems[leagueCategory];
+    }
+
+    if (teams && teams.length > 0) {
+      for (const team of teams) {
+        if (team.final_position) {
+          const points = scoringSystem[team.final_position.toString()] || 0;
+
+          if (team.player1 && team.player1.name) {
+            await addToPlayerStanding(league.id, team.player1.name, points, team.final_position);
+          }
+
+          if (team.player2 && team.player2.name) {
+            await addToPlayerStanding(league.id, team.player2.name, points, team.final_position);
+          }
+        }
+      }
+    }
+
+    if (individualPlayers && individualPlayers.length > 0) {
+      for (const player of individualPlayers) {
+        if (player.final_position && player.name) {
+          const points = scoringSystem[player.final_position.toString()] || 0;
+          await addToPlayerStanding(league.id, player.name, points, player.final_position);
+        }
+      }
+    }
+  }
+}
+
+async function addToPlayerStanding(
+  leagueId: string,
+  playerName: string,
+  points: number,
+  position: number
+) {
+  const { data: existing } = await supabase
+    .from('league_standings')
+    .select('*')
+    .eq('league_id', leagueId)
+    .eq('entity_type', 'player')
+    .ilike('entity_name', playerName.trim())
+    .maybeSingle();
+
+  if (existing) {
+    await supabase
+      .from('league_standings')
+      .update({
+        total_points: existing.total_points + points,
+        tournaments_played: existing.tournaments_played + 1,
+        best_position: Math.min(existing.best_position, position),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+  } else {
+    await supabase
+      .from('league_standings')
+      .insert({
+        league_id: leagueId,
+        entity_type: 'player',
+        entity_name: playerName.trim(),
+        total_points: points,
+        tournaments_played: 1,
+        best_position: position,
+      });
+  }
+}
