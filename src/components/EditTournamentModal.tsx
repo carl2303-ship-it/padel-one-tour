@@ -337,6 +337,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
       }
     }
 
+    setLoading(false);
     onSuccess();
     onClose();
   };
