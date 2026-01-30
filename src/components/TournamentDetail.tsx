@@ -2221,34 +2221,100 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         // Americano COM grupos + eliminatórias
         console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players');
         
-        // Determinar número de grupos
-        const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
-        const numberOfGroups = groupNames.length || Math.min(Math.floor(individualPlayers.length / 4), 4);
+        // Verificar se é formato de playoffs cruzados (3 categorias = 3 grupos)
+        const isCrossedPlayoffs = categories.length === 3;
         
-        const individualMatches = generateIndividualGroupsKnockoutSchedule(
-          individualPlayers,
-          numberOfGroups,
-          numberOfCourts,
-          startDate,
-          startTime,
-          endTime,
-          matchDuration,
-          2, // qualified per group
-          numberOfGroups >= 4 ? 'quarterfinals' : 'semifinals'
-        );
-        
-        matchesToInsert = individualMatches.map(m => ({
-          tournament_id: currentTournament.id,
-          round: m.round,
-          match_number: m.match_number,
-          player1_individual_id: toUuidOrNull(m.player1_id),
-          player2_individual_id: toUuidOrNull(m.player2_id),
-          player3_individual_id: toUuidOrNull(m.player3_id),
-          player4_individual_id: toUuidOrNull(m.player4_id),
-          scheduled_time: m.scheduled_time,
-          court: m.court,
-          status: 'scheduled'
-        }));
+        if (isCrossedPlayoffs) {
+          // PLAYOFFS CRUZADOS: Gerar APENAS jogos de grupo para cada categoria
+          // Os playoffs serão gerados separadamente com handleGenerateCrossedPlayoffsBetweenCategories
+          console.log('[SCHEDULE] Crossed Playoffs mode - generating only group matches for 3 categories');
+          
+          const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+          let matchNumber = 1;
+          let currentTime = new Date(`${startDate}T${startTime}:00`);
+          const endOfDay = new Date(`${startDate}T${endTime}:00`);
+          
+          // Para cada categoria, gerar jogos americanos (3 jogos para 4 jogadores)
+          for (let catIdx = 0; catIdx < sortedCategories.length; catIdx++) {
+            const category = sortedCategories[catIdx];
+            const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
+            const groupName = String.fromCharCode(65 + catIdx); // A, B, C
+            
+            console.log(`[SCHEDULE] Category ${category.name} (Group ${groupName}): ${categoryPlayers.length} players`);
+            
+            if (categoryPlayers.length < 4) {
+              console.warn(`[SCHEDULE] Category ${category.name} has fewer than 4 players, skipping`);
+              continue;
+            }
+            
+            // Gerar combinações americanas para 4 jogadores (3 jogos)
+            // Jogo 1: P1+P2 vs P3+P4, Jogo 2: P1+P3 vs P2+P4, Jogo 3: P1+P4 vs P2+P3
+            const p = categoryPlayers.slice(0, 4);
+            const americanCombinations = [
+              { p1: p[0].id, p2: p[1].id, p3: p[2].id, p4: p[3].id },
+              { p1: p[0].id, p2: p[2].id, p3: p[1].id, p4: p[3].id },
+              { p1: p[0].id, p2: p[3].id, p3: p[1].id, p4: p[2].id }
+            ];
+            
+            for (let i = 0; i < americanCombinations.length; i++) {
+              const combo = americanCombinations[i];
+              const court = (catIdx + 1).toString(); // Cada categoria no seu campo
+              
+              matchesToInsert.push({
+                tournament_id: currentTournament.id,
+                category_id: category.id,
+                round: `group_${groupName}`,
+                match_number: matchNumber++,
+                player1_individual_id: combo.p1,
+                player2_individual_id: combo.p2,
+                player3_individual_id: combo.p3,
+                player4_individual_id: combo.p4,
+                scheduled_time: currentTime.toISOString(),
+                court: court,
+                status: 'scheduled'
+              });
+            }
+            
+            // Avançar tempo após cada ronda de jogos
+            currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+            if (currentTime >= endOfDay) {
+              currentTime.setDate(currentTime.getDate() + 1);
+              currentTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+            }
+          }
+          
+          console.log(`[SCHEDULE] Crossed Playoffs: Generated ${matchesToInsert.length} group matches (3 per category)`);
+          
+        } else {
+          // Formato normal: usar scheduler completo
+          const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
+          const numberOfGroups = groupNames.length || Math.min(Math.floor(individualPlayers.length / 4), 4);
+          
+          const individualMatches = generateIndividualGroupsKnockoutSchedule(
+            individualPlayers,
+            numberOfGroups,
+            numberOfCourts,
+            startDate,
+            startTime,
+            endTime,
+            matchDuration,
+            2, // qualified per group
+            numberOfGroups >= 4 ? 'quarterfinals' : 'semifinals'
+          );
+          
+          matchesToInsert = individualMatches.map(m => ({
+            tournament_id: currentTournament.id,
+            round: m.round,
+            match_number: m.match_number,
+            player1_individual_id: toUuidOrNull(m.player1_id),
+            player2_individual_id: toUuidOrNull(m.player2_id),
+            player3_individual_id: toUuidOrNull(m.player3_id),
+            player4_individual_id: toUuidOrNull(m.player4_id),
+            scheduled_time: m.scheduled_time,
+            court: m.court,
+            status: 'scheduled'
+          }));
+        }
         
       } else if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'teams') {
         // Equipas Round Robin - todas as equipas jogam contra todas
@@ -2804,6 +2870,30 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     <Calendar className="w-4 h-4" />
                     Gerar Calendário
                   </button>
+                  
+                  {/* Botão Playoffs Cruzados - aparece quando há 3 categorias */}
+                  {categories.length === 3 && filteredMatches.some(m => m.round?.startsWith('group_')) && !filteredMatches.some(m => m.round?.startsWith('crossed_')) && (
+                    <button
+                      onClick={handleGenerateCrossedPlayoffsBetweenCategories}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+                    >
+                      <Shuffle className="w-4 h-4" />
+                      Gerar Playoffs Cruzados
+                    </button>
+                  )}
+                  
+                  {/* Botão Avançar Jogadores - aparece quando há playoffs cruzados */}
+                  {filteredMatches.some(m => m.round?.startsWith('crossed_')) && (
+                    <button
+                      onClick={handleAdvanceCrossedPlayoffs}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                    >
+                      <Trophy className="w-4 h-4" />
+                      Avançar Jogadores
+                    </button>
+                  )}
                   
                   {filteredMatches.length > 0 && (
                     <button
