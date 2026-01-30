@@ -1388,13 +1388,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       `PLAYOFFS CRUZADOS ENTRE CATEGORIAS\n` +
       `(${catA.name} = A, ${catB.name} = B, ${catC.name} = C)\n\n` +
       `RONDA 1 - Playoffs Cruzados:\n` +
-      `  J1: (${rankA[0].name} + ${rankC[3].name}) vs (${rankA[1].name} + ${rankC[2].name})\n` +
-      `  J2: (${rankA[2].name} + ${rankB[0].name}) vs (${rankA[3].name} + ${rankB[1].name})\n` +
-      `  J3: (${rankB[2].name} + ${rankC[1].name}) vs (${rankB[3].name} + ${rankC[0].name})\n\n` +
-      `RONDA 2 - Meias-Finais:\n` +
+      `  J1: (1°A + 4°C) vs (2°A + 3°C) → (${rankA[0].name} + ${rankC[3].name}) vs (${rankA[1].name} + ${rankC[2].name})\n` +
+      `  J2: (3°A + 2°B) vs (4°A + 1°B) → (${rankA[2].name} + ${rankB[1].name}) vs (${rankA[3].name} + ${rankB[0].name})\n` +
+      `  J3: (3°B + 2°C) vs (4°B + 1°C) → (${rankB[2].name} + ${rankC[1].name}) vs (${rankB[3].name} + ${rankC[0].name})\n\n` +
+      `RONDA 2:\n` +
       `  J4: Vencedor J1 vs Vencedor J2\n` +
-      `  J5: Vencedor J3 vs Melhor Perdedor (J1/J2)\n` +
-      `  J6: Perdedor J3 vs Pior Perdedor (J1/J2) → 5º/6º\n\n` +
+      `  J5: Perdedor J1 vs Vencedor J3\n` +
+      `  J6: Perdedor J2 vs Perdedor J3 → 5º/6º\n\n` +
       `RONDA 3 - Finais:\n` +
       `  J7: Final (Vencedor J4 vs Vencedor J5)\n` +
       `  J8: 3º/4º (Perdedor J4 vs Perdedor J5)\n\n` +
@@ -1437,10 +1437,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           p1: rankA[0].id, p2: rankC[3].id,
           p3: rankA[1].id, p4: rankC[2].id
         },
-        { // J2: (A3 + B1) vs (A4 + B2)
+        { // J2: (A3 + B2) vs (A4 + B1) - corrigido: 3°M3+2°M4 vs 4°M3+1°M4
           round: 'crossed_r1_j2',
-          p1: rankA[2].id, p2: rankB[0].id,
-          p3: rankA[3].id, p4: rankB[1].id
+          p1: rankA[2].id, p2: rankB[1].id,
+          p3: rankA[3].id, p4: rankB[0].id
         },
         { // J3: (B3 + C2) vs (B4 + C1)
           round: 'crossed_r1_j3',
@@ -1776,31 +1776,36 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     setLoading(true);
 
     try {
-      // Se R1 está completo, preencher R2
+      // Se R1 está completo, preencher R2 (posições FIXAS, não baseadas em pontuação)
       if (r1j1.status === 'completed' && r1j2.status === 'completed' && r1j3.status === 'completed') {
         const res1 = getMatchResult(r1j1)!;
         const res2 = getMatchResult(r1j2)!;
         const res3 = getMatchResult(r1j3)!;
 
-        // Determinar melhor e pior perdedor de J1/J2
-        const loser1Games = res1.loser === 'team1' ? res1.t1Games : res1.t2Games;
-        const loser2Games = res2.loser === 'team1' ? res2.t1Games : res2.t2Games;
+        // Extrair vencedores e perdedores de cada jogo
+        const winner1 = res1.winner === 'team1' 
+          ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
+          : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
+        const loser1 = res1.loser === 'team1'
+          ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
+          : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
         
-        const bestLoserIsJ1 = loser1Games >= loser2Games;
-        const bestLoserMatch = bestLoserIsJ1 ? r1j1 : r1j2;
-        const worstLoserMatch = bestLoserIsJ1 ? r1j2 : r1j1;
-        const bestLoserResult = bestLoserIsJ1 ? res1 : res2;
-        const worstLoserResult = bestLoserIsJ1 ? res2 : res1;
+        const winner2 = res2.winner === 'team1'
+          ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
+          : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
+        const loser2 = res2.loser === 'team1'
+          ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
+          : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
+        
+        const winner3 = res3.winner === 'team1'
+          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
+          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
+        const loser3 = res3.loser === 'team1'
+          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
+          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
 
-        // SF1: Vencedor J1 vs Vencedor J2
+        // J4 (SF1): Vencedor J1 vs Vencedor J2
         if (!sf1.player1_individual_id) {
-          const winner1 = res1.winner === 'team1' 
-            ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
-            : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
-          const winner2 = res2.winner === 'team1'
-            ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
-            : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
-
           await supabase.from('matches').update({
             player1_individual_id: winner1.p1,
             player2_individual_id: winner1.p2,
@@ -1809,37 +1814,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }).eq('id', sf1.id);
         }
 
-        // SF2: Vencedor J3 vs Melhor Perdedor
+        // J5 (SF2): Perdedor J1 vs Vencedor J3
         if (!sf2.player1_individual_id) {
-          const winner3 = res3.winner === 'team1'
-            ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-            : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-          const bestLoser = bestLoserResult.loser === 'team1'
-            ? { p1: bestLoserMatch.player1_individual_id, p2: bestLoserMatch.player2_individual_id }
-            : { p1: bestLoserMatch.player3_individual_id, p2: bestLoserMatch.player4_individual_id };
-
           await supabase.from('matches').update({
-            player1_individual_id: winner3.p1,
-            player2_individual_id: winner3.p2,
-            player3_individual_id: bestLoser.p1,
-            player4_individual_id: bestLoser.p2,
+            player1_individual_id: loser1.p1,
+            player2_individual_id: loser1.p2,
+            player3_individual_id: winner3.p1,
+            player4_individual_id: winner3.p2,
           }).eq('id', sf2.id);
         }
 
-        // 5th place: Perdedor J3 vs Pior Perdedor
+        // J6 (5th place): Perdedor J2 vs Perdedor J3
         if (!fifth.player1_individual_id) {
-          const loser3 = res3.loser === 'team1'
-            ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-            : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-          const worstLoser = worstLoserResult.loser === 'team1'
-            ? { p1: worstLoserMatch.player1_individual_id, p2: worstLoserMatch.player2_individual_id }
-            : { p1: worstLoserMatch.player3_individual_id, p2: worstLoserMatch.player4_individual_id };
-
           await supabase.from('matches').update({
-            player1_individual_id: loser3.p1,
-            player2_individual_id: loser3.p2,
-            player3_individual_id: worstLoser.p1,
-            player4_individual_id: worstLoser.p2,
+            player1_individual_id: loser2.p1,
+            player2_individual_id: loser2.p2,
+            player3_individual_id: loser3.p1,
+            player4_individual_id: loser3.p2,
           }).eq('id', fifth.id);
         }
       }
