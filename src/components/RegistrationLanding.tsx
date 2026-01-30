@@ -1355,6 +1355,44 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     </div>
   );
 
+  // Mostrar página de torneio cancelado
+  if (tournament.status === 'cancelled') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-red-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+          {logoUrl && (
+            <div className="mb-6">
+              <img
+                src={logoUrl}
+                alt="Tournament Logo"
+                className="h-20 mx-auto object-contain"
+              />
+            </div>
+          )}
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">{tournament.name}</h1>
+          <div className="inline-flex items-center px-4 py-2 bg-red-100 text-red-800 rounded-full font-semibold mb-4">
+            <span className="w-2 h-2 bg-red-500 rounded-full mr-2"></span>
+            TORNEIO CANCELADO
+          </div>
+          <p className="text-gray-600 mb-6">
+            Este torneio foi cancelado e as inscrições estão encerradas.
+          </p>
+          <button
+            onClick={onClose}
+            className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+          >
+            {t.button.back}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       <div className="max-w-6xl mx-auto px-4 py-12">
