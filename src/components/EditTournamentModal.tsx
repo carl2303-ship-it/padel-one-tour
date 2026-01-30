@@ -9,7 +9,7 @@ import { compressImage, formatFileSize } from '../lib/imageCompressor';
 type EditTournamentModalProps = {
   tournament: Tournament;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (updated: Tournament) => void;
 };
 
 export default function EditTournamentModal({ tournament, onClose, onSuccess }: EditTournamentModalProps) {
@@ -337,8 +337,17 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
       }
     }
 
+    // Fetch the updated tournament to pass to onSuccess
+    const { data: updatedTournament } = await supabase
+      .from('tournaments')
+      .select('*')
+      .eq('id', tournament.id)
+      .single();
+
     setLoading(false);
-    onSuccess();
+    if (updatedTournament) {
+      onSuccess(updatedTournament);
+    }
     onClose();
   };
 
