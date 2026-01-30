@@ -3005,6 +3005,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             setSelectedMatchId(undefined);
             fetchTournamentData();
           }}
+          isIndividualRoundRobin={isIndividualFormat()}
+          individualPlayers={individualPlayers}
         />
       )}
 
