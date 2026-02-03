@@ -169,6 +169,7 @@ export const translations = {
       round_robin: 'Round Robin',
       groups_knockout: 'Groups + Knockout',
       individual_groups_knockout: 'Individual Groups + Knockout',
+      super_teams: 'Super Teams',
     },
     status: {
       draft: 'Draft',
@@ -670,6 +671,7 @@ export const translations = {
       round_robin: 'Todos Contra Todos',
       groups_knockout: 'Grupos + Eliminatórias',
       individual_groups_knockout: 'Grupos Individual + Eliminatórias',
+      super_teams: 'Super Teams',
     },
     status: {
       draft: 'Rascunho',
@@ -1171,6 +1173,7 @@ export const translations = {
       round_robin: 'Todos Contra Todos',
       groups_knockout: 'Grupos + Eliminatorias',
       individual_groups_knockout: 'Grupos Individual + Eliminatorias',
+      super_teams: 'Super Teams',
     },
     status: {
       draft: 'Borrador',
@@ -1656,6 +1659,7 @@ export const translations = {
       round_robin: 'Tous Contre Tous',
       groups_knockout: 'Groupes + Élimination',
       individual_groups_knockout: 'Groupes Individuels + Élimination',
+      super_teams: 'Super Teams',
     },
     status: {
       draft: 'Brouillon',
@@ -2141,6 +2145,7 @@ export const translations = {
       round_robin: 'Tutti Contro Tutti',
       groups_knockout: 'Gironi + Eliminazione',
       individual_groups_knockout: 'Gironi Individuali + Eliminazione',
+      super_teams: 'Super Teams',
     },
     status: {
       draft: 'Bozza',

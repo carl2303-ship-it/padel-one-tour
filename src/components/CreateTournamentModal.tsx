@@ -474,6 +474,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <optgroup label="Formatos por Equipas">
                 <option value="groups_knockout">Equipas - Grupos + Eliminatórias</option>
                 <option value="single_elimination">Equipas - Eliminatória Direta</option>
+                <option value="super_teams">Super Teams - 4 Jogadores por Equipa</option>
               </optgroup>
               <optgroup label="Formatos Especiais (Multi-Categoria)">
                 <option value="crossed_playoffs">Playoffs Cruzados - 3 Categorias (ex: M3/M4/M5)</option>
@@ -484,6 +485,15 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               Escolha o formato principal. Pode ter várias categorias com formatos diferentes.
             </p>
           </div>
+
+          {formData.format === 'super_teams' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-semibold text-blue-900 mb-2">Super Teams</h4>
+              <p className="text-sm text-blue-800">
+                As definições de grupos, número de equipas e fases finais são configuradas por categoria do torneio.
+              </p>
+            </div>
+          )}
 
           {formData.format === 'round_robin' && (
             <div>

@@ -721,7 +721,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               onChange={(e) =>
                 setFormData({
                   ...formData,
-                  format: e.target.value as 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout',
+                  format: e.target.value as 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams',
                 })
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -730,8 +730,18 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <option value="round_robin">{t.format.round_robin}</option>
               <option value="groups_knockout">{t.format.groups_knockout}</option>
               <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
+              <option value="super_teams">{t.format.super_teams}</option>
             </select>
           </div>
+
+          {formData.format === 'super_teams' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
+              <h3 className="text-sm font-semibold text-blue-900">Super Teams</h3>
+              <p className="text-sm text-blue-800">
+                As definições de grupos, número de equipas e fases finais são configuradas por categoria do torneio.
+              </p>
+            </div>
+          )}
 
           {formData.format === 'round_robin' && (
             <div>

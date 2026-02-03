@@ -18,7 +18,7 @@ export type Tournament = {
   start_time?: string;
   end_time?: string;
   status: 'draft' | 'active' | 'completed' | 'cancelled';
-  format: 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout';
+  format: 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams';
   round_robin_type?: 'teams' | 'individual';
   max_teams: number;
   number_of_courts?: number;
@@ -67,7 +67,7 @@ export type TournamentCategory = {
   id: string;
   tournament_id: string;
   name: string;
-  format: 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout';
+  format: 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams';
   number_of_groups: number;
   max_teams: number;
   registration_fee?: number;
