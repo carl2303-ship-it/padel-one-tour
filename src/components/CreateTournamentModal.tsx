@@ -390,11 +390,20 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 {t.tournament.dailyStartTime} *
               </label>
               <input
-                type="time"
+                type="text"
                 required
+                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
+                placeholder="HH:MM (ex: 09:00)"
+                maxLength={5}
                 value={formData.daily_start_time}
-                onChange={(e) => setFormData({ ...formData, daily_start_time: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  let value = e.target.value.replace(/[^0-9:]/g, '');
+                  if (value.length === 2 && !value.includes(':')) value += ':';
+                  if (value.length <= 5) {
+                    setFormData({ ...formData, daily_start_time: value });
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyStartTimeHelper}</p>
             </div>
@@ -404,11 +413,20 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 {t.tournament.dailyEndTime} *
               </label>
               <input
-                type="time"
+                type="text"
                 required
+                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
+                placeholder="HH:MM (ex: 21:00)"
+                maxLength={5}
                 value={formData.daily_end_time}
-                onChange={(e) => setFormData({ ...formData, daily_end_time: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  let value = e.target.value.replace(/[^0-9:]/g, '');
+                  if (value.length === 2 && !value.includes(':')) value += ':';
+                  if (value.length <= 5) {
+                    setFormData({ ...formData, daily_end_time: value });
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
             </div>
@@ -429,6 +447,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     </div>
                     <input
                       type="time"
+                      step="60"
                       value={schedule.start_time}
                       onChange={(e) => {
                         const updated = [...dailySchedules];
@@ -439,6 +458,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     />
                     <input
                       type="time"
+                      step="60"
                       value={schedule.end_time}
                       onChange={(e) => {
                         const updated = [...dailySchedules];

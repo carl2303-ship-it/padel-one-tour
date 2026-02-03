@@ -641,15 +641,24 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                 {t.tournament.dailyStartTime} *
               </label>
               <input
-                type="time"
+                type="text"
                 required
+                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
+                placeholder="HH:MM (ex: 09:00)"
+                maxLength={5}
                 value={formData.daily_start_time}
-                onChange={(e) => setFormData({
-                  ...formData,
-                  daily_start_time: e.target.value,
-                  start_time: e.target.value
-                })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  let value = e.target.value.replace(/[^0-9:]/g, '');
+                  if (value.length === 2 && !value.includes(':')) value += ':';
+                  if (value.length <= 5) {
+                    setFormData({
+                      ...formData,
+                      daily_start_time: value,
+                      start_time: value
+                    });
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyStartTimeHelper}</p>
             </div>
@@ -659,15 +668,24 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                 {t.tournament.dailyEndTime} *
               </label>
               <input
-                type="time"
+                type="text"
                 required
+                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
+                placeholder="HH:MM (ex: 21:00)"
+                maxLength={5}
                 value={formData.daily_end_time}
-                onChange={(e) => setFormData({
-                  ...formData,
-                  daily_end_time: e.target.value,
-                  end_time: e.target.value
-                })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  let value = e.target.value.replace(/[^0-9:]/g, '');
+                  if (value.length === 2 && !value.includes(':')) value += ':';
+                  if (value.length <= 5) {
+                    setFormData({
+                      ...formData,
+                      daily_end_time: value,
+                      end_time: value
+                    });
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
             </div>
@@ -885,36 +903,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               </div>
             </div>
           )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t.tournament.courts} *
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={10}
-                required
-                value={formData.number_of_courts}
-                onChange={(e) =>
-                  setFormData({ ...formData, number_of_courts: parseInt(e.target.value) })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Limite de inscricoes
-              </label>
-              <div className="px-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-600">
-                Definido nas categorias
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Use "Gerir Categorias" para alterar limites
-              </p>
-            </div>
-          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

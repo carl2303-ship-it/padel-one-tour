@@ -20,6 +20,8 @@ import { getTeamsByGroup, getPlayersByGroup } from '../lib/groups';
 import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
+import SuperTeamLineupModal from './SuperTeamLineupModal';
+import SuperTeamResultsModal from './SuperTeamResultsModal';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -34,6 +36,60 @@ type TeamWithPlayers = Team & {
 type MatchWithTeams = Match & {
   team1: TeamWithPlayers | null;
   team2: TeamWithPlayers | null;
+};
+
+// Super Teams types for format === 'super_teams'
+type SuperTeamPlayerRow = {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone_number?: string | null;
+  is_captain: boolean;
+  player_order: number;
+};
+
+type SuperTeamRow = {
+  id: string;
+  tournament_id: string;
+  category_id: string | null;
+  name: string;
+  group_name: string | null;
+  super_team_players?: SuperTeamPlayerRow[];
+};
+
+type SuperTeamConfrontationRow = {
+  id: string;
+  tournament_id: string;
+  category_id: string | null;
+  super_team_1_id: string | null;
+  super_team_2_id: string | null;
+  round: string | null;
+  group_name: string | null;
+  scheduled_time: string | null;
+  court_name: string | null;
+  status: string;
+  team1_matches_won: number;
+  team2_matches_won: number;
+  has_super_tiebreak: boolean;
+  winner_super_team_id: string | null;
+  next_confrontation_id?: string | null;
+  next_team_slot?: number | null;
+};
+
+type SuperTeamStandingRow = {
+  id: string;
+  tournament_id: string;
+  category_id: string | null;
+  super_team_id: string;
+  group_name: string | null;
+  confrontations_played: number;
+  confrontations_won: number;
+  confrontations_lost: number;
+  games_won: number;
+  games_lost: number;
+  games_diff: number;
+  points: number;
+  position: number | null;
 };
 
 export default function TournamentDetail({ tournament, onBack }: TournamentDetailProps) {
@@ -62,6 +118,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [refreshKey, setRefreshKey] = useState(0);
   const [showManualGroupAssignment, setShowManualGroupAssignment] = useState(false);
   const [showGroupDropdown, setShowGroupDropdown] = useState(false);
+  // Super Teams (format === 'super_teams')
+  const [superTeams, setSuperTeams] = useState<SuperTeamRow[]>([]);
+  const [superTeamConfrontations, setSuperTeamConfrontations] = useState<SuperTeamConfrontationRow[]>([]);
+  const [superTeamStandings, setSuperTeamStandings] = useState<SuperTeamStandingRow[]>([]);
+  const [showLineupModal, setShowLineupModal] = useState(false);
+  const [showResultsModal, setShowResultsModal] = useState(false);
+  const [selectedConfrontation, setSelectedConfrontation] = useState<SuperTeamConfrontationRow | null>(null);
+  const [selectedLineupTeam, setSelectedLineupTeam] = useState<SuperTeamRow | null>(null);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -159,6 +223,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const isIndividualRoundRobin = currentTournament?.format === 'round_robin' && currentTournament?.round_robin_type === 'individual';
   const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout';
+  const isSuperTeams = currentTournament?.format === 'super_teams';
 
   // Early return if tournament is not loaded
   if (!currentTournament) {
@@ -336,11 +401,211 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const groupedTeams = getTeamsByGroup(filteredTeams);
   const groupedPlayers = getPlayersByGroup(filteredIndividualPlayers);
 
+  const filteredSuperTeams = selectedCategory === 'no-category'
+    ? superTeams.filter(st => !st.category_id)
+    : selectedCategory
+    ? superTeams.filter(st => st.category_id === selectedCategory)
+    : superTeams;
+  const filteredSuperTeamConfrontations = selectedCategory === 'no-category'
+    ? superTeamConfrontations.filter(c => !c.category_id)
+    : selectedCategory
+    ? superTeamConfrontations.filter(c => c.category_id === selectedCategory)
+    : superTeamConfrontations;
+  const filteredSuperTeamStandings = selectedCategory === 'no-category'
+    ? superTeamStandings.filter(s => !s.category_id)
+    : selectedCategory
+    ? superTeamStandings.filter(s => s.category_id === selectedCategory)
+    : superTeamStandings;
+
+  const getSuperTeamById = (id: string | null): SuperTeamRow | undefined =>
+    id ? superTeams.find(st => st.id === id) : undefined;
+
+  const handleSuperTeamsDrawGroups = async () => {
+    if (!currentTournament || currentTournament.format !== 'super_teams') return;
+    const confirmed = confirm('Vai sortear todas as super equipas em grupos por categoria. As atribuições atuais serão substituídas. Continuar?');
+    if (!confirmed) return;
+    setLoading(true);
+    try {
+      for (const cat of categories) {
+        const teamsInCat = superTeams.filter(st => st.category_id === cat.id);
+        const numGroups = cat.number_of_groups || 2;
+        const groupLabels = Array.from({ length: numGroups }, (_, i) => String.fromCharCode(65 + i));
+        const shuffled = [...teamsInCat].sort(() => Math.random() - 0.5);
+        for (let i = 0; i < shuffled.length; i++) {
+          const groupName = groupLabels[i % numGroups];
+          await supabase.from('super_teams').update({ group_name: groupName }).eq('id', shuffled[i].id);
+        }
+      }
+      await fetchTournamentData();
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao sortear grupos.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSuperTeamsGenerateSchedule = async () => {
+    if (!currentTournament || currentTournament.format !== 'super_teams') return;
+    setLoading(true);
+    try {
+      // Obter informações do torneio
+      const dailyStartTime = (currentTournament as any).daily_start_time || '09:00';
+      const dailyEndTime = (currentTournament as any).daily_end_time || '21:00';
+      const startDate = new Date(currentTournament.start_date);
+      const endDate = new Date(currentTournament.end_date);
+      
+      // Obter os nomes dos campos definidos
+      const courtNames = (currentTournament as any).court_names || [];
+      const availableCourts = courtNames.length > 0 ? courtNames : ['Campo 1'];
+      
+      // Calcular duração de cada jogo (45min por encontro = 2 jogos + super tie-break)
+      const matchDurationMinutes = 45;
+      
+      // Gerar todas as confrontações
+      const toInsert: Array<{
+        tournament_id: string;
+        category_id: string | null;
+        round: string;
+        group_name: string | null;
+        super_team_1_id: string;
+        super_team_2_id: string;
+        scheduled_time: string;
+        court_name: string;
+      }> = [];
+      
+      let currentDate = new Date(startDate);
+      let currentTimeStr = dailyStartTime;
+      let courtIndex = 0;
+      
+      for (const cat of categories) {
+        const teamsInCat = superTeams.filter(st => st.category_id === cat.id);
+        const byGroup = teamsInCat.reduce<Record<string, SuperTeamRow[]>>((acc, st) => {
+          const g = st.group_name || 'Sem grupo';
+          if (!acc[g]) acc[g] = [];
+          acc[g].push(st);
+          return acc;
+        }, {});
+        
+        for (const [groupName, groupTeams] of Object.entries(byGroup)) {
+          for (let i = 0; i < groupTeams.length; i++) {
+            for (let j = i + 1; j < groupTeams.length; j++) {
+              // Calcular próxima hora disponível
+              const [hours, minutes] = currentTimeStr.split(':').map(Number);
+              const currentDateTime = new Date(currentDate);
+              currentDateTime.setHours(hours, minutes, 0, 0);
+              
+              // Adicionar duração do jogo
+              currentDateTime.setMinutes(currentDateTime.getMinutes() + matchDurationMinutes);
+              
+              const newTimeStr = `${String(currentDateTime.getHours()).padStart(2, '0')}:${String(currentDateTime.getMinutes()).padStart(2, '0')}`;
+              
+              // Verificar se ultrapassou o horário do dia
+              const [endHours, endMinutes] = dailyEndTime.split(':').map(Number);
+              if (currentDateTime.getHours() > endHours || 
+                  (currentDateTime.getHours() === endHours && currentDateTime.getMinutes() > endMinutes)) {
+                // Ir para o próximo dia
+                currentDate.setDate(currentDate.getDate() + 1);
+                if (currentDate > endDate) {
+                  alert('Aviso: Não há dias suficientes no torneio para agendar todos os jogos.');
+                }
+                currentTimeStr = dailyStartTime;
+                courtIndex = 0;
+              } else {
+                currentTimeStr = newTimeStr;
+              }
+              
+              // Formato ISO para scheduled_time
+              const scheduledDateTime = new Date(currentDate);
+              const [schedHours, schedMinutes] = currentTimeStr.split(':').map(Number);
+              scheduledDateTime.setHours(schedHours, schedMinutes, 0, 0);
+              
+              toInsert.push({
+                tournament_id: tournament.id,
+                category_id: cat.id,
+                round: 'group',
+                group_name: groupName === 'Sem grupo' ? null : groupName,
+                super_team_1_id: groupTeams[i].id,
+                super_team_2_id: groupTeams[j].id,
+                scheduled_time: scheduledDateTime.toISOString(),
+                court_name: availableCourts[courtIndex % availableCourts.length],
+              });
+              
+              // Rotacionar campos
+              courtIndex++;
+            }
+          }
+        }
+      }
+      
+      if (toInsert.length === 0) {
+        alert('Defina grupos nas super equipas primeiro (Sortear Grupos ou Grupos Manual).');
+        setLoading(false);
+        return;
+      }
+      const { error } = await supabase.from('super_team_confrontations').insert(toInsert);
+      if (error) throw error;
+      alert(`${toInsert.length} confrontos gerados com horários e campos!`);
+      await fetchTournamentData();
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao gerar calendário.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSuperTeamsDeleteAllConfrontations = async () => {
+    if (!currentTournament || currentTournament.format !== 'super_teams') return;
+    const confirmed = confirm('Eliminar todos os confrontos deste torneio?');
+    if (!confirmed) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('super_team_confrontations').delete().eq('tournament_id', tournament.id);
+      if (error) throw error;
+      await fetchTournamentData();
+    } catch (e) {
+      console.error(e);
+      alert('Erro ao eliminar confrontos.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchTournamentData = async () => {
     console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id);
     setLoading(true);
 
-    if (isIndividualRoundRobin || isIndividualGroupsKnockout) {
+    if (currentTournament?.format === 'super_teams') {
+      const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
+        supabase
+          .from('tournament_categories')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds')
+          .eq('tournament_id', tournament.id)
+          .order('name'),
+        supabase
+          .from('super_teams')
+          .select('id, tournament_id, category_id, name, group_name, super_team_players:super_team_players(id, name, email, phone_number, is_captain, player_order)')
+          .eq('tournament_id', tournament.id)
+          .order('name'),
+        supabase
+          .from('super_team_confrontations')
+          .select('id, tournament_id, category_id, super_team_1_id, super_team_2_id, round, group_name, scheduled_time, court_name, status, team1_matches_won, team2_matches_won, has_super_tiebreak, winner_super_team_id, next_confrontation_id, next_team_slot')
+          .eq('tournament_id', tournament.id)
+          .order('scheduled_time', { ascending: true, nullsFirst: false }),
+        supabase
+          .from('super_team_standings')
+          .select('id, tournament_id, category_id, super_team_id, group_name, confrontations_played, confrontations_won, confrontations_lost, games_won, games_lost, games_diff, points, position')
+          .eq('tournament_id', tournament.id)
+      ]);
+      if (categoriesResult.data) setCategories(categoriesResult.data);
+      if (teamsResult.data) setSuperTeams(teamsResult.data as unknown as SuperTeamRow[]);
+      if (confrontationsResult.data) setSuperTeamConfrontations(confrontationsResult.data as SuperTeamConfrontationRow[]);
+      if (standingsResult.data) setSuperTeamStandings(standingsResult.data as SuperTeamStandingRow[]);
+      setTeams([]);
+      setMatches([]);
+      setIndividualPlayers([]);
+    } else if (isIndividualRoundRobin || isIndividualGroupsKnockout) {
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
@@ -378,6 +643,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         setCategories(categoriesResult.data);
       }
     } else {
+      setSuperTeams([]);
+      setSuperTeamConfrontations([]);
+      setSuperTeamStandings([]);
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
@@ -2478,11 +2746,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 </span>
                 <span className="flex items-center gap-1">
                   <Users className="w-4 h-4" />
-                  {isIndividualFormat() ? filteredIndividualPlayers.length : filteredTeams.length} {isIndividualFormat() ? t.nav.players : t.nav.teams}
+                  {isSuperTeams
+                    ? filteredSuperTeams.length
+                    : isIndividualFormat()
+                    ? filteredIndividualPlayers.length
+                    : filteredTeams.length}{' '}
+                  {isSuperTeams ? 'Equipas' : isIndividualFormat() ? t.nav.players : t.nav.teams}
                 </span>
                 <span className="flex items-center gap-1">
                   <Trophy className="w-4 h-4" />
-                  {filteredMatches.length} {t.nav.matches}
+                  {isSuperTeams ? filteredSuperTeamConfrontations.length : filteredMatches.length} {t.nav.matches}
                 </span>
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                   currentTournament.status === 'active' ? 'bg-green-100 text-green-800' :
@@ -2604,6 +2877,95 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         <div className="p-6">
           {/* Teams/Players Tab */}
           {activeTab === 'teams' && (
+            isSuperTeams ? (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-lg font-semibold">Super Equipas</h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSuperTeamsDrawGroups}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
+                    >
+                      <Shuffle className="w-4 h-4" />
+                      Sortear Grupos (Todas)
+                    </button>
+                    <button
+                      onClick={() => {}}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition"
+                    >
+                      <Hand className="w-4 h-4" />
+                      Grupos Manual
+                    </button>
+                  </div>
+                </div>
+                <p className="text-gray-600">{filteredSuperTeams.length} super equipas inscritas</p>
+                {(selectedCategory ? categories.filter(c => c.id === selectedCategory) : categories).length === 0 ? (
+                  (() => {
+                    const byGroup = filteredSuperTeams.reduce<Record<string, SuperTeamRow[]>>((acc, st) => {
+                      const g = st.group_name || 'Sem grupo';
+                      if (!acc[g]) acc[g] = [];
+                      acc[g].push(st);
+                      return acc;
+                    }, {});
+                    return (
+                      <div className="rounded-xl overflow-hidden border border-gray-200">
+                        <div className="px-4 py-2 bg-gray-600 text-white font-semibold text-center">
+                          Todas ({filteredSuperTeams.length} equipas)
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50">
+                          {Object.entries(byGroup).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, groupTeams]) => (
+                            <div key={groupName} className="bg-white border rounded-lg overflow-hidden">
+                              <div className="bg-gray-200 px-3 py-2 font-medium text-gray-800">Grupo {groupName}</div>
+                              <div className="p-3 space-y-1">
+                                {groupTeams.map(st => <div key={st.id} className="text-sm text-gray-900">{st.name}</div>)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (selectedCategory ? categories.filter(c => c.id === selectedCategory) : categories).map(cat => {
+                  const catTeams = filteredSuperTeams.filter(st => st.category_id === cat.id);
+                  const byGroup = catTeams.reduce<Record<string, SuperTeamRow[]>>((acc, st) => {
+                    const g = st.group_name || 'Sem grupo';
+                    if (!acc[g]) acc[g] = [];
+                    acc[g].push(st);
+                    return acc;
+                  }, {});
+                  return (
+                    <div key={cat.id} className="rounded-xl overflow-hidden border border-gray-200">
+                      <div className="px-4 py-2 text-white font-semibold text-center" style={{ backgroundColor: getCategoryColor(cat.id) }}>
+                        {cat.name} ({catTeams.length} equipas)
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50">
+                        {Object.entries(byGroup).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, groupTeams]) => (
+                          <div key={groupName} className="bg-white border rounded-lg overflow-hidden">
+                            <div className="bg-gray-200 px-3 py-2 font-medium text-gray-800">
+                              Grupo {groupName}
+                            </div>
+                            <div className="p-3 space-y-1">
+                              {groupTeams.map(st => (
+                                <div key={st.id} className="text-sm text-gray-900">
+                                  {st.name}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {filteredSuperTeams.length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Ainda não há super equipas inscritas</p>
+                  </div>
+                )}
+              </div>
+            ) : (
             <div className="space-y-6">
               {/* Título e botão adicionar */}
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2845,10 +3207,109 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 </>
               )}
             </div>
-          )}
+          ) )}
 
           {/* Matches Tab */}
           {activeTab === 'matches' && (
+            isSuperTeams ? (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-gray-200">
+                  <h3 className="text-lg font-semibold">Jogos</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={handleSuperTeamsGenerateSchedule}
+                      disabled={loading}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      Gerar Calendário
+                    </button>
+                    {filteredSuperTeamConfrontations.length > 0 && (
+                      <button
+                        onClick={handleSuperTeamsDeleteAllConfrontations}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Eliminar Todos
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <span className="text-sm text-gray-600">Grupo: Todos</span>
+                  <span className="text-sm text-gray-600">Campo: Todos</span>
+                  <span className="text-sm text-gray-600">Data: Todas</span>
+                </div>
+                {filteredSuperTeamConfrontations.length > 0 ? (
+                  <div className="space-y-4">
+                    {filteredSuperTeamConfrontations.map(conf => {
+                      const team1 = getSuperTeamById(conf.super_team_1_id);
+                      const team2 = getSuperTeamById(conf.super_team_2_id);
+                      const catName = conf.category_id
+                        ? (categories.find(c => c.id === conf.category_id)?.name ?? '')
+                        : '';
+                      const dateStr = conf.scheduled_time
+                        ? new Date(conf.scheduled_time).toLocaleDateString(language === 'pt' ? 'pt-PT' : 'en-GB', { day: '2-digit', month: '2-digit' })
+                        : '—';
+                      const timeStr = conf.scheduled_time
+                        ? new Date(conf.scheduled_time).toLocaleTimeString(language === 'pt' ? 'pt-PT' : 'en-GB', { hour: '2-digit', minute: '2-digit' })
+                        : '—';
+                      return (
+                        <div key={conf.id} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm">
+                          <div className="flex justify-between items-start mb-2">
+                            <span className="text-sm text-gray-600">{dateStr}, {timeStr}</span>
+                            <span className="text-xs px-2 py-1 bg-gray-200 rounded">{conf.status === 'completed' ? 'Concluído' : 'Agendado'}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 mb-2">
+                            {conf.court_name || '—'} {catName} {conf.group_name ? `Grupo ${conf.group_name}` : ''}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 mb-3">
+                            <span className="font-medium text-gray-900">{team1?.name ?? 'A definir'}</span>
+                            <span className="text-gray-400">vs</span>
+                            <span className="font-medium text-gray-900">{team2?.name ?? 'A definir'}</span>
+                          </div>
+                          <p className="text-sm text-gray-600 mb-3">
+                            {conf.team1_matches_won} - {conf.team2_matches_won}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {team1 && (
+                              <button
+                                onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team1); setShowLineupModal(true); }}
+                                className="text-sm text-blue-600 hover:underline"
+                              >
+                                Definir Duplas
+                              </button>
+                            )}
+                            {team2 && (
+                              <button
+                                onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team2); setShowLineupModal(true); }}
+                                className="text-sm text-blue-600 hover:underline"
+                              >
+                                Definir Duplas
+                              </button>
+                            )}
+                            <button
+                              onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
+                              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                            >
+                              <Pencil className="w-4 h-4" />
+                              Introduzir Resultados
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-gray-500">
+                    <CalendarClock className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Ainda não há jogos agendados</p>
+                    <p className="text-sm mt-2">Clique em &quot;Gerar Calendário&quot; para criar os confrontos</p>
+                  </div>
+                )}
+              </div>
+            ) : (
             <div className="space-y-6">
               {/* Barra de ações da tab Jogos */}
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-gray-200">
@@ -2921,10 +3382,80 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 </div>
               )}
             </div>
-          )}
+          ) )}
 
           {/* Standings Tab */}
           {activeTab === 'standings' && (
+            isSuperTeams ? (
+              <div className="space-y-6">
+                {(selectedCategory ? categories.filter(c => c.id === selectedCategory) : categories).map(cat => {
+                  const catStandings = filteredSuperTeamStandings.filter(s => s.category_id === cat.id);
+                  const byGroup = catStandings.reduce<Record<string, SuperTeamStandingRow[]>>((acc, s) => {
+                    const g = s.group_name || 'Sem grupo';
+                    if (!acc[g]) acc[g] = [];
+                    acc[g].push(s);
+                    return acc;
+                  }, {});
+                  return (
+                    <div key={cat.id} className="rounded-xl overflow-hidden border border-gray-200">
+                      <div className="px-4 py-2 text-white font-semibold text-center flex items-center justify-center gap-2" style={{ backgroundColor: getCategoryColor(cat.id) }}>
+                        <Award className="w-5 h-5" />
+                        {cat.name}
+                      </div>
+                      {Object.entries(byGroup).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, rows]) => (
+                        <div key={groupName} className="p-4 bg-gray-50">
+                          <h4 className="font-medium text-gray-800 mb-3 flex items-center gap-2">
+                            <Users className="w-4 h-4" />
+                            Grupo {groupName}
+                          </h4>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b border-gray-200 text-gray-600">
+                                  <th className="text-left py-2 px-2">#</th>
+                                  <th className="text-left py-2 px-2">EQUIPA</th>
+                                  <th className="text-center py-2 px-2">J</th>
+                                  <th className="text-center py-2 px-2">V</th>
+                                  <th className="text-center py-2 px-2">D</th>
+                                  <th className="text-center py-2 px-2">SG</th>
+                                  <th className="text-center py-2 px-2">SP</th>
+                                  <th className="text-center py-2 px-2">+/-</th>
+                                  <th className="text-center py-2 px-2">PTS</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rows.sort((a, b) => (b.points - a.points) || (b.games_diff - a.games_diff)).map((s, idx) => (
+                                  <tr key={s.id} className="border-b border-gray-100 hover:bg-white">
+                                    <td className="py-2 px-2 font-medium">{idx + 1}</td>
+                                    <td className="py-2 px-2">{getSuperTeamById(s.super_team_id)?.name ?? s.super_team_id.slice(0, 8)}</td>
+                                    <td className="text-center py-2 px-2">{s.confrontations_played}</td>
+                                    <td className="text-center py-2 px-2">{s.confrontations_won}</td>
+                                    <td className="text-center py-2 px-2">{s.confrontations_lost}</td>
+                                    <td className="text-center py-2 px-2">{s.games_won}</td>
+                                    <td className="text-center py-2 px-2">{s.games_lost}</td>
+                                    <td className="text-center py-2 px-2">{s.games_diff >= 0 ? '+' : ''}{s.games_diff}</td>
+                                    <td className="text-center py-2 px-2 font-semibold">{s.points}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ))}
+                      {catStandings.length === 0 && (
+                        <p className="p-4 text-gray-500 text-center text-sm">Sem classificação para esta categoria</p>
+                      )}
+                    </div>
+                  );
+                })}
+                {filteredSuperTeamStandings.length === 0 && (
+                  <div className="text-center py-12 text-gray-500">
+                    <Award className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>Ainda não há classificação</p>
+                  </div>
+                )}
+              </div>
+            ) : (
             <Standings
               key={refreshKey}
               tournamentId={currentTournament.id}
@@ -2938,10 +3469,84 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 isIndividualFormat()
               )}
             />
+            )
           )}
 
           {/* Knockout Tab */}
           {activeTab === 'knockout' && (
+            isSuperTeams ? (
+              <div className="space-y-6">
+                {(selectedCategory ? categories.filter(c => c.id === selectedCategory) : categories).map(cat => {
+                  const catConfrontations = filteredSuperTeamConfrontations.filter(c => c.category_id === cat.id && c.round !== 'group');
+                  const qualified = filteredSuperTeamStandings
+                    .filter(s => s.category_id === cat.id)
+                    .sort((a, b) => (b.points - a.points) || (b.games_diff - a.games_diff))
+                    .slice(0, 4);
+                  return (
+                    <div key={cat.id} className="rounded-xl overflow-hidden border border-gray-200">
+                      <div className="px-4 py-2 text-white font-semibold text-center" style={{ backgroundColor: getCategoryColor(cat.id) }}>
+                        {cat.name} - Eliminatórias
+                      </div>
+                      <div className="p-4 space-y-4">
+                        <div>
+                          <h4 className="font-medium text-gray-700 mb-2">Equipas qualificadas ({qualified.length}/4)</h4>
+                          <ul className="flex flex-wrap gap-2">
+                            {qualified.map((s, i) => {
+                              const labels = ['A1°', 'A2°', 'B1°', 'B2°'];
+                              return (
+                                <li key={s.id}>
+                                  <span className="text-sm text-gray-600">{labels[i] ?? ''} </span>
+                                  <span className="text-sm font-medium">{getSuperTeamById(s.super_team_id)?.name ?? ''}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          {qualified.length >= 4 && (
+                            <button
+                              onClick={() => {}}
+                              className="mt-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                            >
+                              Atribuir equipas qualificadas
+                            </button>
+                          )}
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-gray-700 mb-2">Jogos das eliminatórias</h4>
+                          {catConfrontations.length > 0 ? (
+                            <ul className="space-y-2">
+                              {catConfrontations.map(conf => {
+                                const t1 = getSuperTeamById(conf.super_team_1_id);
+                                const t2 = getSuperTeamById(conf.super_team_2_id);
+                                const roundLabel = conf.round === 'semifinal' ? 'Meia-final' : conf.round === 'final' ? 'Final' : conf.round ?? '';
+                                return (
+                                  <li key={conf.id} className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg p-3">
+                                    <span className="text-sm font-medium">
+                                      {roundLabel} {cat.name} {t1?.name ?? 'A definir'} vs {t2?.name ?? 'A definir'}
+                                    </span>
+                                    {t1 && t2 ? (
+                                      <button
+                                        onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
+                                        className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                      >
+                                        Introduzir Resultados
+                                      </button>
+                                    ) : (
+                                      <span className="text-sm text-gray-500 px-3 py-1.5 bg-gray-200 rounded-lg">Aguardar equipas</span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          ) : (
+                            <p className="text-sm text-gray-500">Ainda não há jogos de eliminatórias</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <BracketView
               key={refreshKey}
               matches={filteredMatches}
@@ -2952,6 +3557,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               isIndividual={isIndividualFormat()}
               individualPlayers={filteredIndividualPlayers}
             />
+            )
           )}
         </div>
       </div>
@@ -3024,6 +3630,60 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           onSuccess={() => {
             setShowEditTeam(false);
             setSelectedTeam(undefined);
+            fetchTournamentData();
+          }}
+        />
+      )}
+
+      {isSuperTeams && showLineupModal && selectedConfrontation && selectedLineupTeam && (
+        <SuperTeamLineupModal
+          confrontation={{
+            id: selectedConfrontation.id,
+            super_team_1_id: selectedConfrontation.super_team_1_id,
+            super_team_2_id: selectedConfrontation.super_team_2_id,
+          }}
+          team={{
+            id: selectedLineupTeam.id,
+            name: selectedLineupTeam.name,
+            super_team_players: selectedLineupTeam.super_team_players ?? [],
+          }}
+          onClose={() => {
+            setShowLineupModal(false);
+            setSelectedConfrontation(null);
+            setSelectedLineupTeam(null);
+          }}
+          onSuccess={() => {
+            setShowLineupModal(false);
+            setSelectedConfrontation(null);
+            setSelectedLineupTeam(null);
+            fetchTournamentData();
+          }}
+        />
+      )}
+
+      {isSuperTeams && showResultsModal && selectedConfrontation && (
+        <SuperTeamResultsModal
+          confrontation={{
+            id: selectedConfrontation.id,
+            super_team_1_id: selectedConfrontation.super_team_1_id,
+            super_team_2_id: selectedConfrontation.super_team_2_id,
+            status: selectedConfrontation.status,
+            team1_matches_won: selectedConfrontation.team1_matches_won,
+            team2_matches_won: selectedConfrontation.team2_matches_won,
+            has_super_tiebreak: selectedConfrontation.has_super_tiebreak,
+            winner_super_team_id: selectedConfrontation.winner_super_team_id,
+            next_confrontation_id: selectedConfrontation.next_confrontation_id,
+            next_team_slot: selectedConfrontation.next_team_slot,
+          }}
+          team1={getSuperTeamById(selectedConfrontation.super_team_1_id) ?? null}
+          team2={getSuperTeamById(selectedConfrontation.super_team_2_id) ?? null}
+          onClose={() => {
+            setShowResultsModal(false);
+            setSelectedConfrontation(null);
+          }}
+          onSuccess={() => {
+            setShowResultsModal(false);
+            setSelectedConfrontation(null);
             fetchTournamentData();
           }}
         />
