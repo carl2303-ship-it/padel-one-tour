@@ -69,7 +69,7 @@ export default function RichTextEditor({ value, onChange, placeholder }: RichTex
         ref={editorRef}
         contentEditable
         onInput={handleInput}
-        className="min-h-[120px] p-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+        className="min-h-[120px] p-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset relative"
         data-placeholder={placeholder}
         suppressContentEditableWarning
         style={{

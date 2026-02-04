@@ -73,6 +73,7 @@ export type TournamentCategory = {
   registration_fee?: number;
   knockout_stage?: 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final';
   qualified_per_group?: number;
+  game_format?: '1set' | '3sets'; // Formato dos jogos: 1 set ou melhor de 3
   created_at: string;
 };
 

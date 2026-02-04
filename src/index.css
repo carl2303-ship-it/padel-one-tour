@@ -10,6 +10,16 @@
   }
 }
 
+/* Force 24h format for time inputs */
+input[type="time"]::-webkit-calendar-picker-indicator {
+  background: none;
+}
+
+input[type="time"] {
+  /* Force 24h format display */
+  font-variant-numeric: tabular-nums;
+}
+
 @media print {
   @page {
     size: A4;

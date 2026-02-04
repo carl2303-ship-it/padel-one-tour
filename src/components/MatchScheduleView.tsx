@@ -677,129 +677,160 @@ export default function MatchScheduleView({
     return category?.name || '';
   };
 
+  const getRoundLabel = (match: MatchWithTeams): string | null => {
+    const round = match.round;
+    // Check if it's a knockout round
+    if (round.startsWith('group_') || round === 'round_robin') return null;
+    
+    const roundLabels: { [key: string]: string } = {
+      'final': 'Final',
+      'semi_final': 'Meia-Final',
+      'semifinal': 'Meia-Final',
+      'quarter_final': 'Quartos',
+      'round_16': 'Oitavos',
+      'round_32': '1/16 Final',
+      '1st_semifinal': 'Meia-Final (1-4)',
+      '3rd_place': '3°/4° Lugar',
+      '5th_semifinal': 'Meia-Final (5-8)',
+      '5th_place': '5°/6° Lugar',
+      '7th_place': '7°/8° Lugar',
+    };
+    return roundLabels[round] || null;
+  };
+
   const renderMatch = (match: MatchWithTeams, showCourt: boolean = true, showGroup: boolean = true) => {
     const groupLabel = getGroupLabel(match);
     const categoryLabel = getCategoryLabel(match);
     const categoryColor = match.category_id ? getCategoryColor(match.category_id) : '#6B7280';
+    const roundLabel = getRoundLabel(match);
+    
+    // Create lighter background color from category color
+    const bgColor = match.category_id ? `${categoryColor}15` : '#f9fafb';
 
     return (
       <button
         key={match.id}
         onClick={() => onMatchClick(match.id)}
-        className="w-full border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative"
-        style={{ borderLeftWidth: '4px', borderLeftColor: categoryColor }}
+        className="w-full border-2 rounded-lg p-3 hover:shadow-lg transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative"
+        style={{ 
+          borderColor: categoryColor,
+          backgroundColor: bgColor
+        }}
       >
-        <div className="flex items-center justify-between mb-2 print:mb-1">
-          <span className="text-xs font-medium text-gray-600 print:text-sm print:font-bold">
-            Match #{match.match_number}
-            {showGroup && groupLabel && (
-              <span className="ml-2 px-2 py-0.5 bg-blue-50 text-blue-700 rounded font-medium print:ml-1 print:px-1.5 print:py-0.5 print:text-xs">
-                {groupLabel}
-              </span>
-            )}
-            {categoryLabel && (
-              <span className="ml-2 px-2 py-0.5 bg-purple-50 text-purple-700 rounded font-medium print:ml-1 print:px-1.5 print:py-0.5 print:text-xs">
-                {categoryLabel}
+        {/* Header: Match number + Status */}
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-bold text-gray-700">
+            Jogo #{match.match_number}
+            {roundLabel && (
+              <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-800 rounded font-semibold">
+                {roundLabel}
               </span>
             )}
           </span>
-        <span
-          className={`px-2 py-0.5 rounded text-xs font-medium print:px-1.5 print:py-0.5 print:text-xs ${
-            match.status === 'completed'
-              ? 'bg-green-100 text-green-800'
-              : match.status === 'in_progress'
-              ? 'bg-blue-100 text-blue-800'
-              : 'bg-gray-100 text-gray-800'
-          }`}
-        >
-          {match.status}
-        </span>
-      </div>
+          <span
+            className={`px-2 py-0.5 rounded text-xs font-medium ${
+              match.status === 'completed'
+                ? 'bg-green-100 text-green-800'
+                : match.status === 'in_progress'
+                ? 'bg-blue-100 text-blue-800'
+                : 'bg-white/80 text-gray-700'
+            }`}
+          >
+            {match.status === 'completed' ? 'Terminado' : match.status === 'in_progress' ? 'A decorrer' : 'Agendado'}
+          </span>
+        </div>
 
-      <div className="grid grid-cols-3 gap-2 items-center my-2 print:my-1">
-        <div className="text-right">
-          {isIndividualRoundRobin ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {getPlayerName((match as any).player1_individual_id)}
-              </p>
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {getPlayerName((match as any).player2_individual_id)}
-              </p>
-            </div>
-          ) : match.team1 ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {match.team1.name}
-              </p>
-              {match.team1.player1 && match.team1.player2 && (
-                <p className="text-xs text-gray-600 print:text-xs">
-                  {match.team1.player1.name} / {match.team1.player2.name}
+        {/* Teams and Score */}
+        <div className="grid grid-cols-3 gap-2 items-center my-3">
+          <div className="text-right">
+            {isIndividualRoundRobin ? (
+              <div className="space-y-0.5">
+                <p className="font-semibold text-sm text-gray-900">
+                  {getPlayerName((match as any).player1_individual_id)}
                 </p>
-              )}
-            </div>
-          ) : (
-            <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-              TBD
-            </p>
-          )}
-        </div>
-        <div className="text-center">
-          {match.status === 'completed' ? (
-            <span className="text-base font-bold text-gray-900 print:text-sm">
-              {getMatchScore(match)}
-            </span>
-          ) : (
-            <span className="text-gray-400 font-medium text-sm print:text-xs">VS</span>
-          )}
-        </div>
-        <div className="text-left">
-          {isIndividualRoundRobin ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {getPlayerName((match as any).player3_individual_id)}
-              </p>
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {getPlayerName((match as any).player4_individual_id)}
-              </p>
-            </div>
-          ) : match.team2 ? (
-            <div className="space-y-1">
-              <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-                {match.team2.name}
-              </p>
-              {match.team2.player1 && match.team2.player2 && (
-                <p className="text-xs text-gray-600 print:text-xs">
-                  {match.team2.player1.name} / {match.team2.player2.name}
+                <p className="font-semibold text-sm text-gray-900">
+                  {getPlayerName((match as any).player2_individual_id)}
                 </p>
-              )}
-            </div>
-          ) : (
-            <p className="font-semibold text-sm text-gray-900 print:text-sm print:font-bold">
-              TBD
-            </p>
-          )}
+              </div>
+            ) : match.team1 ? (
+              <div>
+                <p className="font-bold text-gray-900">
+                  {match.team1.name}
+                </p>
+                {match.team1.player1 && match.team1.player2 && (
+                  <p className="text-xs text-gray-600">
+                    {match.team1.player1.name} / {match.team1.player2.name}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="font-semibold text-gray-500">TBD</p>
+            )}
+          </div>
+          
+          {/* Score - bigger and centered */}
+          <div className="text-center">
+            {match.status === 'completed' ? (
+              <span className="text-2xl font-black text-gray-900">
+                {getMatchScore(match)}
+              </span>
+            ) : (
+              <span className="text-xl font-bold text-gray-400">VS</span>
+            )}
+          </div>
+          
+          <div className="text-left">
+            {isIndividualRoundRobin ? (
+              <div className="space-y-0.5">
+                <p className="font-semibold text-sm text-gray-900">
+                  {getPlayerName((match as any).player3_individual_id)}
+                </p>
+                <p className="font-semibold text-sm text-gray-900">
+                  {getPlayerName((match as any).player4_individual_id)}
+                </p>
+              </div>
+            ) : match.team2 ? (
+              <div>
+                <p className="font-bold text-gray-900">
+                  {match.team2.name}
+                </p>
+                {match.team2.player1 && match.team2.player2 && (
+                  <p className="text-xs text-gray-600">
+                    {match.team2.player1.name} / {match.team2.player2.name}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="font-semibold text-gray-500">TBD</p>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-between text-xs text-gray-500 mt-2 print:mt-1 print:text-xs print:pt-1 print:border-t print:border-gray-200">
-        <span className="flex items-center gap-1">
-          <Clock className="w-3 h-3 print:w-3 print:h-3" />
-          {match.scheduled_time ? new Date(match.scheduled_time).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
-          }) : 'Not scheduled'}
-        </span>
-        {showCourt && match.court && (
-          <span className="font-medium print:font-semibold">Court {match.court}</span>
-        )}
-      </div>
-    </button>
-  );
-};
+        {/* Footer: Date, Time, Court, Category, Group - all on same line */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600 pt-2 border-t border-gray-200/50">
+          <span className="flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {match.scheduled_time ? new Date(match.scheduled_time).toLocaleString('pt-PT', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            }) : 'Não agendado'}
+          </span>
+          {showCourt && match.court && (
+            <span className="font-semibold bg-white/60 px-2 py-0.5 rounded">Campo {match.court}</span>
+          )}
+          {showGroup && groupLabel && (
+            <span className="font-semibold bg-blue-100 text-blue-800 px-2 py-0.5 rounded">{groupLabel}</span>
+          )}
+          {categoryLabel && (
+            <span className="font-semibold px-2 py-0.5 rounded" style={{ backgroundColor: `${categoryColor}30`, color: categoryColor }}>{categoryLabel}</span>
+          )}
+        </div>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-4">

@@ -22,6 +22,7 @@ import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib
 import { exportTournamentPDF } from '../lib/pdfExport';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
+import EditSuperTeamModal from './EditSuperTeamModal';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -74,6 +75,13 @@ type SuperTeamConfrontationRow = {
   winner_super_team_id: string | null;
   next_confrontation_id?: string | null;
   next_team_slot?: number | null;
+  // Resultados detalhados de cada jogo (melhor de 3)
+  match1_team1_score?: number | null;
+  match1_team2_score?: number | null;
+  match2_team1_score?: number | null;
+  match2_team2_score?: number | null;
+  match3_team1_score?: number | null;
+  match3_team2_score?: number | null;
 };
 
 type SuperTeamStandingRow = {
@@ -99,6 +107,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [matches, setMatches] = useState<MatchWithTeams[]>([]);
   const [categories, setCategories] = useState<TournamentCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedCourtFilter, setSelectedCourtFilter] = useState<string | null>(null);
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'teams' | 'matches' | 'standings' | 'knockout'>('teams');
   const [showAddTeam, setShowAddTeam] = useState(false);
@@ -126,6 +136,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showResultsModal, setShowResultsModal] = useState(false);
   const [selectedConfrontation, setSelectedConfrontation] = useState<SuperTeamConfrontationRow | null>(null);
   const [selectedLineupTeam, setSelectedLineupTeam] = useState<SuperTeamRow | null>(null);
+  const [showEditSuperTeam, setShowEditSuperTeam] = useState(false);
+  const [selectedSuperTeam, setSelectedSuperTeam] = useState<SuperTeamRow | null>(null);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -406,11 +418,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     : selectedCategory
     ? superTeams.filter(st => st.category_id === selectedCategory)
     : superTeams;
-  const filteredSuperTeamConfrontations = selectedCategory === 'no-category'
-    ? superTeamConfrontations.filter(c => !c.category_id)
-    : selectedCategory
-    ? superTeamConfrontations.filter(c => c.category_id === selectedCategory)
-    : superTeamConfrontations;
+  const filteredSuperTeamConfrontations = superTeamConfrontations.filter(c => {
+    // Filtro por categoria
+    if (selectedCategory === 'no-category' && c.category_id) return false;
+    if (selectedCategory && selectedCategory !== 'no-category' && c.category_id !== selectedCategory) return false;
+    
+    // Filtro por campo
+    if (selectedCourtFilter && c.court_name !== selectedCourtFilter) return false;
+    
+    // Filtro por data
+    if (selectedDateFilter && c.scheduled_time) {
+      const confDate = new Date(c.scheduled_time).toISOString().split('T')[0];
+      if (confDate !== selectedDateFilter) return false;
+    } else if (selectedDateFilter && !c.scheduled_time) {
+      return false;
+    }
+    
+    return true;
+  });
+  
+  // Obter lista única de campos e datas para os filtros
+  const uniqueCourts = [...new Set(superTeamConfrontations.map(c => c.court_name).filter(Boolean))].sort();
+  const uniqueDates = [...new Set(superTeamConfrontations.map(c => c.scheduled_time ? new Date(c.scheduled_time).toISOString().split('T')[0] : null).filter(Boolean) as string[])].sort();
   const filteredSuperTeamStandings = selectedCategory === 'no-category'
     ? superTeamStandings.filter(s => !s.category_id)
     : selectedCategory
@@ -446,21 +475,49 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleSuperTeamsGenerateSchedule = async () => {
-    if (!currentTournament || currentTournament.format !== 'super_teams') return;
+    console.log('[SUPER-SCHEDULE] ====================================');
+    console.log('[SUPER-SCHEDULE] Starting schedule generation for Super Teams');
+    if (!currentTournament || currentTournament.format !== 'super_teams') {
+      console.log('[SUPER-SCHEDULE] Aborted: not a super_teams tournament');
+      return;
+    }
     setLoading(true);
     try {
+      // Verificar se já existem confrontações
+      const existingConfrontations = superTeamConfrontations.length;
+      if (existingConfrontations > 0) {
+        const confirm = window.confirm(`Já existem ${existingConfrontations} confrontos. Deseja eliminar e gerar novos? A classificação também será limpa.`);
+        if (!confirm) {
+          setLoading(false);
+          return;
+        }
+        // Eliminar standings primeiro
+        await supabase.from('super_team_standings').delete().eq('tournament_id', tournament.id);
+        // Eliminar confrontações existentes
+        await supabase.from('super_team_confrontations').delete().eq('tournament_id', tournament.id);
+      }
+      
       // Obter informações do torneio
       const dailyStartTime = (currentTournament as any).daily_start_time || '09:00';
       const dailyEndTime = (currentTournament as any).daily_end_time || '21:00';
+      const matchDurationMinutes = (currentTournament as any).match_duration_minutes || 45;
       const startDate = new Date(currentTournament.start_date);
       const endDate = new Date(currentTournament.end_date);
+      
+      console.log('[SUPER-SCHEDULE] Tournament settings:');
+      console.log('[SUPER-SCHEDULE]   - daily_start_time:', dailyStartTime);
+      console.log('[SUPER-SCHEDULE]   - daily_end_time:', dailyEndTime);
+      console.log('[SUPER-SCHEDULE]   - match_duration_minutes:', matchDurationMinutes);
+      console.log('[SUPER-SCHEDULE]   - start_date:', startDate);
+      console.log('[SUPER-SCHEDULE]   - categories:', categories.length);
+      console.log('[SUPER-SCHEDULE]   - superTeams:', superTeams.length);
       
       // Obter os nomes dos campos definidos
       const courtNames = (currentTournament as any).court_names || [];
       const availableCourts = courtNames.length > 0 ? courtNames : ['Campo 1'];
+      const numCourts = availableCourts.length;
       
-      // Calcular duração de cada jogo (45min por encontro = 2 jogos + super tie-break)
-      const matchDurationMinutes = 45;
+      console.log('[SUPER-SCHEDULE]   - courts:', availableCourts);
       
       // Gerar todas as confrontações
       const toInsert: Array<{
@@ -474,9 +531,32 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         court_name: string;
       }> = [];
       
-      let currentDate = new Date(startDate);
-      let currentTimeStr = dailyStartTime;
-      let courtIndex = 0;
+      // Parse horários
+      const [startHours, startMinutes] = dailyStartTime.split(':').map(Number);
+      const [endHours, endMinutes] = dailyEndTime.split(':').map(Number);
+      
+      // Calcular slots por dia por campo
+      const dailyMinutes = (endHours * 60 + endMinutes) - (startHours * 60 + startMinutes);
+      const slotsPerCourtPerDay = Math.floor(dailyMinutes / matchDurationMinutes);
+      const totalSlotsPerDay = slotsPerCourtPerDay * numCourts;
+      
+      console.log('[SUPER-SCHEDULE]   - slots per court per day:', slotsPerCourtPerDay);
+      console.log('[SUPER-SCHEDULE]   - total slots per day:', totalSlotsPerDay);
+      
+      // Recolher todos os confrontos a agendar
+      const allConfronts: Array<{
+        cat: typeof categories[0];
+        groupName: string;
+        team1: SuperTeamRow;
+        team2: SuperTeamRow;
+      }> = [];
+      
+      // Organizar confrontos por categoria e grupo para intercalar
+      const confrontsByGroup: Array<{
+        cat: typeof categories[0];
+        groupName: string;
+        confronts: Array<{ team1: SuperTeamRow; team2: SuperTeamRow }>;
+      }> = [];
       
       for (const cat of categories) {
         const teamsInCat = superTeams.filter(st => st.category_id === cat.id);
@@ -488,64 +568,326 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }, {});
         
         for (const [groupName, groupTeams] of Object.entries(byGroup)) {
+          const groupConfronts: Array<{ team1: SuperTeamRow; team2: SuperTeamRow }> = [];
           for (let i = 0; i < groupTeams.length; i++) {
             for (let j = i + 1; j < groupTeams.length; j++) {
-              // Calcular próxima hora disponível
-              const [hours, minutes] = currentTimeStr.split(':').map(Number);
-              const currentDateTime = new Date(currentDate);
-              currentDateTime.setHours(hours, minutes, 0, 0);
-              
-              // Adicionar duração do jogo
-              currentDateTime.setMinutes(currentDateTime.getMinutes() + matchDurationMinutes);
-              
-              const newTimeStr = `${String(currentDateTime.getHours()).padStart(2, '0')}:${String(currentDateTime.getMinutes()).padStart(2, '0')}`;
-              
-              // Verificar se ultrapassou o horário do dia
-              const [endHours, endMinutes] = dailyEndTime.split(':').map(Number);
-              if (currentDateTime.getHours() > endHours || 
-                  (currentDateTime.getHours() === endHours && currentDateTime.getMinutes() > endMinutes)) {
-                // Ir para o próximo dia
-                currentDate.setDate(currentDate.getDate() + 1);
-                if (currentDate > endDate) {
-                  alert('Aviso: Não há dias suficientes no torneio para agendar todos os jogos.');
-                }
-                currentTimeStr = dailyStartTime;
-                courtIndex = 0;
-              } else {
-                currentTimeStr = newTimeStr;
-              }
-              
-              // Formato ISO para scheduled_time
-              const scheduledDateTime = new Date(currentDate);
-              const [schedHours, schedMinutes] = currentTimeStr.split(':').map(Number);
-              scheduledDateTime.setHours(schedHours, schedMinutes, 0, 0);
-              
-              toInsert.push({
-                tournament_id: tournament.id,
-                category_id: cat.id,
-                round: 'group',
-                group_name: groupName === 'Sem grupo' ? null : groupName,
-                super_team_1_id: groupTeams[i].id,
-                super_team_2_id: groupTeams[j].id,
-                scheduled_time: scheduledDateTime.toISOString(),
-                court_name: availableCourts[courtIndex % availableCourts.length],
+              groupConfronts.push({
+                team1: groupTeams[i],
+                team2: groupTeams[j],
               });
-              
-              // Rotacionar campos
-              courtIndex++;
             }
+          }
+          if (groupConfronts.length > 0) {
+            confrontsByGroup.push({ cat, groupName, confronts: groupConfronts });
           }
         }
       }
       
-      if (toInsert.length === 0) {
+      // Intercalar confrontos de diferentes grupos/categorias (round-robin)
+      // Isto garante que as equipas têm tempo de descanso
+      let hasMore = true;
+      let roundIndex = 0;
+      while (hasMore) {
+        hasMore = false;
+        for (const group of confrontsByGroup) {
+          if (roundIndex < group.confronts.length) {
+            allConfronts.push({
+              cat: group.cat,
+              groupName: group.groupName,
+              team1: group.confronts[roundIndex].team1,
+              team2: group.confronts[roundIndex].team2,
+            });
+            hasMore = true;
+          }
+        }
+        roundIndex++;
+      }
+      
+      console.log('[SUPER-SCHEDULE]   - groups/categories:', confrontsByGroup.length);
+      console.log('[SUPER-SCHEDULE]   - total confronts to schedule:', allConfronts.length);
+      
+      if (allConfronts.length === 0) {
         alert('Defina grupos nas super equipas primeiro (Sortear Grupos ou Grupos Manual).');
         setLoading(false);
         return;
       }
-      const { error } = await supabase.from('super_team_confrontations').insert(toInsert);
+      
+      // Estrutura para rastrear slots: Map<slotKey, Set<teamId>>
+      // slotKey = "day_timeSlot" (ex: "0_0" = dia 0, slot 0)
+      const occupiedTeamsPerSlot = new Map<string, Set<string>>();
+      const usedCourtsPerSlot = new Map<string, Set<number>>();
+      
+      // Função para verificar se um confronto pode ser agendado num slot
+      const canScheduleInSlot = (slotKey: string, team1Id: string, team2Id: string): boolean => {
+        const occupied = occupiedTeamsPerSlot.get(slotKey) || new Set();
+        return !occupied.has(team1Id) && !occupied.has(team2Id);
+      };
+      
+      // Função para obter próximo campo disponível num slot
+      const getAvailableCourtIndex = (slotKey: string): number | null => {
+        const used = usedCourtsPerSlot.get(slotKey) || new Set();
+        for (let i = 0; i < numCourts; i++) {
+          if (!used.has(i)) return i;
+        }
+        return null;
+      };
+      
+      // Função para marcar equipas e campo como ocupados
+      const markSlotOccupied = (slotKey: string, team1Id: string, team2Id: string, courtIndex: number) => {
+        if (!occupiedTeamsPerSlot.has(slotKey)) {
+          occupiedTeamsPerSlot.set(slotKey, new Set());
+        }
+        occupiedTeamsPerSlot.get(slotKey)!.add(team1Id);
+        occupiedTeamsPerSlot.get(slotKey)!.add(team2Id);
+        
+        if (!usedCourtsPerSlot.has(slotKey)) {
+          usedCourtsPerSlot.set(slotKey, new Set());
+        }
+        usedCourtsPerSlot.get(slotKey)!.add(courtIndex);
+      };
+      
+      // Agendar cada confronto
+      const unscheduled = [...allConfronts];
+      let currentDayIndex = 0;
+      let currentTimeSlot = 0;
+      let maxDays = 365; // Limite de segurança
+      
+      while (unscheduled.length > 0 && maxDays > 0) {
+        const slotKey = `${currentDayIndex}_${currentTimeSlot}`;
+        
+        // Tentar agendar o máximo de confrontos possível neste slot
+        for (let i = unscheduled.length - 1; i >= 0; i--) {
+          const confront = unscheduled[i];
+          
+          // Verificar se as equipas estão livres
+          if (!canScheduleInSlot(slotKey, confront.team1.id, confront.team2.id)) {
+            continue;
+          }
+          
+          // Verificar se há campo disponível
+          const courtIndex = getAvailableCourtIndex(slotKey);
+          if (courtIndex === null) {
+            break; // Sem campos disponíveis, ir para próximo slot
+          }
+          
+          // Calcular a data e hora
+          const matchDate = new Date(startDate);
+          matchDate.setDate(matchDate.getDate() + currentDayIndex);
+          
+          const totalMinutesFromStart = currentTimeSlot * matchDurationMinutes;
+          const matchHour = startHours + Math.floor((startMinutes + totalMinutesFromStart) / 60);
+          const matchMinute = (startMinutes + totalMinutesFromStart) % 60;
+          
+          matchDate.setHours(matchHour, matchMinute, 0, 0);
+          
+          // Marcar como ocupado
+          markSlotOccupied(slotKey, confront.team1.id, confront.team2.id, courtIndex);
+          
+          console.log(`[SUPER-SCHEDULE] Slot ${slotKey}: ${confront.team1.name} vs ${confront.team2.name} - ${matchDate.toLocaleString()} - ${availableCourts[courtIndex]}`);
+          
+          toInsert.push({
+            tournament_id: tournament.id,
+            category_id: confront.cat.id,
+            round: 'group',
+            group_name: confront.groupName === 'Sem grupo' ? null : confront.groupName,
+            super_team_1_id: confront.team1.id,
+            super_team_2_id: confront.team2.id,
+            scheduled_time: matchDate.toISOString(),
+            court_name: availableCourts[courtIndex],
+          });
+          
+          // Remover da lista de não agendados
+          unscheduled.splice(i, 1);
+        }
+        
+        // Avançar para próximo slot
+        currentTimeSlot++;
+        
+        // Verificar se ultrapassou os slots do dia
+        if (currentTimeSlot >= slotsPerCourtPerDay) {
+          currentTimeSlot = 0;
+          currentDayIndex++;
+          maxDays--;
+          
+          // Verificar se ultrapassou a data final
+          const nextDate = new Date(startDate);
+          nextDate.setDate(nextDate.getDate() + currentDayIndex);
+          if (nextDate > endDate && unscheduled.length > 0) {
+            console.warn('[SUPER-SCHEDULE] Warning: Not enough days to schedule all confronts. Remaining:', unscheduled.length);
+          }
+        }
+      }
+      
+      if (unscheduled.length > 0) {
+        console.warn('[SUPER-SCHEDULE] Could not schedule', unscheduled.length, 'confronts');
+      }
+      
+      // ========== GERAR FASES FINAIS ==========
+      const knockoutConfronts: Array<{
+        tournament_id: string;
+        category_id: string | null;
+        round: string;
+        group_name: string | null;
+        super_team_1_id: string | null;
+        super_team_2_id: string | null;
+        scheduled_time: string;
+        court_name: string;
+      }> = [];
+      
+      console.log('[SUPER-SCHEDULE] Generating knockout rounds...');
+      
+      for (const cat of categories) {
+        const knockoutStage = (cat as any).knockout_stage || 'semifinals';
+        console.log(`[SUPER-SCHEDULE] Category ${cat.name}: knockout_stage = ${knockoutStage}`);
+        
+        // Determinar quantas partidas de cada fase
+        let numQuarters = 0, numSemis = 0, numFinals = 0;
+        if (knockoutStage === 'quarterfinals') {
+          numQuarters = 4;
+          numSemis = 2;
+          numFinals = 2; // Final + 3º lugar
+        } else if (knockoutStage === 'semifinals') {
+          numSemis = 2;
+          numFinals = 2; // Final + 3º lugar
+        } else if (knockoutStage === 'final') {
+          numFinals = 2; // Final + 3º lugar
+        }
+        
+        // Criar confrontos de quartos de final
+        for (let i = 0; i < numQuarters; i++) {
+          const matchDate = new Date(startDate);
+          matchDate.setDate(matchDate.getDate() + currentDayIndex);
+          const totalMinutesFromStart = currentTimeSlot * matchDurationMinutes;
+          const matchHour = startHours + Math.floor((startMinutes + totalMinutesFromStart) / 60);
+          const matchMinute = (startMinutes + totalMinutesFromStart) % 60;
+          matchDate.setHours(matchHour, matchMinute, 0, 0);
+          
+          knockoutConfronts.push({
+            tournament_id: tournament.id,
+            category_id: cat.id,
+            round: 'quarter_final',
+            group_name: null,
+            super_team_1_id: null, // TBD - será preenchido após fase de grupos
+            super_team_2_id: null,
+            scheduled_time: matchDate.toISOString(),
+            court_name: availableCourts[i % numCourts],
+          });
+          
+          // Avançar slot se necessário
+          if ((i + 1) % numCourts === 0) {
+            currentTimeSlot++;
+            if (currentTimeSlot >= slotsPerCourtPerDay) {
+              currentTimeSlot = 0;
+              currentDayIndex++;
+            }
+          }
+        }
+        
+        // Avançar para próximo slot após quartos
+        if (numQuarters > 0) {
+          currentTimeSlot++;
+          if (currentTimeSlot >= slotsPerCourtPerDay) {
+            currentTimeSlot = 0;
+            currentDayIndex++;
+          }
+        }
+        
+        // Criar confrontos de meias-finais
+        for (let i = 0; i < numSemis; i++) {
+          const matchDate = new Date(startDate);
+          matchDate.setDate(matchDate.getDate() + currentDayIndex);
+          const totalMinutesFromStart = currentTimeSlot * matchDurationMinutes;
+          const matchHour = startHours + Math.floor((startMinutes + totalMinutesFromStart) / 60);
+          const matchMinute = (startMinutes + totalMinutesFromStart) % 60;
+          matchDate.setHours(matchHour, matchMinute, 0, 0);
+          
+          knockoutConfronts.push({
+            tournament_id: tournament.id,
+            category_id: cat.id,
+            round: 'semi_final',
+            group_name: null,
+            super_team_1_id: null,
+            super_team_2_id: null,
+            scheduled_time: matchDate.toISOString(),
+            court_name: availableCourts[i % numCourts],
+          });
+          
+          if ((i + 1) % numCourts === 0) {
+            currentTimeSlot++;
+            if (currentTimeSlot >= slotsPerCourtPerDay) {
+              currentTimeSlot = 0;
+              currentDayIndex++;
+            }
+          }
+        }
+        
+        // Avançar para próximo slot após semis
+        if (numSemis > 0) {
+          currentTimeSlot++;
+          if (currentTimeSlot >= slotsPerCourtPerDay) {
+            currentTimeSlot = 0;
+            currentDayIndex++;
+          }
+        }
+        
+        // Criar 3º lugar e final
+        if (numFinals >= 1) {
+          // 3º lugar
+          const thirdPlaceDate = new Date(startDate);
+          thirdPlaceDate.setDate(thirdPlaceDate.getDate() + currentDayIndex);
+          const totalMinutes3rd = currentTimeSlot * matchDurationMinutes;
+          const hour3rd = startHours + Math.floor((startMinutes + totalMinutes3rd) / 60);
+          const minute3rd = (startMinutes + totalMinutes3rd) % 60;
+          thirdPlaceDate.setHours(hour3rd, minute3rd, 0, 0);
+          
+          knockoutConfronts.push({
+            tournament_id: tournament.id,
+            category_id: cat.id,
+            round: 'third_place',
+            group_name: null,
+            super_team_1_id: null,
+            super_team_2_id: null,
+            scheduled_time: thirdPlaceDate.toISOString(),
+            court_name: availableCourts[0],
+          });
+        }
+        
+        if (numFinals >= 2) {
+          // Final (no mesmo slot mas campo diferente, ou slot seguinte)
+          const finalDate = new Date(startDate);
+          finalDate.setDate(finalDate.getDate() + currentDayIndex);
+          const totalMinutesFinal = currentTimeSlot * matchDurationMinutes;
+          const hourFinal = startHours + Math.floor((startMinutes + totalMinutesFinal) / 60);
+          const minuteFinal = (startMinutes + totalMinutesFinal) % 60;
+          finalDate.setHours(hourFinal, minuteFinal, 0, 0);
+          
+          knockoutConfronts.push({
+            tournament_id: tournament.id,
+            category_id: cat.id,
+            round: 'final',
+            group_name: null,
+            super_team_1_id: null,
+            super_team_2_id: null,
+            scheduled_time: finalDate.toISOString(),
+            court_name: numCourts > 1 ? availableCourts[1] : availableCourts[0],
+          });
+          
+          currentTimeSlot++;
+          if (currentTimeSlot >= slotsPerCourtPerDay) {
+            currentTimeSlot = 0;
+            currentDayIndex++;
+          }
+        }
+      }
+      
+      console.log(`[SUPER-SCHEDULE] Knockout confronts to insert: ${knockoutConfronts.length}`);
+      
+      // Inserir todos os confrontos (grupo + eliminatórias)
+      const allToInsert = [...toInsert, ...knockoutConfronts];
+      
+      const { error } = await supabase.from('super_team_confrontations').insert(allToInsert);
       if (error) throw error;
-      alert(`${toInsert.length} confrontos gerados com horários e campos!`);
+      alert(`${toInsert.length} jogos de grupo + ${knockoutConfronts.length} jogos de eliminatórias gerados!`);
       await fetchTournamentData();
     } catch (e) {
       console.error(e);
@@ -557,10 +899,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const handleSuperTeamsDeleteAllConfrontations = async () => {
     if (!currentTournament || currentTournament.format !== 'super_teams') return;
-    const confirmed = confirm('Eliminar todos os confrontos deste torneio?');
+    const confirmed = confirm('Eliminar todos os confrontos deste torneio? A classificação também será limpa.');
     if (!confirmed) return;
     setLoading(true);
     try {
+      // Eliminar standings primeiro
+      await supabase.from('super_team_standings').delete().eq('tournament_id', tournament.id);
+      // Eliminar confrontos
       const { error } = await supabase.from('super_team_confrontations').delete().eq('tournament_id', tournament.id);
       if (error) throw error;
       await fetchTournamentData();
@@ -590,7 +935,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('name'),
         supabase
           .from('super_team_confrontations')
-          .select('id, tournament_id, category_id, super_team_1_id, super_team_2_id, round, group_name, scheduled_time, court_name, status, team1_matches_won, team2_matches_won, has_super_tiebreak, winner_super_team_id, next_confrontation_id, next_team_slot')
+          .select('*')
           .eq('tournament_id', tournament.id)
           .order('scheduled_time', { ascending: true, nullsFirst: false }),
         supabase
@@ -2432,10 +2777,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const startDate = currentTournament.start_date || new Date().toISOString().split('T')[0];
       const startTime = currentTournament.daily_start_time || '09:00';
       const endTime = currentTournament.daily_end_time || '21:00';
-      const matchDuration = currentTournament.match_duration_minutes || 90;
+      const matchDuration = currentTournament.match_duration_minutes || 30;
+      const dailySchedules = currentTournament.daily_schedules || [];
       
+      console.log('[SCHEDULE] ====================================');
       console.log('[SCHEDULE] Generating schedule for format:', currentTournament.format, 'type:', currentTournament.round_robin_type);
-      console.log('[SCHEDULE] Config:', { numberOfCourts, startDate, startTime, endTime, matchDuration });
+      console.log('[SCHEDULE] Tournament settings from DB:');
+      console.log('[SCHEDULE]   - daily_start_time:', currentTournament.daily_start_time);
+      console.log('[SCHEDULE]   - daily_end_time:', currentTournament.daily_end_time);
+      console.log('[SCHEDULE]   - match_duration_minutes:', currentTournament.match_duration_minutes);
+      console.log('[SCHEDULE]   - daily_schedules:', currentTournament.daily_schedules);
+      console.log('[SCHEDULE] Using values:', { numberOfCourts, startDate, startTime, endTime, matchDuration, dailySchedules });
       
       let matchesToInsert: any[] = [];
       
@@ -2587,7 +2939,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           'round_robin',
           startTime,
           endTime,
-          matchDuration
+          matchDuration,
+          dailySchedules
         );
         
         matchesToInsert = teamMatches.map(m => ({
@@ -2611,7 +2964,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           currentTournament.format || 'round_robin',
           startTime,
           endTime,
-          matchDuration
+          matchDuration,
+          dailySchedules
         );
         
         matchesToInsert = teamMatches.map(m => ({
@@ -3006,8 +3360,35 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           {Object.entries(byGroup).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, groupTeams]) => (
                             <div key={groupName} className="bg-white border rounded-lg overflow-hidden">
                               <div className="bg-gray-200 px-3 py-2 font-medium text-gray-800">Grupo {groupName}</div>
-                              <div className="p-3 space-y-1">
-                                {groupTeams.map(st => <div key={st.id} className="text-sm text-gray-900">{st.name}</div>)}
+                              <div className="p-3 space-y-2">
+                                {groupTeams.map(st => (
+                                  <div 
+                                    key={st.id} 
+                                    className="p-2 bg-gray-50 rounded-lg hover:bg-purple-50 cursor-pointer transition border border-transparent hover:border-purple-200"
+                                    onClick={() => {
+                                      setSelectedSuperTeam(st);
+                                      setShowEditSuperTeam(true);
+                                    }}
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-medium text-gray-900">{st.name}</span>
+                                      <Pencil className="w-4 h-4 text-gray-400" />
+                                    </div>
+                                    {st.super_team_players && st.super_team_players.length > 0 && (
+                                      <div className="mt-1 text-xs text-gray-500">
+                                        {st.super_team_players
+                                          .sort((a, b) => a.player_order - b.player_order)
+                                          .map((p, i) => (
+                                            <span key={p.id}>
+                                              {p.is_captain && '👑 '}
+                                              {p.name}
+                                              {i < st.super_team_players!.length - 1 && ', '}
+                                            </span>
+                                          ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             </div>
                           ))}
@@ -3034,10 +3415,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             <div className="bg-gray-200 px-3 py-2 font-medium text-gray-800">
                               Grupo {groupName}
                             </div>
-                            <div className="p-3 space-y-1">
+                            <div className="p-3 space-y-2">
                               {groupTeams.map(st => (
-                                <div key={st.id} className="text-sm text-gray-900">
-                                  {st.name}
+                                <div 
+                                  key={st.id} 
+                                  className="p-2 bg-gray-50 rounded-lg hover:bg-purple-50 cursor-pointer transition border border-transparent hover:border-purple-200"
+                                  onClick={() => {
+                                    setSelectedSuperTeam(st);
+                                    setShowEditSuperTeam(true);
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium text-gray-900">{st.name}</span>
+                                    <Pencil className="w-4 h-4 text-gray-400" />
+                                  </div>
+                                  {st.super_team_players && st.super_team_players.length > 0 && (
+                                    <div className="mt-1 text-xs text-gray-500">
+                                      {st.super_team_players
+                                        .sort((a, b) => a.player_order - b.player_order)
+                                        .map((p, i) => (
+                                          <span key={p.id}>
+                                            {p.is_captain && '👑 '}
+                                            {p.name}
+                                            {i < st.super_team_players!.length - 1 && ', '}
+                                          </span>
+                                        ))}
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -3327,66 +3731,171 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     )}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 mb-4">
-                  <span className="text-sm text-gray-600">Grupo: Todos</span>
-                  <span className="text-sm text-gray-600">Campo: Todos</span>
-                  <span className="text-sm text-gray-600">Data: Todas</span>
+                <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+                  {/* Filtro por Campo */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-700">Campo:</label>
+                    <select
+                      value={selectedCourtFilter || ''}
+                      onChange={(e) => setSelectedCourtFilter(e.target.value || null)}
+                      className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Todos</option>
+                      {uniqueCourts.map(court => (
+                        <option key={court} value={court}>{court}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Filtro por Data */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-medium text-gray-700">Data:</label>
+                    <select
+                      value={selectedDateFilter || ''}
+                      onChange={(e) => setSelectedDateFilter(e.target.value || null)}
+                      className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Todas</option>
+                      {uniqueDates.map(date => (
+                        <option key={date} value={date}>
+                          {new Date(date).toLocaleDateString(language === 'pt' ? 'pt-PT' : 'en-GB', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  {/* Limpar filtros */}
+                  {(selectedCourtFilter || selectedDateFilter) && (
+                    <button
+                      onClick={() => { setSelectedCourtFilter(null); setSelectedDateFilter(null); }}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      Limpar filtros
+                    </button>
+                  )}
+                  
+                  {/* Contador */}
+                  <span className="text-sm text-gray-500 ml-auto">
+                    {filteredSuperTeamConfrontations.length} de {superTeamConfrontations.length} jogos
+                  </span>
                 </div>
                 {filteredSuperTeamConfrontations.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="flex flex-col gap-4">
                     {filteredSuperTeamConfrontations.map(conf => {
                       const team1 = getSuperTeamById(conf.super_team_1_id);
                       const team2 = getSuperTeamById(conf.super_team_2_id);
-                      const catName = conf.category_id
-                        ? (categories.find(c => c.id === conf.category_id)?.name ?? '')
-                        : '';
+                      const category = conf.category_id ? categories.find(c => c.id === conf.category_id) : null;
+                      const catName = category?.name ?? '';
+                      // Usar a função getCategoryColor para consistência
+                      const catColor = conf.category_id ? getCategoryColor(conf.category_id) : '#3B82F6';
                       const dateStr = conf.scheduled_time
                         ? new Date(conf.scheduled_time).toLocaleDateString(language === 'pt' ? 'pt-PT' : 'en-GB', { day: '2-digit', month: '2-digit' })
                         : '—';
                       const timeStr = conf.scheduled_time
-                        ? new Date(conf.scheduled_time).toLocaleTimeString(language === 'pt' ? 'pt-PT' : 'en-GB', { hour: '2-digit', minute: '2-digit' })
+                        ? new Date(conf.scheduled_time).toLocaleTimeString(language === 'pt' ? 'pt-PT' : 'en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
                         : '—';
+                      
+                      // Tipo de jogo (fase)
+                      const roundLabels: Record<string, string> = {
+                        'group': 'Fase de Grupos',
+                        'quarter_final': 'Quartos de Final',
+                        'semi_final': 'Meia-Final',
+                        'third_place': '3º Lugar',
+                        'final': 'Final'
+                      };
+                      const roundLabel = roundLabels[conf.round || 'group'] || conf.round || 'Fase de Grupos';
+                      const isKnockout = conf.round && conf.round !== 'group';
+                      
+                      const isCompleted = conf.status === 'completed';
+                      
                       return (
-                        <div key={conf.id} className="bg-amber-50 border border-amber-200 rounded-xl p-4 shadow-sm">
-                          <div className="flex justify-between items-start mb-2">
-                            <span className="text-sm text-gray-600">{dateStr}, {timeStr}</span>
-                            <span className="text-xs px-2 py-1 bg-gray-200 rounded">{conf.status === 'completed' ? 'Concluído' : 'Agendado'}</span>
-                          </div>
-                          <p className="text-xs text-gray-500 mb-2">
-                            {conf.court_name || '—'} {catName} {conf.group_name ? `Grupo ${conf.group_name}` : ''}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2 mb-3">
-                            <span className="font-medium text-gray-900">{team1?.name ?? 'A definir'}</span>
-                            <span className="text-gray-400">vs</span>
-                            <span className="font-medium text-gray-900">{team2?.name ?? 'A definir'}</span>
-                          </div>
-                          <p className="text-sm text-gray-600 mb-3">
-                            {conf.team1_matches_won} - {conf.team2_matches_won}
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {team1 && (
-                              <button
-                                onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team1); setShowLineupModal(true); }}
-                                className="text-sm text-blue-600 hover:underline"
-                              >
-                                Definir Duplas
-                              </button>
-                            )}
-                            {team2 && (
-                              <button
-                                onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team2); setShowLineupModal(true); }}
-                                className="text-sm text-blue-600 hover:underline"
-                              >
-                                Definir Duplas
-                              </button>
-                            )}
-                            <button
-                              onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
-                              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                        <div 
+                          key={conf.id} 
+                          className={`border-2 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition ${isCompleted ? 'opacity-60 grayscale-[30%]' : ''}`}
+                          style={{ borderColor: isCompleted ? '#9CA3AF' : catColor }}
+                        >
+                          {/* Header: Date, Time, Court, Category, Group, Round - TOP of card with colored background */}
+                          <div 
+                            className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-white"
+                            style={{ backgroundColor: isCompleted ? '#6B7280' : catColor }}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              {/* Tipo de jogo em destaque */}
+                              <span className={`font-bold px-2 py-0.5 rounded ${isKnockout ? 'bg-yellow-400 text-gray-900' : 'bg-white/20'}`}>
+                                {roundLabel}
+                              </span>
+                              <span className="flex items-center gap-1 font-medium">
+                                <Clock className="w-3 h-3" />
+                                {dateStr}, {timeStr}
+                              </span>
+                              {conf.court_name && (
+                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">{conf.court_name}</span>
+                              )}
+                              {conf.group_name && (
+                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">Grupo {conf.group_name}</span>
+                              )}
+                              {catName && (
+                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">{catName}</span>
+                              )}
+                            </div>
+                            <span 
+                              className={`px-2 py-0.5 rounded font-medium ${
+                                conf.status === 'completed' 
+                                  ? 'bg-green-500 text-white' 
+                                  : 'bg-white/20 text-white'
+                              }`}
                             >
-                              <Pencil className="w-4 h-4" />
-                              Introduzir Resultados
-                            </button>
+                              {conf.status === 'completed' ? 'Concluído' : 'Agendado'}
+                            </span>
+                          </div>
+                          
+                          {/* Body with light background */}
+                          <div className="p-4" style={{ backgroundColor: `${catColor}10` }}>
+                            {/* Teams and Score - centered and bigger */}
+                            <div className="grid grid-cols-3 gap-2 items-center">
+                              <div className="text-right">
+                                <p className="font-bold text-gray-900">{team1?.name ?? 'A definir'}</p>
+                              </div>
+                              <div className="text-center">
+                                {/* Resultado global (jogos ganhos no confronto) */}
+                                <span className="text-3xl font-black text-gray-900">
+                                  {conf.team1_matches_won ?? 0} - {conf.team2_matches_won ?? 0}
+                                </span>
+                                {conf.has_super_tiebreak && (
+                                  <span className="text-xs text-orange-600 mt-1 font-medium">Super Tie-Break</span>
+                                )}
+                              </div>
+                              <div className="text-left">
+                                <p className="font-bold text-gray-900">{team2?.name ?? 'A definir'}</p>
+                              </div>
+                            </div>
+                            
+                            {/* Actions */}
+                            <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200/50">
+                              {team1 && (
+                                <button
+                                  onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team1); setShowLineupModal(true); }}
+                                  className="text-xs text-blue-600 hover:underline"
+                                >
+                                  Duplas {team1.name}
+                                </button>
+                              )}
+                              {team2 && (
+                                <button
+                                  onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team2); setShowLineupModal(true); }}
+                                  className="text-xs text-purple-600 hover:underline"
+                                >
+                                  Duplas {team2.name}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
+                                className="ml-auto flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                Resultados
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -3592,10 +4101,125 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               );
                             })}
                           </ul>
-                          {qualified.length >= 4 && (
+                          {qualified.length >= 2 && catConfrontations.some(c => !c.super_team_1_id || !c.super_team_2_id) && (
                             <button
-                              onClick={() => {}}
-                              className="mt-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                              onClick={async () => {
+                                try {
+                                  setLoading(true);
+                                  const knockoutStage = (cat as any).knockout_stage || 'semifinals';
+                                  
+                                  // Obter standings ordenados por grupo
+                                  const catStandings = superTeamStandings
+                                    .filter(s => s.category_id === cat.id)
+                                    .sort((a, b) => {
+                                      // Primeiro por grupo
+                                      if ((a.group_name || '') < (b.group_name || '')) return -1;
+                                      if ((a.group_name || '') > (b.group_name || '')) return 1;
+                                      // Depois por pontos e diferença de jogos
+                                      return (b.points - a.points) || (b.games_diff - a.games_diff);
+                                    });
+                                  
+                                  // Agrupar por grupo
+                                  const byGroup: Record<string, typeof catStandings> = {};
+                                  catStandings.forEach(s => {
+                                    const g = s.group_name || 'A';
+                                    if (!byGroup[g]) byGroup[g] = [];
+                                    byGroup[g].push(s);
+                                  });
+                                  
+                                  const groupNames = Object.keys(byGroup).sort();
+                                  console.log('[ASSIGN-QUALIFIED] Groups:', groupNames);
+                                  console.log('[ASSIGN-QUALIFIED] Standings by group:', byGroup);
+                                  
+                                  // Atribuir às fases finais
+                                  const semiFinals = catConfrontations.filter(c => c.round === 'semi_final');
+                                  const quarterFinals = catConfrontations.filter(c => c.round === 'quarter_final');
+                                  
+                                  if (knockoutStage === 'semifinals' && semiFinals.length >= 2 && groupNames.length >= 2) {
+                                    // 2 grupos: A1 vs B2, B1 vs A2
+                                    const A = byGroup[groupNames[0]] || [];
+                                    const B = byGroup[groupNames[1]] || [];
+                                    
+                                    if (A.length >= 2 && B.length >= 2) {
+                                      // SF1: A1 vs B2
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: A[0].super_team_id,
+                                        super_team_2_id: B[1].super_team_id,
+                                      }).eq('id', semiFinals[0].id);
+                                      
+                                      // SF2: B1 vs A2
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: B[0].super_team_id,
+                                        super_team_2_id: A[1].super_team_id,
+                                      }).eq('id', semiFinals[1].id);
+                                      
+                                      alert('Equipas atribuídas às meias-finais!');
+                                    } else {
+                                      alert('Necessário pelo menos 2 equipas por grupo.');
+                                    }
+                                  } else if (knockoutStage === 'quarterfinals' && quarterFinals.length >= 4 && groupNames.length >= 2) {
+                                    // Quartos com 2 grupos: A1 vs B4, A2 vs B3, B1 vs A4, B2 vs A3
+                                    const A = byGroup[groupNames[0]] || [];
+                                    const B = byGroup[groupNames[1]] || [];
+                                    
+                                    if (A.length >= 4 && B.length >= 4) {
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: A[0].super_team_id,
+                                        super_team_2_id: B[3].super_team_id,
+                                      }).eq('id', quarterFinals[0].id);
+                                      
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: A[1].super_team_id,
+                                        super_team_2_id: B[2].super_team_id,
+                                      }).eq('id', quarterFinals[1].id);
+                                      
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: B[0].super_team_id,
+                                        super_team_2_id: A[3].super_team_id,
+                                      }).eq('id', quarterFinals[2].id);
+                                      
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: B[1].super_team_id,
+                                        super_team_2_id: A[2].super_team_id,
+                                      }).eq('id', quarterFinals[3].id);
+                                      
+                                      alert('Equipas atribuídas aos quartos de final!');
+                                    } else {
+                                      alert('Necessário pelo menos 4 equipas por grupo.');
+                                    }
+                                  } else if (knockoutStage === 'final' && groupNames.length >= 1) {
+                                    // Só final: 1º vs 2º
+                                    const allTeams = catStandings.slice(0, 2);
+                                    const finalMatch = catConfrontations.find(c => c.round === 'final');
+                                    const thirdPlace = catConfrontations.find(c => c.round === 'third_place');
+                                    
+                                    if (finalMatch && allTeams.length >= 2) {
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: allTeams[0].super_team_id,
+                                        super_team_2_id: allTeams[1].super_team_id,
+                                      }).eq('id', finalMatch.id);
+                                    }
+                                    if (thirdPlace && catStandings.length >= 4) {
+                                      await supabase.from('super_team_confrontations').update({
+                                        super_team_1_id: catStandings[2].super_team_id,
+                                        super_team_2_id: catStandings[3].super_team_id,
+                                      }).eq('id', thirdPlace.id);
+                                    }
+                                    alert('Equipas atribuídas à final!');
+                                  } else {
+                                    alert('Configuração não suportada. Verifique grupos e fase de eliminatórias.');
+                                  }
+                                  
+                                  await fetchTournamentData();
+                                } catch (err) {
+                                  console.error(err);
+                                  alert('Erro ao atribuir equipas.');
+                                } finally {
+                                  setLoading(false);
+                                }
+                              }}
+                              disabled={loading}
+                              className="mt-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
                             >
                               Atribuir equipas qualificadas
                             </button>
@@ -3604,32 +4228,71 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                         <div>
                           <h4 className="font-medium text-gray-700 mb-2">Jogos das eliminatórias</h4>
                           {catConfrontations.length > 0 ? (
-                            <ul className="space-y-2">
-                              {catConfrontations.map(conf => {
-                                const t1 = getSuperTeamById(conf.super_team_1_id);
-                                const t2 = getSuperTeamById(conf.super_team_2_id);
-                                const roundLabel = conf.round === 'semifinal' ? 'Meia-final' : conf.round === 'final' ? 'Final' : conf.round ?? '';
+                            <div className="space-y-3">
+                              {/* Agrupar por fase */}
+                              {['quarter_final', 'semi_final', 'third_place', 'final'].map(roundType => {
+                                const roundConfronts = catConfrontations.filter(c => c.round === roundType);
+                                if (roundConfronts.length === 0) return null;
+                                const roundLabels: Record<string, string> = {
+                                  'quarter_final': 'Quartos de Final',
+                                  'semi_final': 'Meias-Finais',
+                                  'third_place': '3º Lugar',
+                                  'final': 'Final'
+                                };
+                                const roundColors: Record<string, string> = {
+                                  'quarter_final': 'bg-purple-100 border-purple-300',
+                                  'semi_final': 'bg-orange-100 border-orange-300',
+                                  'third_place': 'bg-amber-100 border-amber-300',
+                                  'final': 'bg-green-100 border-green-300'
+                                };
                                 return (
-                                  <li key={conf.id} className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg p-3">
-                                    <span className="text-sm font-medium">
-                                      {roundLabel} {cat.name} {t1?.name ?? 'A definir'} vs {t2?.name ?? 'A definir'}
-                                    </span>
-                                    {t1 && t2 ? (
-                                      <button
-                                        onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
-                                        className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                                      >
-                                        Introduzir Resultados
-                                      </button>
-                                    ) : (
-                                      <span className="text-sm text-gray-500 px-3 py-1.5 bg-gray-200 rounded-lg">Aguardar equipas</span>
-                                    )}
-                                  </li>
+                                  <div key={roundType} className={`rounded-lg border p-3 ${roundColors[roundType]}`}>
+                                    <h5 className="font-semibold text-gray-800 mb-2">{roundLabels[roundType]}</h5>
+                                    <ul className="space-y-2">
+                                      {roundConfronts.map(conf => {
+                                        const t1 = getSuperTeamById(conf.super_team_1_id);
+                                        const t2 = getSuperTeamById(conf.super_team_2_id);
+                                        const dateStr = conf.scheduled_time 
+                                          ? new Date(conf.scheduled_time).toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' })
+                                          : '';
+                                        const timeStr = conf.scheduled_time 
+                                          ? new Date(conf.scheduled_time).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+                                          : '';
+                                        return (
+                                          <li key={conf.id} className="flex flex-wrap items-center justify-between gap-2 bg-white/60 rounded-lg p-3">
+                                            <div className="flex flex-col">
+                                              <span className="text-sm font-bold text-gray-900">
+                                                {t1?.name ?? 'A definir'} vs {t2?.name ?? 'A definir'}
+                                              </span>
+                                              <span className="text-xs text-gray-600">
+                                                {dateStr} {timeStr} - {conf.court_name || 'Campo TBD'}
+                                              </span>
+                                              {conf.status === 'completed' && (
+                                                <span className="text-sm font-bold text-green-700">
+                                                  {conf.team1_matches_won ?? 0} - {conf.team2_matches_won ?? 0}
+                                                </span>
+                                              )}
+                                            </div>
+                                            {t1 && t2 ? (
+                                              <button
+                                                onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
+                                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                              >
+                                                {conf.status === 'completed' ? 'Ver/Editar' : 'Resultados'}
+                                              </button>
+                                            ) : (
+                                              <span className="text-xs text-gray-500 px-2 py-1 bg-gray-200 rounded">Aguardar qualificados</span>
+                                            )}
+                                          </li>
+                                        );
+                                      })}
+                                    </ul>
+                                  </div>
                                 );
                               })}
-                            </ul>
+                            </div>
                           ) : (
-                            <p className="text-sm text-gray-500">Ainda não há jogos de eliminatórias</p>
+                            <p className="text-sm text-gray-500">Ainda não há jogos de eliminatórias. Gere o calendário primeiro.</p>
                           )}
                         </div>
                       </div>
@@ -3768,6 +4431,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }}
           team1={getSuperTeamById(selectedConfrontation.super_team_1_id) ?? null}
           team2={getSuperTeamById(selectedConfrontation.super_team_2_id) ?? null}
+          gameFormat={categories.find(c => c.id === selectedConfrontation.category_id)?.game_format || '1set'}
           onClose={() => {
             setShowResultsModal(false);
             setSelectedConfrontation(null);
@@ -3775,6 +4439,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           onSuccess={() => {
             setShowResultsModal(false);
             setSelectedConfrontation(null);
+            fetchTournamentData();
+          }}
+        />
+      )}
+
+      {isSuperTeams && showEditSuperTeam && selectedSuperTeam && (
+        <EditSuperTeamModal
+          superTeam={selectedSuperTeam}
+          tournamentId={currentTournament.id}
+          categories={categories}
+          onClose={() => {
+            setShowEditSuperTeam(false);
+            setSelectedSuperTeam(null);
+          }}
+          onSuccess={() => {
+            setShowEditSuperTeam(false);
+            setSelectedSuperTeam(null);
             fetchTournamentData();
           }}
         />

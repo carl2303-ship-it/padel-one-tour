@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { X, Upload } from 'lucide-react';
+import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 
 type CreateTournamentModalProps = {
@@ -388,21 +389,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t.tournament.dailyStartTime} *
               </label>
-              <input
-                type="text"
-                required
-                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
-                placeholder="HH:MM (ex: 09:00)"
-                maxLength={5}
+              <TimeInput24h
                 value={formData.daily_start_time}
-                onChange={(e) => {
-                  let value = e.target.value.replace(/[^0-9:]/g, '');
-                  if (value.length === 2 && !value.includes(':')) value += ':';
-                  if (value.length <= 5) {
-                    setFormData({ ...formData, daily_start_time: value });
-                  }
-                }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                onChange={(value) => setFormData({ ...formData, daily_start_time: value })}
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyStartTimeHelper}</p>
             </div>
@@ -411,21 +400,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t.tournament.dailyEndTime} *
               </label>
-              <input
-                type="text"
-                required
-                pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]"
-                placeholder="HH:MM (ex: 21:00)"
-                maxLength={5}
+              <TimeInput24h
                 value={formData.daily_end_time}
-                onChange={(e) => {
-                  let value = e.target.value.replace(/[^0-9:]/g, '');
-                  if (value.length === 2 && !value.includes(':')) value += ':';
-                  if (value.length <= 5) {
-                    setFormData({ ...formData, daily_end_time: value });
-                  }
-                }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                onChange={(value) => setFormData({ ...formData, daily_end_time: value })}
               />
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
             </div>
@@ -444,27 +421,21 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                         return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
                       })()}
                     </div>
-                    <input
-                      type="time"
-                      step="60"
+                    <TimeInput24h
                       value={schedule.start_time}
-                      onChange={(e) => {
+                      onChange={(value) => {
                         const updated = [...dailySchedules];
-                        updated[index].start_time = e.target.value;
+                        updated[index].start_time = value;
                         setDailySchedules(updated);
                       }}
-                      className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
-                    <input
-                      type="time"
-                      step="60"
+                    <TimeInput24h
                       value={schedule.end_time}
-                      onChange={(e) => {
+                      onChange={(value) => {
                         const updated = [...dailySchedules];
-                        updated[index].end_time = e.target.value;
+                        updated[index].end_time = value;
                         setDailySchedules(updated);
                       }}
-                      className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                 ))}

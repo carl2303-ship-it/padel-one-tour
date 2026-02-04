@@ -20,7 +20,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
-    qualified_per_group: 2
+    qualified_per_group: 2,
+    game_format: '1set' as '1set' | '3sets'
   });
 
   useEffect(() => {
@@ -61,7 +62,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
           max_teams: newCategory.max_teams,
           knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
-          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null
+          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
+          game_format: newCategory.game_format
         });
 
       if (error) throw error;
@@ -72,7 +74,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         number_of_groups: 0,
         max_teams: 16,
         knockout_stage: 'quarterfinals',
-        qualified_per_group: 2
+        qualified_per_group: 2,
+        game_format: '1set'
       });
 
       await loadCategories();
@@ -100,7 +103,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
           max_teams: editingCategory.max_teams,
           knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null
+          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
+          game_format: editingCategory.game_format || '1set'
         })
         .eq('id', editingCategory.id);
 
@@ -255,6 +259,20 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Formato dos Jogos
+                </label>
+                <select
+                  value={newCategory.game_format}
+                  onChange={(e) => setNewCategory({ ...newCategory, game_format: e.target.value as '1set' | '3sets' })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="1set">1 Set</option>
+                  <option value="3sets">Melhor de 3 Sets</option>
+                </select>
+              </div>
+
             </div>
 
             <button
@@ -368,6 +386,20 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               onChange={(e) => setEditingCategory({ ...editingCategory, max_teams: parseInt(e.target.value) || 16 })}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Formato dos Jogos
+                            </label>
+                            <select
+                              value={editingCategory.game_format || '1set'}
+                              onChange={(e) => setEditingCategory({ ...editingCategory, game_format: e.target.value as '1set' | '3sets' })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              <option value="1set">1 Set</option>
+                              <option value="3sets">Melhor de 3 Sets</option>
+                            </select>
                           </div>
 
                         </div>
