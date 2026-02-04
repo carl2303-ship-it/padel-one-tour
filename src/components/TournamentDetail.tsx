@@ -3814,83 +3814,90 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           className={`border-2 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition ${isCompleted ? 'opacity-60 grayscale-[30%]' : ''}`}
                           style={{ borderColor: isCompleted ? '#9CA3AF' : catColor }}
                         >
-                          {/* Header: Date, Time, Court, Category, Group, Round - TOP of card with colored background */}
+                          {/* Header: Mobile-friendly layout */}
                           <div 
-                            className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-xs text-white"
+                            className="px-3 py-2 text-xs text-white"
                             style={{ backgroundColor: isCompleted ? '#6B7280' : catColor }}
                           >
-                            <div className="flex flex-wrap items-center gap-2">
-                              {/* Tipo de jogo em destaque */}
-                              <span className={`font-bold px-2 py-0.5 rounded ${isKnockout ? 'bg-yellow-400 text-gray-900' : 'bg-white/20'}`}>
+                            {/* Linha 1: Tipo de jogo e status */}
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className={`font-bold px-2 py-0.5 rounded text-xs ${isKnockout ? 'bg-yellow-400 text-gray-900' : 'bg-white/20'}`}>
                                 {roundLabel}
                               </span>
+                              <span 
+                                className={`px-2 py-0.5 rounded font-medium text-xs ${
+                                  conf.status === 'completed' 
+                                    ? 'bg-green-500 text-white' 
+                                    : 'bg-white/20 text-white'
+                                }`}
+                              >
+                                {conf.status === 'completed' ? 'Concluído' : 'Agendado'}
+                              </span>
+                            </div>
+                            {/* Linha 2: Data, hora, campo, grupo, categoria */}
+                            <div className="flex flex-wrap items-center gap-1.5 text-[10px] sm:text-xs">
                               <span className="flex items-center gap-1 font-medium">
                                 <Clock className="w-3 h-3" />
-                                {dateStr}, {timeStr}
+                                {dateStr} {timeStr}
                               </span>
                               {conf.court_name && (
-                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">{conf.court_name}</span>
+                                <span className="bg-white/20 px-1.5 py-0.5 rounded truncate max-w-[80px] sm:max-w-none">{conf.court_name}</span>
                               )}
                               {conf.group_name && (
-                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">Grupo {conf.group_name}</span>
+                                <span className="bg-white/20 px-1.5 py-0.5 rounded">G.{conf.group_name}</span>
                               )}
                               {catName && (
-                                <span className="font-semibold bg-white/20 px-2 py-0.5 rounded">{catName}</span>
+                                <span className="bg-white/20 px-1.5 py-0.5 rounded truncate max-w-[60px] sm:max-w-none">{catName}</span>
                               )}
                             </div>
-                            <span 
-                              className={`px-2 py-0.5 rounded font-medium ${
-                                conf.status === 'completed' 
-                                  ? 'bg-green-500 text-white' 
-                                  : 'bg-white/20 text-white'
-                              }`}
-                            >
-                              {conf.status === 'completed' ? 'Concluído' : 'Agendado'}
-                            </span>
                           </div>
                           
-                          {/* Body with light background */}
-                          <div className="p-4" style={{ backgroundColor: `${catColor}10` }}>
-                            {/* Teams and Score - centered and bigger */}
-                            <div className="grid grid-cols-3 gap-2 items-center">
-                              <div className="text-right">
-                                <p className="font-bold text-gray-900">{team1?.name ?? 'A definir'}</p>
+                          {/* Body with light background - Mobile optimized */}
+                          <div className="p-3 sm:p-4" style={{ backgroundColor: `${catColor}10` }}>
+                            {/* Teams and Score - stacked on mobile, grid on desktop */}
+                            <div className="flex flex-col sm:grid sm:grid-cols-3 gap-1 sm:gap-2 items-center">
+                              {/* Team 1 */}
+                              <div className="text-center sm:text-right w-full">
+                                <p className="font-bold text-gray-900 text-sm sm:text-base truncate">{team1?.name ?? 'A definir'}</p>
                               </div>
-                              <div className="text-center">
-                                {/* Resultado global (jogos ganhos no confronto) */}
-                                <span className="text-3xl font-black text-gray-900">
+                              {/* Score */}
+                              <div className="text-center py-1">
+                                <span className="text-2xl sm:text-3xl font-black text-gray-900">
                                   {conf.team1_matches_won ?? 0} - {conf.team2_matches_won ?? 0}
                                 </span>
                                 {conf.has_super_tiebreak && (
-                                  <span className="text-xs text-orange-600 mt-1 font-medium">Super Tie-Break</span>
+                                  <span className="block text-[10px] sm:text-xs text-orange-600 font-medium">Super Tie-Break</span>
                                 )}
                               </div>
-                              <div className="text-left">
-                                <p className="font-bold text-gray-900">{team2?.name ?? 'A definir'}</p>
+                              {/* Team 2 */}
+                              <div className="text-center sm:text-left w-full">
+                                <p className="font-bold text-gray-900 text-sm sm:text-base truncate">{team2?.name ?? 'A definir'}</p>
                               </div>
                             </div>
                             
-                            {/* Actions */}
-                            <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200/50">
-                              {team1 && (
-                                <button
-                                  onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team1); setShowLineupModal(true); }}
-                                  className="text-xs text-blue-600 hover:underline"
-                                >
-                                  Duplas {team1.name}
-                                </button>
-                              )}
-                              {team2 && (
-                                <button
-                                  onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team2); setShowLineupModal(true); }}
-                                  className="text-xs text-purple-600 hover:underline"
-                                >
-                                  Duplas {team2.name}
-                                </button>
-                              )}
+                            {/* Actions - Stack on mobile */}
+                            <div className="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t border-gray-200/50">
+                              <div className="flex gap-2 justify-center sm:justify-start">
+                                {team1 && (
+                                  <button
+                                    onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team1); setShowLineupModal(true); }}
+                                    className="text-xs text-blue-600 hover:underline truncate max-w-[120px]"
+                                  >
+                                    Duplas {team1.name}
+                                  </button>
+                                )}
+                                {team2 && (
+                                  <button
+                                    onClick={() => { setSelectedConfrontation(conf); setSelectedLineupTeam(team2); setShowLineupModal(true); }}
+                                    className="text-xs text-purple-600 hover:underline truncate max-w-[120px]"
+                                  >
+                                    Duplas {team2.name}
+                                  </button>
+                                )}
+                              </div>
                               <button
                                 onClick={() => { setSelectedConfrontation(conf); setShowResultsModal(true); }}
-                                className="ml-auto flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                                className="sm:ml-auto flex items-center justify-center gap-1 px-3 py-2 sm:py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition w-full sm:w-auto"
                               >
                                 <Pencil className="w-3 h-3" />
                                 Resultados
