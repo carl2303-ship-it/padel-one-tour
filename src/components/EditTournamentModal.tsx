@@ -25,8 +25,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     end_time: (tournament as any).end_time || '12:00',
     daily_start_time: (tournament as any).daily_start_time || '09:00',
     daily_end_time: (tournament as any).daily_end_time || '21:00',
-    format: tournament.format,
-    round_robin_type: (tournament as any).round_robin_type || 'teams',
+    format: tournament.format === 'round_robin'
+      ? ((tournament as any).round_robin_type === 'individual' || (tournament as any).round_robin_type === 'american' ? 'round_robin_individual' : 'round_robin_teams')
+      : tournament.format,
     max_teams: tournament.max_teams,
     number_of_courts: (tournament as any).number_of_courts || 1,
     status: tournament.status,
@@ -293,7 +294,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
-        format: formData.format,
+        format: (formData.format === 'round_robin_individual' || formData.format === 'round_robin_teams') ? 'round_robin' : formData.format,
+        round_robin_type: formData.format === 'round_robin_individual' ? 'individual' : formData.format === 'round_robin_teams' ? 'teams' : null,
         number_of_courts: selectedCourtNames.length > 0 ? selectedCourtNames.length : formData.number_of_courts,
         status: formData.status,
         match_duration_minutes: formData.match_duration_minutes,
@@ -739,17 +741,29 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               onChange={(e) =>
                 setFormData({
                   ...formData,
-                  format: e.target.value as 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams',
+                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender',
                 })
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <option value="single_elimination">{t.format.single_elimination}</option>
-              <option value="round_robin">{t.format.round_robin}</option>
-              <option value="groups_knockout">{t.format.groups_knockout}</option>
-              <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
-              <option value="super_teams">{t.format.super_teams}</option>
+              <optgroup label="Formatos Individuais (Americano)">
+                <option value="individual_groups_knockout">Americano - Grupos + Eliminatórias</option>
+                <option value="round_robin_individual">Americano Individual - Todos contra Todos</option>
+              </optgroup>
+              <optgroup label="Formatos por Equipas">
+                <option value="groups_knockout">Equipas - Grupos + Eliminatórias</option>
+                <option value="single_elimination">Equipas - Eliminatória Direta</option>
+                <option value="round_robin_teams">Americano Equipas - Todos contra Todos</option>
+                <option value="super_teams">Super Teams - 4 Jogadores por Equipa</option>
+              </optgroup>
+              <optgroup label="Formatos Especiais (Multi-Categoria)">
+                <option value="crossed_playoffs">Playoffs Cruzados - 3 Categorias (ex: M3/M4/M5)</option>
+                <option value="mixed_gender">Americano Misto - Homens + Mulheres (2/4/6 grupos)</option>
+              </optgroup>
             </select>
+            <p className="text-xs text-gray-500 mt-1">
+              O tipo de PDF exportado corresponde a este formato.
+            </p>
           </div>
 
           {formData.format === 'super_teams' && (
@@ -757,32 +771,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <h3 className="text-sm font-semibold text-blue-900">Super Teams</h3>
               <p className="text-sm text-blue-800">
                 As definições de grupos, número de equipas e fases finais são configuradas por categoria do torneio.
-              </p>
-            </div>
-          )}
-
-          {formData.format === 'round_robin' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Round Robin Type *
-              </label>
-              <select
-                value={formData.round_robin_type}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    round_robin_type: e.target.value as 'teams' | 'individual',
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="teams">Teams (Fixed Pairs)</option>
-                <option value="individual">Individual (Rotating Partners)</option>
-              </select>
-              <p className="text-sm text-gray-500 mt-1">
-                {formData.round_robin_type === 'teams'
-                  ? 'Teams play all other teams'
-                  : 'Players rotate partners each round'}
               </p>
             </div>
           )}

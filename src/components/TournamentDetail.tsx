@@ -605,7 +605,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       setTeams([]);
       setMatches([]);
       setIndividualPlayers([]);
-    } else if (isIndividualRoundRobin || isIndividualGroupsKnockout) {
+    } else if (isIndividualGroupsKnockout || isIndividualRoundRobin) {
+      // Formatos individuais: individual_groups_knockout e round_robin+individual (Americano Individual)
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
@@ -2684,10 +2685,98 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     setLoading(true);
     try {
-      // 1. Calculate individual final positions if it's an individual format
+      // 1. Calculate final positions
       if (isIndividualFormat()) {
         console.log('[FINALIZE] Calculating individual final positions...');
         await calculateIndividualFinalPositions(tournament.id, selectedCategory);
+      } else {
+        // For team tournaments, calculate team positions from match results
+        console.log('[FINALIZE] Calculating team final positions from match results...');
+        
+        // Get only round_robin completed matches (not knockout/elimination matches)
+        const { data: completedMatches } = await supabase
+          .from('matches')
+          .select('*')
+          .eq('tournament_id', tournament.id)
+          .eq('status', 'completed')
+          .eq('round', 'round_robin');
+
+        console.log('[FINALIZE] Round robin matches found:', completedMatches?.length || 0);
+
+        // Get all teams
+        const { data: tournamentTeams } = await supabase
+          .from('teams')
+          .select('*')
+          .eq('tournament_id', tournament.id);
+
+        if (completedMatches && tournamentTeams && tournamentTeams.length > 0) {
+          // Calculate stats for each team using winner_id and set scores
+          const teamStats = tournamentTeams.map(team => {
+            let wins = 0;
+            let losses = 0;
+            let gamesWon = 0;
+            let gamesLost = 0;
+
+            completedMatches.forEach(match => {
+              const isTeam1 = match.team1_id === team.id;
+              const isTeam2 = match.team2_id === team.id;
+              
+              if (!isTeam1 && !isTeam2) return;
+              
+              // Use winner_id to determine win/loss (more reliable)
+              if (match.winner_id === team.id) {
+                wins++;
+              } else if (match.winner_id) {
+                losses++;
+              }
+              
+              // Calculate games from set scores
+              const t1Score = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+              const t2Score = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+              
+              if (isTeam1) {
+                gamesWon += t1Score;
+                gamesLost += t2Score;
+              } else {
+                gamesWon += t2Score;
+                gamesLost += t1Score;
+              }
+            });
+
+            return {
+              teamId: team.id,
+              teamName: team.name,
+              wins,
+              losses,
+              gamesWon,
+              gamesLost,
+              gameDiff: gamesWon - gamesLost,
+              matchesPlayed: wins + losses
+            };
+          });
+
+          // Sort teams by: 1) Wins, 2) Game difference, 3) Games won
+          teamStats.sort((a, b) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            if (b.gameDiff !== a.gameDiff) return b.gameDiff - a.gameDiff;
+            return b.gamesWon - a.gamesWon;
+          });
+
+          console.log('[FINALIZE] Team standings:', teamStats);
+
+          // Update final_position for each team
+          for (let i = 0; i < teamStats.length; i++) {
+            const position = i + 1;
+            await supabase
+              .from('teams')
+              .update({ final_position: position })
+              .eq('id', teamStats[i].teamId);
+          }
+
+          console.log('[FINALIZE] Updated', teamStats.length, 'team positions');
+        } else {
+          console.log('[FINALIZE] No teams or matches found');
+        }
       }
 
       // 2. Update tournament status to completed FIRST
@@ -3152,7 +3241,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             {groupTeams.map(team => (
                               <div key={team.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
                                 <div>
-                                  <p className="font-medium text-gray-900">
+                                  <p className="font-semibold text-gray-900">{team.name}</p>
+                                  <p className="text-sm text-gray-600">
                                     {team.player1?.name} / {team.player2?.name}
                                   </p>
                                 </div>
@@ -3179,7 +3269,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           className="flex items-center justify-between bg-white border rounded-lg p-4 hover:shadow-md transition"
                         >
                           <div>
-                            <p className="font-medium text-gray-900">
+                            <p className="font-semibold text-gray-900">{team.name}</p>
+                            <p className="text-sm text-gray-600">
                               {team.player1?.name} / {team.player2?.name}
                             </p>
                             {team.group_name && (
@@ -3622,7 +3713,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showEditTeam && selectedTeam && (
         <EditTeamModal
           team={selectedTeam}
-          categories={categories}
+          tournamentId={tournament.id}
           onClose={() => {
             setShowEditTeam(false);
             setSelectedTeam(undefined);

@@ -499,48 +499,128 @@ async function updatePlayerStanding(
 }
 
 export async function updateLeagueStandings(tournamentId: string) {
-  console.log('updateLeagueStandings called for tournament:', tournamentId);
+  console.log('[LEAGUE_UPDATE] updateLeagueStandings called for tournament:', tournamentId);
 
-  const { data: tournament } = await supabase
+  const { data: tournament, error: tournamentError } = await supabase
     .from('tournaments')
     .select('status')
     .eq('id', tournamentId)
     .single();
 
-  console.log('Tournament data:', tournament);
+  console.log('[LEAGUE_UPDATE] Tournament data:', tournament);
+  console.log('[LEAGUE_UPDATE] Tournament error:', tournamentError);
 
   if (!tournament || tournament.status !== 'completed') {
-    console.log('Skipping - no tournament or not completed');
+    console.log('[LEAGUE_UPDATE] Skipping - no tournament or not completed. Status:', tournament?.status);
     return;
   }
 
-  const { data: tournamentLeagues } = await supabase
+  const { data: tournamentLeagues, error: leaguesError } = await supabase
     .from('tournament_leagues')
-    .select('league_id')
+    .select('league_id, league_category')
     .eq('tournament_id', tournamentId);
 
+  console.log('[LEAGUE_UPDATE] Tournament leagues:', tournamentLeagues);
+  console.log('[LEAGUE_UPDATE] Tournament leagues error:', leaguesError);
+
   if (!tournamentLeagues || tournamentLeagues.length === 0) {
-    console.log('Skipping - no leagues associated with this tournament');
+    console.log('[LEAGUE_UPDATE] Skipping - no leagues associated with this tournament');
     return;
   }
 
+  // Verificar se há equipas com final_position e dados completos
+  const { data: teams, error: teamsError } = await supabase
+    .from('teams')
+    .select(`
+      id, 
+      name, 
+      final_position, 
+      player1_id, 
+      player2_id
+    `)
+    .eq('tournament_id', tournamentId);
+
+  console.log('[LEAGUE_UPDATE] Teams found:', teams?.length || 0);
+  console.log('[LEAGUE_UPDATE] Teams with final_position:', teams?.filter(t => t.final_position).length || 0);
+  console.log('[LEAGUE_UPDATE] Teams data:', teams);
+
+  // Verificar se os player IDs existem na tabela players e têm nomes
+  if (teams && teams.length > 0) {
+    const allPlayerIds = teams.flatMap(t => [t.player1_id, t.player2_id]).filter(Boolean);
+    console.log('[LEAGUE_UPDATE] Player IDs from teams:', allPlayerIds);
+    
+    const { data: playersFromIds, error: playersFromIdsError } = await supabase
+      .from('players')
+      .select('id, name, tournament_id')
+      .in('id', allPlayerIds);
+    
+    console.log('[LEAGUE_UPDATE] Players found by ID:', playersFromIds?.length || 0);
+    console.log('[LEAGUE_UPDATE] Players from IDs data:', playersFromIds);
+    console.log('[LEAGUE_UPDATE] Players with names:', playersFromIds?.filter(p => p.name).length || 0);
+    
+    if (playersFromIds && playersFromIds.length === 0) {
+      console.warn('[LEAGUE_UPDATE] WARNING: No players found with the IDs from teams! This is why RPC fails.');
+    }
+  }
+
+  // Verificar se há jogadores individuais com final_position
+  const { data: players, error: playersError } = await supabase
+    .from('players')
+    .select('id, name, final_position')
+    .eq('tournament_id', tournamentId);
+
+  console.log('[LEAGUE_UPDATE] Players found:', players?.length || 0);
+  console.log('[LEAGUE_UPDATE] Players with final_position:', players?.filter(p => p.final_position).length || 0);
+
   const uniqueLeagueIds = [...new Set(tournamentLeagues.map(tl => tl.league_id))];
-  console.log('Associated leagues:', uniqueLeagueIds);
+  console.log('[LEAGUE_UPDATE] Associated leagues:', uniqueLeagueIds);
 
   for (const leagueId of uniqueLeagueIds) {
-    console.log('Calling recalculate_league_standings_for_league for:', leagueId);
-    const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
+    console.log('[LEAGUE_UPDATE] Calling recalculate_league_standings for:', leagueId);
+    
+    // Buscar dados da liga para ver o sistema de pontuação
+    const { data: leagueData, error: leagueError } = await supabase
+      .from('leagues')
+      .select('id, name, scoring_system, category_scoring_systems')
+      .eq('id', leagueId)
+      .single();
+    
+    console.log('[LEAGUE_UPDATE] Liga:', leagueData?.name);
+    console.log('[LEAGUE_UPDATE] scoring_system:', leagueData?.scoring_system);
+    console.log('[LEAGUE_UPDATE] category_scoring_systems:', leagueData?.category_scoring_systems);
+    
+    // Verificar standings ANTES da chamada RPC
+    const { data: standingsBefore } = await supabase
+      .from('league_standings')
+      .select('*')
+      .eq('league_id', leagueId);
+    console.log('[LEAGUE_UPDATE] Standings BEFORE RPC:', standingsBefore?.length || 0, 'entries');
+    
+    const { error, data } = await supabase.rpc('recalculate_league_standings', {
       league_uuid: leagueId
     });
 
     if (error) {
-      console.error('Error recalculating league standings:', error);
+      console.error('[LEAGUE_UPDATE] Error recalculating league standings:', error);
+      console.error('[LEAGUE_UPDATE] Error details:', JSON.stringify(error));
     } else {
-      console.log('Recalculated standings for league:', leagueId);
+      console.log('[LEAGUE_UPDATE] RPC executed for league:', leagueId);
+      
+      // Verificar standings DEPOIS da chamada RPC
+      const { data: standingsAfter, error: standingsError } = await supabase
+        .from('league_standings')
+        .select('*')
+        .eq('league_id', leagueId);
+      
+      console.log('[LEAGUE_UPDATE] Standings AFTER RPC:', standingsAfter?.length || 0, 'entries');
+      console.log('[LEAGUE_UPDATE] Standings error:', standingsError);
+      if (standingsAfter && standingsAfter.length > 0) {
+        console.log('[LEAGUE_UPDATE] Sample standing:', standingsAfter[0]);
+      }
     }
   }
 
-  console.log('League standings updated for all associated leagues');
+  console.log('[LEAGUE_UPDATE] League standings updated for all associated leagues');
 }
 
 export async function recalculateLeagueStandingsForTournament(tournamentId: string) {
@@ -560,8 +640,8 @@ export async function recalculateLeagueStandingsForTournament(tournamentId: stri
   console.log('Recalculating for leagues:', uniqueLeagueIds);
 
   for (const leagueId of uniqueLeagueIds) {
-    console.log('Calling recalculate_league_standings_for_league for:', leagueId);
-    const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
+    console.log('Calling recalculate_league_standings for:', leagueId);
+    const { error } = await supabase.rpc('recalculate_league_standings', {
       league_uuid: leagueId
     });
 

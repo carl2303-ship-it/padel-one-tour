@@ -24,7 +24,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     daily_start_time: '09:00',
     daily_end_time: '21:00',
     format: 'individual_groups_knockout' as const,
-    round_robin_type: 'teams' as const,
     match_duration_minutes: 30,
     teams_per_group: 4,
     number_of_groups: 4,
@@ -232,8 +231,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         end_time: formData.daily_end_time,
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
-        format: formData.format,
-        round_robin_type: formData.round_robin_type,
+        format: (formData.format === 'round_robin_individual' || formData.format === 'round_robin_teams') ? 'round_robin' : formData.format,
+        round_robin_type: formData.format === 'round_robin_individual' ? 'individual' : formData.format === 'round_robin_teams' ? 'teams' : null,
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
         match_duration_minutes: formData.match_duration_minutes,
@@ -489,11 +488,12 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             >
               <optgroup label="Formatos Individuais (Americano)">
                 <option value="individual_groups_knockout">Americano - Grupos + Eliminatórias</option>
-                <option value="round_robin">Americano - Todos contra Todos</option>
+                <option value="round_robin_individual">Americano Individual - Todos contra Todos</option>
               </optgroup>
               <optgroup label="Formatos por Equipas">
                 <option value="groups_knockout">Equipas - Grupos + Eliminatórias</option>
                 <option value="single_elimination">Equipas - Eliminatória Direta</option>
+                <option value="round_robin_teams">Americano Equipas - Todos contra Todos</option>
                 <option value="super_teams">Super Teams - 4 Jogadores por Equipa</option>
               </optgroup>
               <optgroup label="Formatos Especiais (Multi-Categoria)">
@@ -515,38 +515,20 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             </div>
           )}
 
-          {formData.format === 'round_robin' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Round Robin Type *
-              </label>
-              <select
-                value={formData.round_robin_type}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    round_robin_type: e.target.value as 'teams' | 'individual',
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="teams">Teams (Fixed Pairs)</option>
-                <option value="individual">Individual (Rotating Partners)</option>
-              </select>
-              <p className="text-sm text-gray-500 mt-1">
-                {formData.round_robin_type === 'teams'
-                  ? 'Teams play all other teams'
-                  : 'Players rotate partners each round'}
+          {formData.format === 'round_robin_individual' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-semibold text-blue-900 mb-2">Americano Individual - Todos contra Todos</h4>
+              <p className="text-sm text-blue-800">
+                Parceiros rotativos em cada ronda. O horário de início e fim será usado para calcular a duração dos jogos consoante o número de jogadores.
               </p>
             </div>
           )}
 
-          {formData.format === 'round_robin' && formData.round_robin_type === 'individual' && (
+          {formData.format === 'round_robin_teams' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">Individual Round Robin</h4>
+              <h4 className="font-semibold text-blue-900 mb-2">Americano Equipas - Todos contra Todos</h4>
               <p className="text-sm text-blue-800">
-                Start time and end time will be used to calculate match duration automatically based on number of players.
-                Players will be randomly paired each round.
+                Equipas fixas (duplas). Todas as equipas jogam contra todas.
               </p>
             </div>
           )}
