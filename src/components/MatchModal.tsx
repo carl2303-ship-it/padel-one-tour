@@ -1200,16 +1200,18 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
                 <input
                   type="number"
                   min="0"
-                  value={formData.team1_score_set1}
+                  value={formData.team1_score_set1 === 0 ? '' : formData.team1_score_set1}
                   onChange={(e) => setFormData({ ...formData, team1_score_set1: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
                 <input
                   type="number"
                   min="0"
-                  value={formData.team2_score_set1}
+                  value={formData.team2_score_set1 === 0 ? '' : formData.team2_score_set1}
                   onChange={(e) => setFormData({ ...formData, team2_score_set1: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
               </div>
 
@@ -1218,16 +1220,18 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
                 <input
                   type="number"
                   min="0"
-                  value={formData.team1_score_set2}
+                  value={formData.team1_score_set2 === 0 ? '' : formData.team1_score_set2}
                   onChange={(e) => setFormData({ ...formData, team1_score_set2: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
                 <input
                   type="number"
                   min="0"
-                  value={formData.team2_score_set2}
+                  value={formData.team2_score_set2 === 0 ? '' : formData.team2_score_set2}
                   onChange={(e) => setFormData({ ...formData, team2_score_set2: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
               </div>
 
@@ -1236,16 +1240,18 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
                 <input
                   type="number"
                   min="0"
-                  value={formData.team1_score_set3}
+                  value={formData.team1_score_set3 === 0 ? '' : formData.team1_score_set3}
                   onChange={(e) => setFormData({ ...formData, team1_score_set3: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
                 <input
                   type="number"
                   min="0"
-                  value={formData.team2_score_set3}
+                  value={formData.team2_score_set3 === 0 ? '' : formData.team2_score_set3}
                   onChange={(e) => setFormData({ ...formData, team2_score_set3: e.target.value === '' ? 0 : parseInt(e.target.value) })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center"
+                  placeholder="0"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center placeholder:text-gray-400"
                 />
               </div>
             </div>
