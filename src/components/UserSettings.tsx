@@ -247,18 +247,18 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
       });
 
       if (error) {
-        setTestEmailMessage({ type: 'error', text: error.message });
+        setTestEmailMessage({ type: 'error', text: error.message || t.settings?.testEmail?.error });
       } else if (data.error) {
         setTestEmailMessage({ type: 'error', text: data.error });
       } else {
         setTestEmailMessage({
           type: 'success',
-          text: `Email de teste enviado com sucesso para ${testEmail}!`,
+          text: t.settings?.testEmail?.success ?? `Test email sent to ${testEmail}`,
         });
         setTestEmail('');
       }
     } catch (error: any) {
-      setTestEmailMessage({ type: 'error', text: error.message });
+      setTestEmailMessage({ type: 'error', text: error.message || t.settings?.testEmail?.error });
     } finally {
       setTestEmailLoading(false);
     }
@@ -664,18 +664,18 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
           <div className="border-t pt-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <Send className="w-5 h-5" />
-              Testar Sistema de Email
+              {t.settings?.testEmail?.title ?? 'Test Email System'}
             </h3>
             <form onSubmit={handleSendTestEmail} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Email de Teste
+                  {t.settings?.testEmail?.label ?? 'Test Email'}
                 </label>
                 <input
                   type="email"
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
-                  placeholder="seu-email@example.com"
+                  placeholder={t.settings?.testEmail?.placeholder ?? 'your-email@example.com'}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   required
                 />
@@ -698,8 +698,7 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
 
               <div className="p-3 bg-yellow-50 rounded-lg">
                 <p className="text-xs text-yellow-800">
-                  Use este formulário para testar se o sistema de envio de emails está a funcionar corretamente. 
-                  Será enviado um email de teste para o endereço indicado.
+                  {t.settings?.testEmail?.description ?? 'Use this form to test if the email system is working. A test email will be sent to the address above.'}
                 </p>
               </div>
 
@@ -708,7 +707,7 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
                 disabled={testEmailLoading}
                 className="w-full py-3 px-4 bg-yellow-600 text-white rounded-lg font-medium hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
-                {testEmailLoading ? 'A enviar...' : 'Enviar Email de Teste'}
+                {testEmailLoading ? (t.settings?.testEmail?.sending ?? 'Sending...') : (t.settings?.testEmail?.button ?? 'Send Test Email')}
               </button>
             </form>
           </div>

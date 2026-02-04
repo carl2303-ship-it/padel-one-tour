@@ -341,6 +341,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const isIndividualFormat = () => {
+    // Formatos de torneio que são sempre individuais
+    if (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender') {
+      return true;
+    }
+    
+    // Verificar por categoria
     if (selectedCategory && selectedCategory !== 'no-category') {
       const category = categories.find(c => c.id === selectedCategory);
       if (category) {
@@ -2007,8 +2013,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       `  J3: (3°B + 2°C) vs (4°B + 1°C) → (${rankB[2].name} + ${rankC[1].name}) vs (${rankB[3].name} + ${rankC[0].name})\n\n` +
       `RONDA 2:\n` +
       `  J4: Vencedor J1 vs Vencedor J2\n` +
-      `  J5: Perdedor J1 vs Vencedor J3\n` +
-      `  J6: Perdedor J2 vs Perdedor J3 → 5º/6º\n\n` +
+      `  J5: Vencedor J3 vs Melhor Perdedor (J1 ou J2, baseado em games)\n` +
+      `  J6: Perdedor J3 vs Pior Perdedor → 5º/6º\n\n` +
       `RONDA 3 - Finais:\n` +
       `  J7: Final (Vencedor J4 vs Vencedor J5)\n` +
       `  J8: 3º/4º (Perdedor J4 vs Perdedor J5)\n\n` +
@@ -3254,45 +3260,49 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         </div>
       </div>
 
-      {/* Seletor de Categorias */}
-      {categories.length > 0 && (
-        <div className="bg-white rounded-xl shadow-lg p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700 mr-2">Categoria:</span>
-            <button
-              onClick={() => setSelectedCategory(null)}
-              className={`px-3 py-1.5 text-sm rounded-lg transition ${
-                selectedCategory === null
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Todas
-            </button>
-            {categories.map(cat => (
+      {/* Seletor de Categorias - sempre visível (estrutura definida nas categorias) */}
+      <div className="bg-white rounded-xl shadow-lg p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-gray-700 mr-2">Categoria:</span>
+          {categories.length > 0 ? (
+            <>
               <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => setSelectedCategory(null)}
                 className={`px-3 py-1.5 text-sm rounded-lg transition ${
-                  selectedCategory === cat.id
-                    ? 'text-white'
+                  selectedCategory === null
+                    ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
-                style={selectedCategory === cat.id ? { backgroundColor: getCategoryColor(cat.id) } : {}}
               >
-                {cat.name}
+                Todas
               </button>
-            ))}
-            <button
-              onClick={() => setShowManageCategories(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition ml-2"
-            >
-              <FolderTree className="w-4 h-4" />
-              Gerir Categorias
-            </button>
-          </div>
+              {categories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id)}
+                  className={`px-3 py-1.5 text-sm rounded-lg transition ${
+                    selectedCategory === cat.id
+                      ? 'text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                  style={selectedCategory === cat.id ? { backgroundColor: getCategoryColor(cat.id) } : {}}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </>
+          ) : (
+            <span className="text-sm text-amber-600 font-medium">{t.category.noCategories} — {t.category.addFirst}</span>
+          )}
+          <button
+            onClick={() => setShowManageCategories(true)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition ml-2"
+          >
+            <FolderTree className="w-4 h-4" />
+            {categories.length > 0 ? t.nav.manageCategories : t.category.add}
+          </button>
         </div>
-      )}
+      </div>
 
       {/* Tabs de navegação */}
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
@@ -4340,8 +4350,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showAddPlayer && (
         <AddIndividualPlayerModal
           tournamentId={tournament.id}
-          categories={categories}
-          selectedCategory={selectedCategory}
+          categoryId={selectedCategory}
           onClose={() => setShowAddPlayer(false)}
           onSuccess={() => {
             setShowAddPlayer(false);

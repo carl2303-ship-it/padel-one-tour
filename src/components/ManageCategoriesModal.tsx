@@ -16,7 +16,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [editingCategory, setEditingCategory] = useState<TournamentCategory | null>(null);
   const [newCategory, setNewCategory] = useState({
     name: '',
-    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout',
+    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
@@ -45,26 +45,40 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
   const handleAddCategory = async () => {
     if (!newCategory.name.trim()) {
-      alert('Please enter a category name');
+      alert(t.category.errorNameRequired);
       return;
     }
 
     setLoading(true);
 
     try {
-      const isGroupsFormat = newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout';
-      const { error } = await supabase
+      const isGroupsFormat = newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout' || newCategory.format === 'super_teams';
+      
+      // Tentar inserir com game_format primeiro
+      const insertData: any = {
+        tournament_id: tournamentId,
+        name: newCategory.name,
+        format: newCategory.format,
+        number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
+        max_teams: newCategory.max_teams,
+        knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
+        qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
+        game_format: newCategory.game_format
+      };
+
+      let { error } = await supabase
         .from('tournament_categories')
-        .insert({
-          tournament_id: tournamentId,
-          name: newCategory.name,
-          format: newCategory.format,
-          number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
-          max_teams: newCategory.max_teams,
-          knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
-          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
-          game_format: newCategory.game_format
-        });
+        .insert(insertData);
+
+      // Se falhar por causa de game_format, tentar sem ele
+      if (error && error.message.includes('game_format')) {
+        console.warn('game_format column not found, inserting without it');
+        delete insertData.game_format;
+        const retry = await supabase
+          .from('tournament_categories')
+          .insert(insertData);
+        error = retry.error;
+      }
 
       if (error) throw error;
 
@@ -82,7 +96,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error adding category:', error);
-      alert('Failed to add category');
+      alert(t.category.errorAddFailed);
     } finally {
       setLoading(false);
     }
@@ -94,19 +108,33 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
-      const isGroupsFormat = editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout';
-      const { error } = await supabase
+      const isGroupsFormat = editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout' || editingCategory.format === 'super_teams';
+      
+      const updateData: any = {
+        name: editingCategory.name,
+        format: editingCategory.format,
+        number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
+        max_teams: editingCategory.max_teams,
+        knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
+        qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
+        game_format: editingCategory.game_format || '1set'
+      };
+
+      let { error } = await supabase
         .from('tournament_categories')
-        .update({
-          name: editingCategory.name,
-          format: editingCategory.format,
-          number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
-          max_teams: editingCategory.max_teams,
-          knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
-          game_format: editingCategory.game_format || '1set'
-        })
+        .update(updateData)
         .eq('id', editingCategory.id);
+
+      // Se falhar por causa de game_format, tentar sem ele
+      if (error && error.message.includes('game_format')) {
+        console.warn('game_format column not found, updating without it');
+        delete updateData.game_format;
+        const retry = await supabase
+          .from('tournament_categories')
+          .update(updateData)
+          .eq('id', editingCategory.id);
+        error = retry.error;
+      }
 
       if (error) throw error;
 
@@ -115,7 +143,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error updating category:', error);
-      alert('Failed to update category');
+      alert(t.category.errorUpdateFailed);
     } finally {
       setLoading(false);
     }
@@ -140,7 +168,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error deleting category:', error);
-      alert('Failed to delete category');
+      alert(t.category.errorDeleteFailed);
     } finally {
       setLoading(false);
     }
@@ -159,7 +187,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         <div className="p-6 space-y-6">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-800">
-              Categories allow you to organize teams into different divisions (e.g., M1, M2, F1, F2). Each category can have its own format.
+              {t.category.description || 'Categories allow you to organize teams into different divisions. Each category can have its own format.'}
             </p>
           </div>
 
@@ -188,7 +216,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   value={newCategory.format}
                   onChange={(e) => setNewCategory({
                     ...newCategory,
-                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout'
+                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender'
                   })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -196,10 +224,13 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   <option value="groups_knockout">{t.format.groups_knockout}</option>
                   <option value="round_robin">{t.format.round_robin}</option>
                   <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
+                  <option value="super_teams">{t.format.super_teams}</option>
+                  <option value="crossed_playoffs">Crossed Playoffs</option>
+                  <option value="mixed_gender">Mixed Gender</option>
                 </select>
               </div>
 
-              {(newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout') && (
+              {(newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout' || newCategory.format === 'super_teams') && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -261,15 +292,15 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Formato dos Jogos
+                  {t.category.gameFormat}
                 </label>
                 <select
                   value={newCategory.game_format}
                   onChange={(e) => setNewCategory({ ...newCategory, game_format: e.target.value as '1set' | '3sets' })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
-                  <option value="1set">1 Set</option>
-                  <option value="3sets">Melhor de 3 Sets</option>
+                  <option value="1set">{t.category.gameFormat1Set}</option>
+                  <option value="3sets">{t.category.gameFormat3Sets}</option>
                 </select>
               </div>
 
@@ -317,7 +348,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               value={editingCategory.format}
                               onChange={(e) => setEditingCategory({
                                 ...editingCategory,
-                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout'
+                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender'
                               })}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
@@ -325,10 +356,13 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               <option value="groups_knockout">{t.format.groups_knockout}</option>
                               <option value="round_robin">{t.format.round_robin}</option>
                               <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
+                              <option value="super_teams">{t.format.super_teams}</option>
+                              <option value="crossed_playoffs">Crossed Playoffs</option>
+                              <option value="mixed_gender">Mixed Gender</option>
                             </select>
                           </div>
 
-                          {(editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout') && (
+                          {(editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout' || editingCategory.format === 'super_teams') && (
                             <>
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -388,19 +422,19 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             />
                           </div>
 
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Formato dos Jogos
-                            </label>
-                            <select
-                              value={editingCategory.game_format || '1set'}
-                              onChange={(e) => setEditingCategory({ ...editingCategory, game_format: e.target.value as '1set' | '3sets' })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              <option value="1set">1 Set</option>
-                              <option value="3sets">Melhor de 3 Sets</option>
-                            </select>
-                          </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  {t.category.gameFormat}
+                                </label>
+                                <select
+                                  value={editingCategory.game_format || '1set'}
+                                  onChange={(e) => setEditingCategory({ ...editingCategory, game_format: e.target.value as '1set' | '3sets' })}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                  <option value="1set">{t.category.gameFormat1Set}</option>
+                                  <option value="3sets">{t.category.gameFormat3Sets}</option>
+                                </select>
+                              </div>
 
                         </div>
 
@@ -410,14 +444,14 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             disabled={loading}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
                           >
-                            Save
+                            {t.category.save}
                           </button>
                           <button
                             onClick={() => setEditingCategory(null)}
                             disabled={loading}
                             className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium disabled:opacity-50"
                           >
-                            Cancel
+                            {t.button.cancel}
                           </button>
                         </div>
                       </div>
@@ -428,13 +462,16 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                           <div className="text-sm text-gray-600">
                             {category.format === 'single_elimination' && t.format.single_elimination}
                             {category.format === 'round_robin' && t.format.round_robin}
+                            {category.format === 'super_teams' && t.format.super_teams}
+                            {category.format === 'crossed_playoffs' && 'Crossed Playoffs'}
+                            {category.format === 'mixed_gender' && 'Mixed Gender'}
                             {category.format === 'groups_knockout' && `${t.format.groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
                             {category.format === 'individual_groups_knockout' && `${t.format.individual_groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
-                            {(category.format === 'groups_knockout' || category.format === 'individual_groups_knockout') && category.knockout_stage && (
+                            {(category.format === 'groups_knockout' || category.format === 'individual_groups_knockout' || category.format === 'super_teams') && category.knockout_stage && (
                               <> • {category.knockout_stage === 'round_of_16' ? 'R16' : category.knockout_stage === 'quarterfinals' ? 'QF' : category.knockout_stage === 'semifinals' ? 'SF' : 'F'}</>
                             )}
                             {' • '}
-                            Max {category.max_teams} {category.format === 'round_robin' || category.format === 'individual_groups_knockout' ? 'players' : 'teams'}
+                            {t.category.maxLabel} {category.max_teams} {category.format === 'round_robin' || category.format === 'individual_groups_knockout' ? t.category.maxPlayers : t.category.maxTeams}
                           </div>
                         </div>
                         <div className="flex gap-2">

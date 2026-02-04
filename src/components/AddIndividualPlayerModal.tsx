@@ -88,15 +88,22 @@ export default function AddIndividualPlayerModal({
   }, [user]);
 
   const fetchCategories = async () => {
+    // Buscar todas as categorias do torneio
     const { data } = await supabase
       .from('tournament_categories')
       .select('*')
       .eq('tournament_id', tournamentId)
-      .in('format', ['round_robin', 'individual_groups_knockout'])
       .order('name');
 
     if (data) {
-      setCategories(data);
+      // Filtrar apenas categorias com formatos individuais
+      const individualCategories = data.filter(cat => 
+        cat.format === 'round_robin' || 
+        cat.format === 'individual_groups_knockout' ||
+        cat.format === 'crossed_playoffs' ||
+        cat.format === 'mixed_gender'
+      );
+      setCategories(individualCategories);
     }
   };
 
@@ -334,15 +341,23 @@ export default function AddIndividualPlayerModal({
               required
             >
               <option value="">Select a category...</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name} ({category.format === 'round_robin' ? 'Round Robin' : 'Groups + Knockout'})
-                </option>
-              ))}
+              {categories.map((category) => {
+                let formatLabel = 'Unknown';
+                if (category.format === 'round_robin') formatLabel = 'Round Robin';
+                else if (category.format === 'individual_groups_knockout') formatLabel = 'Groups + Knockout';
+                else if (category.format === 'crossed_playoffs') formatLabel = 'Crossed Playoffs';
+                else if (category.format === 'mixed_gender') formatLabel = 'Mixed Gender';
+                
+                return (
+                  <option key={category.id} value={category.id}>
+                    {category.name} ({formatLabel})
+                  </option>
+                );
+              })}
             </select>
             {categories.length === 0 && (
               <p className="text-sm text-amber-600 mt-1">
-                No individual categories found. Please create a category with "Round Robin" or "Individual Groups + Knockout" format first.
+                Nenhuma categoria individual encontrada. Crie primeiro uma categoria com formato individual (Round Robin, Individual Groups + Knockout, Crossed Playoffs ou Mixed Gender).
               </p>
             )}
           </div>

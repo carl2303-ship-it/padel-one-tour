@@ -147,7 +147,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     const maxSize = 2 * 1024 * 1024;
 
     if (file.size > 10 * 1024 * 1024) {
-      setError('Imagem muito grande (max 10MB antes de compressao)');
+      setError(t.tournament.errorImageTooBig);
       return;
     }
 
@@ -167,7 +167,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
       };
       reader.readAsDataURL(compressed);
     } catch {
-      setError('Erro ao processar imagem');
+      setError(t.tournament.errorProcessingImage);
     }
   };
 
@@ -177,19 +177,19 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     setLoading(true);
 
     if (new Date(formData.end_date) < new Date(formData.start_date)) {
-      setError('A data de fim deve ser depois da data de início');
+      setError(t.tournament.errorEndDateBeforeStart);
       setLoading(false);
       return;
     }
 
     if (!selectedClubId) {
-      setError('Selecione um clube para o torneio');
+      setError(t.tournament.errorSelectClub);
       setLoading(false);
       return;
     }
 
     if (selectedCourtNames.length === 0) {
-      setError('Selecione pelo menos um campo do clube');
+      setError(t.tournament.errorSelectCourts);
       setLoading(false);
       return;
     }
@@ -256,7 +256,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     }
 
     if (!tournamentData || tournamentData.length === 0) {
-      setError('Erro ao criar torneio');
+      setError(t.tournament.errorCreate);
       setLoading(false);
       return;
     }
@@ -296,7 +296,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="e.g., Summer Padel Championship 2024"
+              placeholder={t.tournament.namePlaceholder}
             />
           </div>
 
@@ -333,9 +333,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 <div className="flex flex-col items-center justify-center pt-5 pb-6">
                   <Upload className="w-10 h-10 text-gray-400 mb-3" />
                   <p className="mb-2 text-sm text-gray-500">
-                    <span className="font-semibold">Click to upload</span> or drag and drop
+                    <span className="font-semibold">{t.tournament.uploadClick}</span> {t.tournament.uploadDrag}
                   </p>
-                  <p className="text-xs text-gray-500">PNG, JPG ate 2MB (comprimido automaticamente)</p>
+                  <p className="text-xs text-gray-500">{t.tournament.uploadHint}</p>
                 </div>
                 <input
                   type="file"
@@ -410,8 +410,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
 
           {dailySchedules.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule || 'Customize Daily Schedule'}</h3>
-              <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper || 'Set different hours for each day'}</p>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
+              <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {dailySchedules.map((schedule, index) => (
                   <div key={index} className="grid grid-cols-3 gap-2 items-center bg-white p-2 rounded border border-gray-200">
@@ -445,7 +445,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Formato do Torneio *
+              {t.tournament.formatLabel}
             </label>
             <select
               value={formData.format}
@@ -457,89 +457,63 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <optgroup label="Formatos Individuais (Americano)">
-                <option value="individual_groups_knockout">Americano - Grupos + Eliminatórias</option>
-                <option value="round_robin_individual">Americano Individual - Todos contra Todos</option>
+              <optgroup label={t.tournament.formatOptgroupIndividual}>
+                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
+                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
               </optgroup>
-              <optgroup label="Formatos por Equipas">
-                <option value="groups_knockout">Equipas - Grupos + Eliminatórias</option>
-                <option value="single_elimination">Equipas - Eliminatória Direta</option>
-                <option value="round_robin_teams">Americano Equipas - Todos contra Todos</option>
-                <option value="super_teams">Super Teams - 4 Jogadores por Equipa</option>
+              <optgroup label={t.tournament.formatOptgroupTeams}>
+                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
+                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
+                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
               </optgroup>
-              <optgroup label="Formatos Especiais (Multi-Categoria)">
-                <option value="crossed_playoffs">Playoffs Cruzados - 3 Categorias (ex: M3/M4/M5)</option>
-                <option value="mixed_gender">Americano Misto - Homens + Mulheres (2/4/6 grupos)</option>
+              <optgroup label={t.tournament.formatOptgroupSpecial}>
+                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
+                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
               </optgroup>
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Escolha o formato principal. Pode ter várias categorias com formatos diferentes.
-            </p>
+            <p className="text-xs text-gray-500 mt-1">{t.tournament.formatHelper}</p>
           </div>
 
           {formData.format === 'super_teams' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">Super Teams</h4>
-              <p className="text-sm text-blue-800">
-                As definições de grupos, número de equipas e fases finais são configuradas por categoria do torneio.
-              </p>
+              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.superTeamsTitle}</h4>
+              <p className="text-sm text-blue-800">{t.tournament.superTeamsDescription}</p>
             </div>
           )}
 
           {formData.format === 'round_robin_individual' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">Americano Individual - Todos contra Todos</h4>
-              <p className="text-sm text-blue-800">
-                Parceiros rotativos em cada ronda. O horário de início e fim será usado para calcular a duração dos jogos consoante o número de jogadores.
-              </p>
+              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.roundRobinIndividualTitle}</h4>
+              <p className="text-sm text-blue-800">{t.tournament.roundRobinIndividualDescription}</p>
             </div>
           )}
 
           {formData.format === 'round_robin_teams' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">Americano Equipas - Todos contra Todos</h4>
-              <p className="text-sm text-blue-800">
-                Equipas fixas (duplas). Todas as equipas jogam contra todas.
-              </p>
+              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.roundRobinTeamsTitle}</h4>
+              <p className="text-sm text-blue-800">{t.tournament.roundRobinTeamsDescription}</p>
             </div>
           )}
 
           {formData.format === 'individual_groups_knockout' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">Americano - Grupos + Eliminatórias</h4>
-              <p className="text-sm text-blue-800">
-                Jogadores individuais jogam em grupos (com parceiros rotativos). Os melhores classificados avançam para as eliminatórias onde formam duplas.
-              </p>
+              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.individualGroupsTitle}</h4>
+              <p className="text-sm text-blue-800">{t.tournament.individualGroupsDescription}</p>
             </div>
           )}
 
           {formData.format === 'crossed_playoffs' && (
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h4 className="font-semibold text-purple-900 mb-2">Playoffs Cruzados (3 Categorias)</h4>
-              <p className="text-sm text-purple-800">
-                <strong>Ideal para:</strong> Torneios com 3 categorias (ex: M3, M4, M5) onde os melhores de cada categoria se cruzam nas eliminatórias.
-                <br /><br />
-                <strong>Estrutura:</strong> R1 (3 jogos) → R2 Meias-finais + 5º/6º → R3 Final + 3º/4º
-                <br />
-                Classificação final individual de 1º a 12º com critérios de desempate dos grupos.
-              </p>
+              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTitle}</h4>
+              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsDescription}</p>
             </div>
           )}
 
           {formData.format === 'mixed_gender' && (
             <div className="bg-pink-50 border border-pink-200 rounded-lg p-4">
-              <h4 className="font-semibold text-pink-900 mb-2">Americano Misto (Homens + Mulheres)</h4>
-              <p className="text-sm text-pink-800">
-                <strong>Fase de Grupos:</strong> Grupos separados por género (ex: A=Homens, B=Mulheres)
-                <br />
-                Pode ter 2, 4 ou 6 grupos (sempre par: metade homens, metade mulheres).
-                <br /><br />
-                <strong>Fases Finais:</strong> Duplas mistas (1 homem + 1 mulher por dupla).
-                <br />
-                Os melhores classificados de cada grupo formam duplas mistas para as eliminatórias.
-                <br /><br />
-                <strong>Exemplo:</strong> F5-F6 (Grupo A) + M5-M6 (Grupo B) → Final mista
-              </p>
+              <h4 className="font-semibold text-pink-900 mb-2">{t.tournament.mixedGenderTitle}</h4>
+              <p className="text-sm text-pink-800">{t.tournament.mixedGenderDescription}</p>
             </div>
           )}
 
@@ -557,18 +531,18 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value={2}>2 grupos</option>
-                    <option value={3}>3 grupos</option>
-                    <option value={4}>4 grupos</option>
-                    <option value={5}>5 grupos</option>
-                    <option value={6}>6 grupos</option>
-                    <option value={8}>8 grupos</option>
+                    <option value={2}>{t.tournament.groupsOption2}</option>
+                    <option value={3}>{t.tournament.groupsOption3}</option>
+                    <option value={4}>{t.tournament.groupsOption4}</option>
+                    <option value={5}>{t.tournament.groupsOption5}</option>
+                    <option value={6}>{t.tournament.groupsOption6}</option>
+                    <option value={8}>{t.tournament.groupsOption8}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {formData.format === 'individual_groups_knockout' ? 'Jogadores por Grupo *' : 'Teams per Group *'}
+                    {formData.format === 'individual_groups_knockout' ? t.tournament.playersPerGroupLabel : t.tournament.teamsPerGroupLabel}
                   </label>
                   <select
                     value={formData.teams_per_group}
@@ -577,11 +551,11 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value={3}>{formData.format === 'individual_groups_knockout' ? '3 jogadores' : '3 teams'}</option>
-                    <option value={4}>{formData.format === 'individual_groups_knockout' ? '4 jogadores' : '4 teams'}</option>
-                    <option value={5}>{formData.format === 'individual_groups_knockout' ? '5 jogadores' : '5 teams'}</option>
-                    <option value={6}>{formData.format === 'individual_groups_knockout' ? '6 jogadores' : '6 teams'}</option>
-                    <option value={8}>{formData.format === 'individual_groups_knockout' ? '8 jogadores' : '8 teams'}</option>
+                    <option value={3}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup3 : t.tournament.perGroupTeams3}</option>
+                    <option value={4}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup4 : t.tournament.perGroupTeams4}</option>
+                    <option value={5}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup5 : t.tournament.perGroupTeams5}</option>
+                    <option value={6}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup6 : t.tournament.perGroupTeams6}</option>
+                    <option value={8}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup8 : t.tournament.perGroupTeams8}</option>
                   </select>
                 </div>
 
@@ -596,9 +570,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="final">Final (2 qualificados)</option>
-                    <option value="semifinals">Meias-Finais (4 qualificados)</option>
-                    <option value="quarterfinals">Quartos (8 qualificados)</option>
+                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
+                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
+                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
                   </select>
                 </div>
               </div>
@@ -606,13 +580,21 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                 {formData.format === 'individual_groups_knockout' ? (
                   <p className="text-sm text-blue-800">
-                    <strong>Grupos Individuais + Eliminatórias:</strong> {formData.number_of_groups} grupos com {formData.teams_per_group} jogadores cada (total: {formData.number_of_groups * formData.teams_per_group} jogadores).
-                    Todos contra todos dentro de cada grupo (individual). Depois, os melhores qualificam-se para {formData.knockout_stage === 'final' ? 'a final' : formData.knockout_stage === 'semifinals' ? 'as meias-finais' : 'os quartos de final'} com equipas formadas aleatoriamente.
+                    <strong>{t.tournament.groupsIndividualBold}</strong>{' '}
+                    {t.tournament.individualGroupsSummary
+                      .replace('{groups}', String(formData.number_of_groups))
+                      .replace('{playersPerGroup}', String(formData.teams_per_group))
+                      .replace('{total}', String(formData.number_of_groups * formData.teams_per_group))
+                      .replace('{stage}', formData.knockout_stage === 'final' ? t.tournament.finalLabel : formData.knockout_stage === 'semifinals' ? t.tournament.semifinalsLabel : t.tournament.quarterfinalsLabel)}
                   </p>
                 ) : (
                   <p className="text-sm text-blue-800">
-                    <strong>Groups + Knockout:</strong> {formData.number_of_groups} groups with {formData.teams_per_group} teams each (total: {formData.number_of_groups * formData.teams_per_group} teams).
-                    {t.tournament.knockoutStageDescription} {formData.knockout_stage === 'final' ? t.tournament.twoTeamFinal : formData.knockout_stage === 'semifinals' ? t.tournament.fourTeamSemifinals : formData.knockout_stage === 'quarterfinals' ? t.tournament.eightTeamQuarterfinals : t.tournament.sixteenTeamRoundOf16}.
+                    <strong>{t.tournament.groupsTeamsBold}</strong>{' '}
+                    {t.tournament.groupsTeamsSummaryStart
+                      .replace('{groups}', String(formData.number_of_groups))
+                      .replace('{teamsPerGroup}', String(formData.teams_per_group))
+                      .replace('{total}', String(formData.number_of_groups * formData.teams_per_group))}
+                    {' '}{t.tournament.knockoutStageDescription} {formData.knockout_stage === 'final' ? t.tournament.twoTeamFinal : formData.knockout_stage === 'semifinals' ? t.tournament.fourTeamSemifinals : formData.knockout_stage === 'quarterfinals' ? t.tournament.eightTeamQuarterfinals : t.tournament.sixteenTeamRoundOf16}.
                     {formData.knockout_stage === 'round_of_16' && ` ${t.tournament.best3rdIncluded}`}
                   </p>
                 )}
@@ -633,10 +615,10 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               {Array.from({ length: 13 }, (_, i) => i + 8).map((min) => (
-                <option key={min} value={min}>{min} minutes</option>
+                <option key={min} value={min}>{min} {t.tournament.minutes}</option>
               ))}
               {Array.from({ length: 20 }, (_, i) => 25 + i * 5).map((min) => (
-                <option key={min} value={min}>{min} minutes</option>
+                <option key={min} value={min}>{min} {t.tournament.minutes}</option>
               ))}
             </select>
             <p className="text-xs text-gray-500 mt-1">
@@ -665,11 +647,11 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
           </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="text-base font-semibold text-gray-900 mb-3">Clube e Campos *</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-3">{t.tournament.clubAndCourts} *</h3>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Selecionar Clube *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel}</label>
                 <select
                   value={selectedClubId}
                   onChange={(e) => {
@@ -679,7 +661,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
                   required
                 >
-                  <option value="">-- Escolher clube --</option>
+                  <option value="">{t.tournament.chooseClubPlaceholder}</option>
                   {clubs.map((club) => (
                     <option key={club.id} value={club.id}>{club.name}</option>
                   ))}
@@ -689,14 +671,14 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               {selectedClubId && clubCourts.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <label className="block text-sm font-medium text-gray-700">Campos para o Torneio *</label>
+                    <label className="block text-sm font-medium text-gray-700">{t.tournament.courtsForTournament}</label>
                     <div className="flex gap-2">
                       <button
                         type="button"
                         onClick={selectAllCourts}
                         className="text-xs text-blue-600 hover:text-blue-800 font-medium"
                       >
-                        Todos
+                        {t.tournament.selectAll}
                       </button>
                       <span className="text-gray-300">|</span>
                       <button
@@ -704,7 +686,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                         onClick={clearCourtSelection}
                         className="text-xs text-gray-600 hover:text-gray-800"
                       >
-                        Limpar
+                        {t.tournament.clearSelection}
                       </button>
                     </div>
                   </div>
@@ -729,20 +711,20 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     ))}
                   </div>
                   <p className="text-xs text-green-600 mt-2 font-medium">
-                    {selectedCourtNames.length} campo(s) selecionado(s)
+                    {selectedCourtNames.length} {t.tournament.courtsSelectedCount}
                   </p>
                 </div>
               )}
 
               {selectedClubId && clubCourts.length === 0 && (
                 <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">
-                  Este clube não tem campos configurados. Configure os campos na gestão do clube.
+                  {t.tournament.noCourtsInClub}
                 </p>
               )}
 
               {!selectedClubId && (
                 <p className="text-xs text-gray-500">
-                  Selecione um clube para ver os campos disponíveis
+                  {t.tournament.selectClubToSeeCourts}
                 </p>
               )}
             </div>

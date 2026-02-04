@@ -676,8 +676,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
 
           {dailySchedules.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule || 'Customize Daily Schedule'}</h3>
-              <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper || 'Set different hours for each day'}</p>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
+              <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
               <div className="space-y-2 max-h-60 overflow-y-auto">
                 {dailySchedules.map((schedule, index) => (
                   <div key={index} className="grid grid-cols-3 gap-2 items-center bg-white p-2 rounded border border-gray-200">
@@ -723,32 +723,28 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <optgroup label="Formatos Individuais (Americano)">
-                <option value="individual_groups_knockout">Americano - Grupos + Eliminatórias</option>
-                <option value="round_robin_individual">Americano Individual - Todos contra Todos</option>
+              <optgroup label={t.tournament.formatOptgroupIndividual}>
+                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
+                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
               </optgroup>
-              <optgroup label="Formatos por Equipas">
-                <option value="groups_knockout">Equipas - Grupos + Eliminatórias</option>
-                <option value="single_elimination">Equipas - Eliminatória Direta</option>
-                <option value="round_robin_teams">Americano Equipas - Todos contra Todos</option>
-                <option value="super_teams">Super Teams - 4 Jogadores por Equipa</option>
+              <optgroup label={t.tournament.formatOptgroupTeams}>
+                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
+                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
+                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
               </optgroup>
-              <optgroup label="Formatos Especiais (Multi-Categoria)">
-                <option value="crossed_playoffs">Playoffs Cruzados - 3 Categorias (ex: M3/M4/M5)</option>
-                <option value="mixed_gender">Americano Misto - Homens + Mulheres (2/4/6 grupos)</option>
+              <optgroup label={t.tournament.formatOptgroupSpecial}>
+                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
+                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
               </optgroup>
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              O tipo de PDF exportado corresponde a este formato.
-            </p>
+            <p className="text-xs text-gray-500 mt-1">{t.tournament.pdfExportNote}</p>
           </div>
 
           {formData.format === 'super_teams' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-blue-900">Super Teams</h3>
-              <p className="text-sm text-blue-800">
-                As definições de grupos, número de equipas e fases finais são configuradas por categoria do torneio.
-              </p>
+              <h3 className="text-sm font-semibold text-blue-900">{t.tournament.superTeamsTitle}</h3>
+              <p className="text-sm text-blue-800">{t.tournament.superTeamsDescription}</p>
             </div>
           )}
 
@@ -766,11 +762,11 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     onChange={(e) => setFormData({ ...formData, number_of_groups: parseInt(e.target.value) })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value={2}>2 groups</option>
-                    <option value={3}>3 groups</option>
-                    <option value={4}>4 groups</option>
-                    <option value={6}>6 groups</option>
-                    <option value={8}>8 groups</option>
+                    <option value={2}>{t.tournament.groupsOption2}</option>
+                    <option value={3}>{t.tournament.groupsOption3}</option>
+                    <option value={4}>{t.tournament.groupsOption4}</option>
+                    <option value={6}>{t.tournament.groupsOption6}</option>
+                    <option value={8}>{t.tournament.groupsOption8}</option>
                   </select>
                 </div>
 
@@ -783,10 +779,10 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     onChange={(e) => setFormData({ ...formData, knockout_stage: e.target.value as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals' })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="final">Final (2 teams)</option>
-                    <option value="semifinals">Semifinals (4 teams)</option>
-                    <option value="quarterfinals">Quarterfinals (8 teams)</option>
-                    <option value="round_of_16">Round of 16 (16 teams)</option>
+                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
+                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
+                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
+                    <option value="round_of_16">{t.tournament.sixteenTeamRoundOf16}</option>
                   </select>
                 </div>
               </div>
@@ -812,11 +808,11 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     onChange={(e) => setFormData({ ...formData, number_of_groups: parseInt(e.target.value) })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value={2}>2 groups</option>
-                    <option value={3}>3 groups</option>
-                    <option value={4}>4 groups</option>
-                    <option value={6}>6 groups</option>
-                    <option value={8}>8 groups</option>
+                    <option value={2}>{t.tournament.groupsOption2}</option>
+                    <option value={3}>{t.tournament.groupsOption3}</option>
+                    <option value={4}>{t.tournament.groupsOption4}</option>
+                    <option value={6}>{t.tournament.groupsOption6}</option>
+                    <option value={8}>{t.tournament.groupsOption8}</option>
                   </select>
                 </div>
 
@@ -829,16 +825,16 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     onChange={(e) => setFormData({ ...formData, knockout_stage: e.target.value as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals' })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="final">Final (2 teams)</option>
-                    <option value="semifinals">Semifinals (4 teams)</option>
-                    <option value="quarterfinals">Quarterfinals (8 teams)</option>
-                    <option value="round_of_16">Round of 16 (16 teams)</option>
+                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
+                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
+                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
+                    <option value="round_of_16">{t.tournament.sixteenTeamRoundOf16}</option>
                   </select>
                 </div>
               </div>
 
               <div className="text-xs text-gray-600 bg-white p-3 rounded border border-gray-200">
-                <strong>Individual Groups + Knockout:</strong> Players compete individually in groups with rotating partners, then top players advance to knockout rounds.
+                <strong>{t.format.individual_groups_knockout}:</strong> {t.tournament.individualGroupsDescription}
               </div>
 
               <div className="border-t border-blue-200 pt-4 mt-4">

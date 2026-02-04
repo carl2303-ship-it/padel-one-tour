@@ -2,17 +2,23 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 
-function showError(title: string, message: string, detail?: string) {
-  const root = document.getElementById('root')!;
-  root.innerHTML = `
-    <div style="padding: 24px; font-family: system-ui, sans-serif; max-width: 560px; margin: 0 auto;">
-      <h1 style="color: #dc2626; margin-bottom: 8px;">${title}</h1>
-      <p style="color: #374151; margin-bottom: 16px;">${message}</p>
-      ${detail ? `<pre style="background: #f3f4f6; padding: 12px; border-radius: 8px; overflow: auto; font-size: 12px;">${detail}</pre>` : ''}
-      <p style="color: #6b7280; font-size: 14px; margin-top: 16px;">Em Netlify: Site configuration → Environment variables. Adiciona VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY e faz um novo deploy.</p>
-      <p style="color: #6b7280; font-size: 14px;">Se já configuraste, tenta Ctrl+Shift+R (hard refresh) para limpar a cache.</p>
+function ErrorDisplay({ title, message, detail }: { title: string; message: string; detail?: string }) {
+  return (
+    <div style={{ padding: 24, fontFamily: 'system-ui, sans-serif', maxWidth: 560, margin: '0 auto' }}>
+      <h1 style={{ color: '#dc2626', marginBottom: 8 }}>{title}</h1>
+      <p style={{ color: '#374151', marginBottom: 16 }}>{message}</p>
+      {detail && <pre style={{ background: '#f3f4f6', padding: 12, borderRadius: 8, overflow: 'auto', fontSize: 12 }}>{detail}</pre>}
+      <p style={{ color: '#6b7280', fontSize: 14, marginTop: 16 }}>Em Netlify: Site configuration → Environment variables. Adiciona VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY e faz um novo deploy.</p>
+      <p style={{ color: '#6b7280', fontSize: 14 }}>Se já configuraste, tenta Ctrl+Shift+R (hard refresh) para limpar a cache.</p>
     </div>
-  `;
+  );
+}
+
+const rootEl = document.getElementById('root')!;
+const rootInstance = createRoot(rootEl);
+
+function showError(title: string, message: string, detail?: string) {
+  rootInstance.render(<ErrorDisplay title={title} message={message} detail={detail} />);
 }
 
 async function init() {
@@ -25,7 +31,7 @@ async function init() {
     const { default: App } = await import('./App.tsx');
     const { default: LiveTournamentView } = await import('./components/LiveTournamentView');
 
-    createRoot(document.getElementById('root')!).render(
+    rootInstance.render(
       <StrictMode>
         <I18nProvider>
           {isLivePage ? (
@@ -46,13 +52,16 @@ async function init() {
   }
 }
 
+let hasShownError = false;
 window.addEventListener('error', (event) => {
-  if (!document.getElementById('root')?.innerHTML?.includes('Erro ao carregar')) {
+  if (!hasShownError) {
+    hasShownError = true;
     showError('Erro na aplicação', event.message, event.error?.stack);
   }
 });
 window.addEventListener('unhandledrejection', (event) => {
-  if (!document.getElementById('root')?.innerHTML?.includes('Erro ao carregar')) {
+  if (!hasShownError) {
+    hasShownError = true;
     showError('Erro na aplicação', String(event.reason?.message ?? event.reason), event.reason?.stack);
   }
 });
