@@ -1038,6 +1038,7 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
     maxRounds = Math.max(maxRounds, rounds.length);
   });
 
+  // Generate group stage matches
   for (let roundIdx = 0; roundIdx < maxRounds; roundIdx++) {
     sortedGroups.forEach(groupName => {
       const rounds = roundsByGroup.get(groupName)!;
@@ -1057,6 +1058,47 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
     });
   }
 
-  console.log('[MULTI-CAT V2] Generated', matches.length, 'group matches organized by rounds');
+  console.log('[MULTI-CAT V2] Generated', matches.length, 'group matches');
+
+  // Generate knockout matches (semifinals, final, 3rd place) with TBD teams
+  // Semifinals
+  matches.push({
+    round: 'semifinal',
+    match_number: matchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: '',
+    court: ''
+  });
+  matches.push({
+    round: 'semifinal',
+    match_number: matchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: '',
+    court: ''
+  });
+
+  // Final
+  matches.push({
+    round: 'final',
+    match_number: matchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: '',
+    court: ''
+  });
+
+  // 3rd place
+  matches.push({
+    round: '3rd_place',
+    match_number: matchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: '',
+    court: ''
+  });
+
+  console.log('[MULTI-CAT V2] Total matches (group + knockout): ', matches.length);
   return matches;
 }

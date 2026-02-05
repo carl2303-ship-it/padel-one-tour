@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
 import { Match, Team, Player, IndividualPlayer, TournamentCategory } from '../lib/supabase';
-import { ArrowUpDown, Printer, Calendar, Users, Clock } from 'lucide-react';
+import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2 } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
+import EditMatchScheduleModal from './EditMatchScheduleModal';
 
 type TeamWithPlayers = Team & {
   player1: Player;
@@ -23,6 +24,7 @@ type MatchScheduleViewProps = {
   categories?: TournamentCategory[];
   showCategoryLabels?: boolean;
   printTitle?: string;
+  onScheduleUpdate?: () => void;
 };
 
 export default function MatchScheduleView({
@@ -33,10 +35,12 @@ export default function MatchScheduleView({
   categories = [],
   showCategoryLabels = false,
   printTitle,
+  onScheduleUpdate,
 }: MatchScheduleViewProps) {
   const { t } = useI18n();
   const [sortBy, setSortBy] = useState<SortOption>('time');
   const printAreaRef = useRef<HTMLDivElement>(null);
+  const [editingMatch, setEditingMatch] = useState<{ id: string; scheduledTime: string; court: string } | null>(null);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -254,6 +258,15 @@ export default function MatchScheduleView({
       '21st_semifinal': 'Semi-Final (21-24)',
       '21st_place': '21st/22nd Place',
       '23rd_place': '23rd/24th Place',
+      // Playoffs Cruzados
+      'crossed_r1_j1': 'Playoff J1',
+      'crossed_r1_j2': 'Playoff J2',
+      'crossed_r1_j3': 'Playoff J3',
+      'crossed_r2_j4': 'Meia-Final 1',
+      'crossed_r2_j5': 'Meia-Final 2',
+      'crossed_r2_j6': '5°/6° Lugar',
+      'crossed_r3_j7': 'FINAL',
+      'crossed_r3_j8': '3°/4° Lugar',
     };
     return roundLabels[round] || round;
   };
@@ -694,6 +707,23 @@ export default function MatchScheduleView({
       '5th_semifinal': 'Meia-Final (5-8)',
       '5th_place': '5°/6° Lugar',
       '7th_place': '7°/8° Lugar',
+      // Playoffs Cruzados - Ronda 1
+      'crossed_r1_j1': 'Playoff J1',
+      'crossed_r1_j2': 'Playoff J2',
+      'crossed_r1_j3': 'Playoff J3',
+      // Playoffs Cruzados - Ronda 2 (Meias-finais + 5º/6º)
+      'crossed_r2_j4': 'Meia-Final 1',
+      'crossed_r2_j5': 'Meia-Final 2',
+      'crossed_r2_j6': '5°/6° Lugar',
+      // Playoffs Cruzados - Ronda 3 (Finais)
+      'crossed_r3_j7': 'FINAL',
+      'crossed_r3_j8': '3°/4° Lugar',
+      // Nomes antigos (compatibilidade)
+      'crossed_r2_semifinal1': 'Meia-Final 1',
+      'crossed_r2_semifinal2': 'Meia-Final 2',
+      'crossed_r2_5th_place': '5°/6° Lugar',
+      'crossed_r3_final': 'FINAL',
+      'crossed_r3_3rd_place': '3°/4° Lugar',
     };
     return roundLabels[round] || null;
   };
@@ -708,37 +738,53 @@ export default function MatchScheduleView({
     const bgColor = match.category_id ? `${categoryColor}15` : '#f9fafb';
 
     return (
-      <button
-        key={match.id}
-        onClick={() => onMatchClick(match.id)}
-        className="w-full border-2 rounded-lg p-3 hover:shadow-lg transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative"
-        style={{ 
-          borderColor: categoryColor,
-          backgroundColor: bgColor
-        }}
-      >
-        {/* Header: Match number + Status */}
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold text-gray-700">
-            Jogo #{match.match_number}
-            {roundLabel && (
-              <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-800 rounded font-semibold">
-                {roundLabel}
+      <div key={match.id} className="relative">
+        <button
+          onClick={() => onMatchClick(match.id)}
+          className="w-full border-2 rounded-lg p-3 hover:shadow-lg transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative"
+          style={{ 
+            borderColor: categoryColor,
+            backgroundColor: bgColor
+          }}
+        >
+          {/* Header: Match number + Status + Edit button */}
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-bold text-gray-700">
+              Jogo #{match.match_number}
+              {roundLabel && (
+                <span className="ml-2 px-2 py-0.5 bg-orange-100 text-orange-800 rounded font-semibold">
+                  {roundLabel}
+                </span>
+              )}
+            </span>
+            <div className="flex items-center gap-2">
+              <span
+                className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  match.status === 'completed'
+                    ? 'bg-green-100 text-green-800'
+                    : match.status === 'in_progress'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-white/80 text-gray-700'
+                }`}
+              >
+                {match.status === 'completed' ? 'Terminado' : match.status === 'in_progress' ? 'A decorrer' : 'Agendado'}
               </span>
-            )}
-          </span>
-          <span
-            className={`px-2 py-0.5 rounded text-xs font-medium ${
-              match.status === 'completed'
-                ? 'bg-green-100 text-green-800'
-                : match.status === 'in_progress'
-                ? 'bg-blue-100 text-blue-800'
-                : 'bg-white/80 text-gray-700'
-            }`}
-          >
-            {match.status === 'completed' ? 'Terminado' : match.status === 'in_progress' ? 'A decorrer' : 'Agendado'}
-          </span>
-        </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingMatch({
+                    id: match.id,
+                    scheduledTime: match.scheduled_time || '',
+                    court: match.court || '1'
+                  });
+                }}
+                className="print:hidden p-1.5 hover:bg-blue-100 rounded-lg transition-colors text-blue-600"
+                title="Editar horário"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
         {/* Teams and Score */}
         <div className="grid grid-cols-3 gap-2 items-center my-3">
@@ -829,6 +875,7 @@ export default function MatchScheduleView({
           )}
         </div>
       </button>
+      </div>
     );
   };
 
@@ -1060,6 +1107,21 @@ export default function MatchScheduleView({
           );
         })()}
       </div>
+
+      {/* Edit Match Schedule Modal */}
+      {editingMatch && (
+        <EditMatchScheduleModal
+          matchId={editingMatch.id}
+          currentScheduledTime={editingMatch.scheduledTime}
+          currentCourt={editingMatch.court}
+          onClose={() => setEditingMatch(null)}
+          onSuccess={() => {
+            if (onScheduleUpdate) {
+              onScheduleUpdate();
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

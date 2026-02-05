@@ -481,45 +481,40 @@ export function generateIndividualGroupsKnockoutSchedule(
       console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Created tier ${tierPosition}: ${finalLabel}, ${thirdLabel}`);
     };
 
+    // Create placement tiers based on TOTAL players, not max per group
+    // Each tier needs 4 players minimum (2 semifinals)
+    const totalPlayers = players.length;
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Total players: ${totalPlayers}, creating tiers accordingly`);
+    
+    // Tier 1: 1st-4th place (always created if we have knockout stage)
     createPlacementTier(1, '1st', 'final', '3rd_place');
 
-    if (maxPlayersPerGroup >= 2) {
+    // Tier 2: 5th-8th place (only if 8+ players)
+    if (totalPlayers >= 8) {
       createPlacementTier(2, '5th', '5th_place', '7th_place');
     }
 
-    if (maxPlayersPerGroup >= 3) {
+    // Tier 3: 9th-12th place (only if 12+ players)
+    if (totalPlayers >= 12) {
       createPlacementTier(3, '9th', '9th_place', '11th_place');
     }
 
-    if (maxPlayersPerGroup >= 4) {
+    // Tier 4: 13th-16th place (only if 16+ players)
+    if (totalPlayers >= 16) {
       createPlacementTier(4, '13th', '13th_place', '15th_place');
     }
 
-    if (maxPlayersPerGroup >= 5) {
+    // Tier 5: 17th-20th place (only if 20+ players)
+    if (totalPlayers >= 20) {
       createPlacementTier(5, '17th', '17th_place', '19th_place');
     }
 
-    if (maxPlayersPerGroup >= 6) {
-      const remainingPlayers = players.length - (numberOfGroups * 5);
-      if (remainingPlayers >= 4) {
-        createPlacementTier(6, '21st', '21st_place', '23rd_place');
-      } else if (remainingPlayers >= 2) {
-        const tierTime = currentTime.toISOString();
-        matches.push({
-          round: '21st_place',
-          match_number: matchNumber++,
-          player1_id: 'TBD',
-          player2_id: 'TBD',
-          player3_id: 'TBD',
-          player4_id: 'TBD',
-          scheduled_time: tierTime,
-          court: '1',
-        });
-        console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Created single match for remaining players: 21st_place`);
-      }
+    // Tier 6: 21st-24th place (only if 24+ players)
+    if (totalPlayers >= 24) {
+      createPlacementTier(6, '21st', '21st_place', '23rd_place');
     }
 
-    console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Created all placement tiers for full classification');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Created placement tiers for ${totalPlayers} players`);
   }
 
   console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Total matches generated: ${matches.length}`);

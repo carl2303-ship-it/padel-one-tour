@@ -24,32 +24,37 @@ interface Category {
   number_of_groups?: number;
 }
 
+interface Tournament {
+  id: string;
+  format?: string;
+  number_of_groups?: number;
+}
+
 interface ManualGroupAssignmentModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  tournamentId: string;
-  isIndividual: boolean;
-  players: Player[];
+  tournament: Tournament;
   teams: Team[];
+  players: Player[];
   categories: Category[];
-  numberOfGroups: number;
-  onSave: () => void;
+  selectedCategory: string | null;
+  isIndividual: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
 }
 
 const GROUP_NAMES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
 export function ManualGroupAssignmentModal({
-  isOpen,
-  onClose,
-  tournamentId,
-  isIndividual,
-  players,
+  tournament,
   teams,
+  players,
   categories,
-  numberOfGroups,
-  onSave,
+  selectedCategory: initialSelectedCategory,
+  isIndividual,
+  onClose,
+  onSuccess,
 }: ManualGroupAssignmentModalProps) {
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const numberOfGroups = (tournament as any).number_of_groups || categories.length || 2;
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialSelectedCategory || 'all');
   const [assignments, setAssignments] = useState<Map<string, string>>(new Map());
   const [saving, setSaving] = useState(false);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
@@ -204,8 +209,7 @@ export function ManualGroupAssignmentModal({
         }
       }
 
-      onSave();
-      onClose();
+      onSuccess();
     } catch (error) {
       console.error('Error saving group assignments:', error);
       alert('Failed to save group assignments');
@@ -213,8 +217,6 @@ export function ManualGroupAssignmentModal({
       setSaving(false);
     }
   };
-
-  if (!isOpen) return null;
 
   const unassigned = getUnassignedParticipants();
   const minPerGroup = isIndividual ? 4 : 2;

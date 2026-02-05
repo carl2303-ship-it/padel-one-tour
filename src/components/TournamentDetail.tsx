@@ -168,8 +168,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       setMatches(prev => {
         const updated = prev.map(m => m.id === newRecord.id ? { ...m, ...newRecord } : m);
         // Verificar se precisa avançar playoffs cruzados
-        if (newRecord.status === 'completed' && newRecord.round?.startsWith('crossed_')) {
-          setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
+        if (newRecord.status === 'completed') {
+          if (newRecord.round?.startsWith('crossed_')) {
+            // Avançar R1→R2 ou R2→R3
+            setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
+          } else if (newRecord.round?.startsWith('group_')) {
+            // Verificar se todos os grupos terminaram para preencher R1
+            setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
+          }
         }
         return updated;
       });
@@ -1013,6 +1019,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .from('matches')
           .select(`
             id, match_number, round, scheduled_time, court, team1_id, team2_id, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, status, category_id,
+            player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id,
             team1:teams!matches_team1_id_fkey(id, name, group_name, player1:players!teams_player1_id_fkey(id, name), player2:players!teams_player2_id_fkey(id, name)),
             team2:teams!matches_team2_id_fkey(id, name, group_name, player1:players!teams_player1_id_fkey(id, name), player2:players!teams_player2_id_fkey(id, name))
           `)
@@ -1062,12 +1069,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleAssignGroups = async () => {
-    if (currentTournament.format !== 'groups_knockout' && currentTournament.format !== 'individual_groups_knockout') {
-      alert('Group assignment is only available for Groups + Knockout formats');
+    const validFormats = ['groups_knockout', 'individual_groups_knockout', 'crossed_playoffs', 'mixed_gender'];
+    if (!validFormats.includes(currentTournament.format || '')) {
+      alert('Group assignment is only available for Groups + Knockout, Crossed Playoffs, and Mixed Gender formats');
       return;
     }
 
-    const isIndividualFormat = currentTournament.format === 'individual_groups_knockout';
+    const isIndividualFormat = currentTournament.format === 'individual_groups_knockout' || 
+                               currentTournament.format === 'crossed_playoffs' || 
+                               currentTournament.format === 'mixed_gender';
     const participantLabel = isIndividualFormat ? 'players' : 'teams';
 
     const confirmed = confirm(
@@ -1103,8 +1113,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const allPlayersWithGroups: any[] = [];
           const tournamentNumberOfGroups = (latestTournament as any).number_of_groups || 2;
           
-          // Para playoffs cruzados (3 categorias), cada categoria = 1 grupo com nome diferente (A, B, C)
-          const isCrossedPlayoffs = categories.length === 3;
+          // Para playoffs cruzados e mixed_gender, cada categoria = 1 grupo com nome diferente (A, B, C...)
+          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || 
+                                     currentTournament.format === 'mixed_gender' || 
+                                     categories.length === 3;
           
           // Ordenar categorias por nome para consistência (primeira = A, segunda = B, terceira = C)
           const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
@@ -2215,16 +2227,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const autoAdvanceCrossedPlayoffs = async (currentMatches: MatchWithTeams[]) => {
     console.log('[AUTO_ADVANCE] Checking crossed playoffs...');
     
+    // Usar novos nomes de rounds: j4, j5, j6, j7, j8
     const r1j1 = currentMatches.find(m => m.round === 'crossed_r1_j1');
     const r1j2 = currentMatches.find(m => m.round === 'crossed_r1_j2');
     const r1j3 = currentMatches.find(m => m.round === 'crossed_r1_j3');
-    const sf1 = currentMatches.find(m => m.round === 'crossed_r2_semifinal1');
-    const sf2 = currentMatches.find(m => m.round === 'crossed_r2_semifinal2');
-    const fifth = currentMatches.find(m => m.round === 'crossed_r2_5th_place');
-    const final = currentMatches.find(m => m.round === 'crossed_r3_final');
-    const third = currentMatches.find(m => m.round === 'crossed_r3_3rd_place');
+    const r2j4 = currentMatches.find(m => m.round === 'crossed_r2_j4'); // SF1: Vencedor J1 vs Vencedor J2
+    const r2j5 = currentMatches.find(m => m.round === 'crossed_r2_j5'); // SF2: Vencedor J3 vs Melhor Perdedor
+    const r2j6 = currentMatches.find(m => m.round === 'crossed_r2_j6'); // 5º/6º: Perdedor J3 vs Pior Perdedor
+    const r3j7 = currentMatches.find(m => m.round === 'crossed_r3_j7'); // Final
+    const r3j8 = currentMatches.find(m => m.round === 'crossed_r3_j8'); // 3º/4º
 
-    if (!r1j1 || !r1j2 || !r1j3 || !sf1 || !sf2 || !fifth || !final || !third) {
+    if (!r1j1 || !r1j2 || !r1j3 || !r2j4 || !r2j5 || !r2j6 || !r3j7 || !r3j8) {
       console.log('[AUTO_ADVANCE] Not all matches found');
       return;
     }
@@ -2243,7 +2256,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     try {
       // Se R1 está completo e R2 tem TBD, preencher R2
-      if (r1j1.status === 'completed' && r1j2.status === 'completed' && r1j3.status === 'completed' && !sf1.player1_individual_id) {
+      if (r1j1.status === 'completed' && r1j2.status === 'completed' && r1j3.status === 'completed' && !r2j4.player1_individual_id) {
         console.log('[AUTO_ADVANCE] R1 complete, advancing to R2...');
         
         const res1 = getMatchResult(r1j1)!;
@@ -2259,7 +2272,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const bestLoserResult = bestLoserIsJ1 ? res1 : res2;
         const worstLoserResult = bestLoserIsJ1 ? res2 : res1;
 
-        // SF1: Vencedor J1 vs Vencedor J2
+        // J4: Vencedor J1 vs Vencedor J2
         const winner1 = res1.winner === 'team1' 
           ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
           : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
@@ -2272,9 +2285,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player2_individual_id: winner1.p2,
           player3_individual_id: winner2.p1,
           player4_individual_id: winner2.p2,
-        }).eq('id', sf1.id);
+        }).eq('id', r2j4.id);
 
-        // SF2: Vencedor J3 vs Melhor Perdedor
+        // J5: Vencedor J3 vs Melhor Perdedor
         const winner3 = res3.winner === 'team1'
           ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
           : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
@@ -2287,9 +2300,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player2_individual_id: winner3.p2,
           player3_individual_id: bestLoser.p1,
           player4_individual_id: bestLoser.p2,
-        }).eq('id', sf2.id);
+        }).eq('id', r2j5.id);
 
-        // 5th place: Perdedor J3 vs Pior Perdedor
+        // J6: Perdedor J3 vs Pior Perdedor (5º/6º)
         const loser3 = res3.loser === 'team1'
           ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
           : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
@@ -2302,45 +2315,47 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player2_individual_id: loser3.p2,
           player3_individual_id: worstLoser.p1,
           player4_individual_id: worstLoser.p2,
-        }).eq('id', fifth.id);
+        }).eq('id', r2j6.id);
 
         console.log('[AUTO_ADVANCE] R2 updated!');
       }
 
-      // Se R2 Semi-finais estão completas e R3 tem TBD, preencher R3
-      if (sf1.status === 'completed' && sf2.status === 'completed' && !final.player1_individual_id) {
+      // Se R2 Semi-finais (J4, J5) estão completas e R3 tem TBD, preencher R3
+      if (r2j4.status === 'completed' && r2j5.status === 'completed' && !r3j7.player1_individual_id) {
         console.log('[AUTO_ADVANCE] R2 semifinals complete, advancing to R3...');
         
-        const resSf1 = getMatchResult(sf1)!;
-        const resSf2 = getMatchResult(sf2)!;
+        const resJ4 = getMatchResult(r2j4)!;
+        const resJ5 = getMatchResult(r2j5)!;
 
-        const winnerSf1 = resSf1.winner === 'team1'
-          ? { p1: sf1.player1_individual_id, p2: sf1.player2_individual_id }
-          : { p1: sf1.player3_individual_id, p2: sf1.player4_individual_id };
-        const winnerSf2 = resSf2.winner === 'team1'
-          ? { p1: sf2.player1_individual_id, p2: sf2.player2_individual_id }
-          : { p1: sf2.player3_individual_id, p2: sf2.player4_individual_id };
+        const winnerJ4 = resJ4.winner === 'team1'
+          ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
+          : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
+        const winnerJ5 = resJ5.winner === 'team1'
+          ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
+          : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
 
+        // J7: Final
         await supabase.from('matches').update({
-          player1_individual_id: winnerSf1.p1,
-          player2_individual_id: winnerSf1.p2,
-          player3_individual_id: winnerSf2.p1,
-          player4_individual_id: winnerSf2.p2,
-        }).eq('id', final.id);
+          player1_individual_id: winnerJ4.p1,
+          player2_individual_id: winnerJ4.p2,
+          player3_individual_id: winnerJ5.p1,
+          player4_individual_id: winnerJ5.p2,
+        }).eq('id', r3j7.id);
 
-        const loserSf1 = resSf1.loser === 'team1'
-          ? { p1: sf1.player1_individual_id, p2: sf1.player2_individual_id }
-          : { p1: sf1.player3_individual_id, p2: sf1.player4_individual_id };
-        const loserSf2 = resSf2.loser === 'team1'
-          ? { p1: sf2.player1_individual_id, p2: sf2.player2_individual_id }
-          : { p1: sf2.player3_individual_id, p2: sf2.player4_individual_id };
+        const loserJ4 = resJ4.loser === 'team1'
+          ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
+          : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
+        const loserJ5 = resJ5.loser === 'team1'
+          ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
+          : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
 
+        // J8: 3º/4º
         await supabase.from('matches').update({
-          player1_individual_id: loserSf1.p1,
-          player2_individual_id: loserSf1.p2,
-          player3_individual_id: loserSf2.p1,
-          player4_individual_id: loserSf2.p2,
-        }).eq('id', third.id);
+          player1_individual_id: loserJ4.p1,
+          player2_individual_id: loserJ4.p2,
+          player3_individual_id: loserJ5.p1,
+          player4_individual_id: loserJ5.p2,
+        }).eq('id', r3j8.id);
 
         console.log('[AUTO_ADVANCE] R3 updated!');
       }
@@ -2351,27 +2366,161 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       console.error('[AUTO_ADVANCE] Error:', error);
     }
   };
+  
+  // Função para verificar se todos os grupos terminaram e preencher R1 automaticamente
+  const autoFillCrossedPlayoffsR1 = async (currentMatches: MatchWithTeams[]) => {
+    console.log('[AUTO_FILL_R1] Checking if groups are complete...');
+    
+    // Verificar se existe R1 e se tem TBD
+    const r1j1 = currentMatches.find(m => m.round === 'crossed_r1_j1');
+    if (!r1j1 || r1j1.player1_individual_id) {
+      console.log('[AUTO_FILL_R1] R1 already filled or not found');
+      return;
+    }
+    
+    // Verificar se todos os jogos de grupo estão completos
+    const groupMatches = currentMatches.filter(m => m.round.startsWith('group_'));
+    const incompleteGroups = groupMatches.filter(m => m.status !== 'completed');
+    
+    if (incompleteGroups.length > 0) {
+      console.log(`[AUTO_FILL_R1] ${incompleteGroups.length} group matches still incomplete`);
+      return;
+    }
+    
+    if (groupMatches.length === 0) {
+      console.log('[AUTO_FILL_R1] No group matches found');
+      return;
+    }
+    
+    console.log('[AUTO_FILL_R1] All groups complete! Filling R1 with ranked players...');
+    
+    // Ordenar categorias
+    const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+    if (sortedCategories.length !== 3) {
+      console.log('[AUTO_FILL_R1] Need exactly 3 categories');
+      return;
+    }
+    
+    const [catA, catB, catC] = sortedCategories;
+    
+    // Função para calcular ranking de uma categoria
+    const getCategoryRankings = (categoryId: string) => {
+      const categoryPlayers = individualPlayers.filter(p => p.category_id === categoryId);
+      const categoryMatches = currentMatches.filter(m => 
+        m.category_id === categoryId && 
+        m.round.startsWith('group_') && 
+        m.status === 'completed'
+      );
+
+      const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
+      
+      categoryPlayers.forEach(player => {
+        playerStats.set(player.id, { 
+          id: player.id, 
+          name: player.name, 
+          wins: 0, 
+          gamesWon: 0, 
+          gamesLost: 0 
+        });
+      });
+
+      categoryMatches.forEach(match => {
+        const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        const team1Won = team1Games > team2Games;
+
+        const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+        const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+
+        team1Players.forEach(playerId => {
+          const stats = playerStats.get(playerId!);
+          if (stats) {
+            stats.gamesWon += team1Games;
+            stats.gamesLost += team2Games;
+            if (team1Won) stats.wins++;
+          }
+        });
+
+        team2Players.forEach(playerId => {
+          const stats = playerStats.get(playerId!);
+          if (stats) {
+            stats.gamesWon += team2Games;
+            stats.gamesLost += team1Games;
+            if (!team1Won) stats.wins++;
+          }
+        });
+      });
+
+      return Array.from(playerStats.values())
+        .sort((a, b) => {
+          if (b.wins !== a.wins) return b.wins - a.wins;
+          return (b.gamesWon - b.gamesLost) - (a.gamesWon - a.gamesLost);
+        });
+    };
+    
+    const rankA = getCategoryRankings(catA.id);
+    const rankB = getCategoryRankings(catB.id);
+    const rankC = getCategoryRankings(catC.id);
+    
+    if (rankA.length < 4 || rankB.length < 4 || rankC.length < 4) {
+      console.log('[AUTO_FILL_R1] Not enough players ranked');
+      return;
+    }
+    
+    console.log(`[AUTO_FILL_R1] Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
+    
+    try {
+      // J1: (1°A + 4°C) vs (2°A + 3°C)
+      await supabase.from('matches').update({
+        player1_individual_id: rankA[0].id,
+        player2_individual_id: rankC[3].id,
+        player3_individual_id: rankA[1].id,
+        player4_individual_id: rankC[2].id,
+      }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+      
+      // J2: (3°A + 2°B) vs (4°A + 1°B)
+      await supabase.from('matches').update({
+        player1_individual_id: rankA[2].id,
+        player2_individual_id: rankB[1].id,
+        player3_individual_id: rankA[3].id,
+        player4_individual_id: rankB[0].id,
+      }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+      
+      // J3: (3°B + 2°C) vs (4°B + 1°C)
+      await supabase.from('matches').update({
+        player1_individual_id: rankB[2].id,
+        player2_individual_id: rankC[1].id,
+        player3_individual_id: rankB[3].id,
+        player4_individual_id: rankC[0].id,
+      }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+      
+      console.log('[AUTO_FILL_R1] R1 matches filled with players!');
+      await fetchTournamentData();
+    } catch (error) {
+      console.error('[AUTO_FILL_R1] Error:', error);
+    }
+  };
 
   // Função manual para avançar jogadores nos playoffs cruzados (botão)
   const handleAdvanceCrossedPlayoffs = async () => {
     console.log('[ADVANCE_CROSSED] Checking for matches to advance...');
     console.log('[ADVANCE_CROSSED] All crossed matches:', matches.filter(m => m.round.startsWith('crossed_')).map(m => ({ round: m.round, status: m.status, p1: m.player1_individual_id })));
 
-    // Obter todas as partidas de playoffs cruzados
+    // Obter todas as partidas de playoffs cruzados - usar novos nomes
     const r1j1 = matches.find(m => m.round === 'crossed_r1_j1');
     const r1j2 = matches.find(m => m.round === 'crossed_r1_j2');
     const r1j3 = matches.find(m => m.round === 'crossed_r1_j3');
-    const sf1 = matches.find(m => m.round === 'crossed_r2_semifinal1');
-    const sf2 = matches.find(m => m.round === 'crossed_r2_semifinal2');
-    const fifth = matches.find(m => m.round === 'crossed_r2_5th_place');
-    const final = matches.find(m => m.round === 'crossed_r3_final');
-    const third = matches.find(m => m.round === 'crossed_r3_3rd_place');
+    const r2j4 = matches.find(m => m.round === 'crossed_r2_j4'); // SF1
+    const r2j5 = matches.find(m => m.round === 'crossed_r2_j5'); // SF2
+    const r2j6 = matches.find(m => m.round === 'crossed_r2_j6'); // 5º/6º
+    const r3j7 = matches.find(m => m.round === 'crossed_r3_j7'); // Final
+    const r3j8 = matches.find(m => m.round === 'crossed_r3_j8'); // 3º/4º
 
-    if (!r1j1 || !r1j2 || !r1j3 || !sf1 || !sf2 || !fifth || !final || !third) {
+    if (!r1j1 || !r1j2 || !r1j3 || !r2j4 || !r2j5 || !r2j6 || !r3j7 || !r3j8) {
       const missing = [
         !r1j1 && 'J1', !r1j2 && 'J2', !r1j3 && 'J3',
-        !sf1 && 'SF1', !sf2 && 'SF2', !fifth && '5th',
-        !final && 'Final', !third && '3rd'
+        !r2j4 && 'J4', !r2j5 && 'J5', !r2j6 && 'J6',
+        !r3j7 && 'J7', !r3j8 && 'J8'
       ].filter(Boolean).join(', ');
       alert(`Jogos não encontrados: ${missing}. Tenta refrescar a página.`);
       console.log('[ADVANCE_CROSSED] Missing matches:', missing);
@@ -2379,7 +2528,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
 
     console.log('[ADVANCE_CROSSED] R1 status:', { j1: r1j1.status, j2: r1j2.status, j3: r1j3.status });
-    console.log('[ADVANCE_CROSSED] R2 TBD:', { sf1: sf1.player1_individual_id, sf2: sf2.player1_individual_id, fifth: fifth.player1_individual_id });
+    console.log('[ADVANCE_CROSSED] R2 TBD:', { j4: r2j4.player1_individual_id, j5: r2j5.player1_individual_id, j6: r2j6.player1_individual_id });
 
     const getMatchResult = (match: MatchWithTeams) => {
       if (match.status !== 'completed') return null;
@@ -2424,74 +2573,79 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
           : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
 
-        // J4 (SF1): Vencedor J1 vs Vencedor J2
-        if (!sf1.player1_individual_id) {
+        // J4: Vencedor J1 vs Vencedor J2
+        if (!r2j4.player1_individual_id) {
           await supabase.from('matches').update({
             player1_individual_id: winner1.p1,
             player2_individual_id: winner1.p2,
             player3_individual_id: winner2.p1,
             player4_individual_id: winner2.p2,
-          }).eq('id', sf1.id);
+          }).eq('id', r2j4.id);
         }
 
-        // J5 (SF2): Perdedor J1 vs Vencedor J3
-        if (!sf2.player1_individual_id) {
+        // J5: Vencedor J3 vs Melhor Perdedor (J1 ou J2)
+        const loser1Games = res1.loser === 'team1' ? res1.t1Games : res1.t2Games;
+        const loser2Games = res2.loser === 'team1' ? res2.t1Games : res2.t2Games;
+        const bestLoser = loser1Games >= loser2Games ? loser1 : loser2;
+        const worstLoser = loser1Games >= loser2Games ? loser2 : loser1;
+        
+        if (!r2j5.player1_individual_id) {
           await supabase.from('matches').update({
-            player1_individual_id: loser1.p1,
-            player2_individual_id: loser1.p2,
-            player3_individual_id: winner3.p1,
-            player4_individual_id: winner3.p2,
-          }).eq('id', sf2.id);
+            player1_individual_id: winner3.p1,
+            player2_individual_id: winner3.p2,
+            player3_individual_id: bestLoser.p1,
+            player4_individual_id: bestLoser.p2,
+          }).eq('id', r2j5.id);
         }
 
-        // J6 (5th place): Perdedor J2 vs Perdedor J3
-        if (!fifth.player1_individual_id) {
+        // J6 (5º/6º): Perdedor J3 vs Pior Perdedor
+        if (!r2j6.player1_individual_id) {
           await supabase.from('matches').update({
-            player1_individual_id: loser2.p1,
-            player2_individual_id: loser2.p2,
-            player3_individual_id: loser3.p1,
-            player4_individual_id: loser3.p2,
-          }).eq('id', fifth.id);
+            player1_individual_id: loser3.p1,
+            player2_individual_id: loser3.p2,
+            player3_individual_id: worstLoser.p1,
+            player4_individual_id: worstLoser.p2,
+          }).eq('id', r2j6.id);
         }
       }
 
-      // Se R2 Semi-finais estão completas, preencher R3
-      if (sf1.status === 'completed' && sf2.status === 'completed') {
-        const resSf1 = getMatchResult(sf1)!;
-        const resSf2 = getMatchResult(sf2)!;
+      // Se R2 (J4, J5) estão completas, preencher R3
+      if (r2j4.status === 'completed' && r2j5.status === 'completed') {
+        const resJ4 = getMatchResult(r2j4)!;
+        const resJ5 = getMatchResult(r2j5)!;
 
-        // Final: Vencedor SF1 vs Vencedor SF2
-        if (!final.player1_individual_id) {
-          const winnerSf1 = resSf1.winner === 'team1'
-            ? { p1: sf1.player1_individual_id, p2: sf1.player2_individual_id }
-            : { p1: sf1.player3_individual_id, p2: sf1.player4_individual_id };
-          const winnerSf2 = resSf2.winner === 'team1'
-            ? { p1: sf2.player1_individual_id, p2: sf2.player2_individual_id }
-            : { p1: sf2.player3_individual_id, p2: sf2.player4_individual_id };
+        // J7: Final - Vencedor J4 vs Vencedor J5
+        if (!r3j7.player1_individual_id) {
+          const winnerJ4 = resJ4.winner === 'team1'
+            ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
+            : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
+          const winnerJ5 = resJ5.winner === 'team1'
+            ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
+            : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
 
           await supabase.from('matches').update({
-            player1_individual_id: winnerSf1.p1,
-            player2_individual_id: winnerSf1.p2,
-            player3_individual_id: winnerSf2.p1,
-            player4_individual_id: winnerSf2.p2,
-          }).eq('id', final.id);
+            player1_individual_id: winnerJ4.p1,
+            player2_individual_id: winnerJ4.p2,
+            player3_individual_id: winnerJ5.p1,
+            player4_individual_id: winnerJ5.p2,
+          }).eq('id', r3j7.id);
         }
 
-        // 3rd place: Perdedor SF1 vs Perdedor SF2
-        if (!third.player1_individual_id) {
-          const loserSf1 = resSf1.loser === 'team1'
-            ? { p1: sf1.player1_individual_id, p2: sf1.player2_individual_id }
-            : { p1: sf1.player3_individual_id, p2: sf1.player4_individual_id };
-          const loserSf2 = resSf2.loser === 'team1'
-            ? { p1: sf2.player1_individual_id, p2: sf2.player2_individual_id }
-            : { p1: sf2.player3_individual_id, p2: sf2.player4_individual_id };
+        // J8: 3º/4º - Perdedor J4 vs Perdedor J5
+        if (!r3j8.player1_individual_id) {
+          const loserJ4 = resJ4.loser === 'team1'
+            ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
+            : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
+          const loserJ5 = resJ5.loser === 'team1'
+            ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
+            : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
 
           await supabase.from('matches').update({
-            player1_individual_id: loserSf1.p1,
-            player2_individual_id: loserSf1.p2,
-            player3_individual_id: loserSf2.p1,
-            player4_individual_id: loserSf2.p2,
-          }).eq('id', third.id);
+            player1_individual_id: loserJ4.p1,
+            player2_individual_id: loserJ4.p2,
+            player3_individual_id: loserJ5.p1,
+            player4_individual_id: loserJ5.p2,
+          }).eq('id', r3j8.id);
         }
       }
 
@@ -2803,6 +2957,61 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         return id;
       };
       
+      // Helper to generate American format combinations for any number of players
+      // Each player plays with every other player as partner at least once
+      const generateAmericanCombinations = (players: typeof individualPlayers): Array<{ p1: string; p2: string; p3: string; p4: string }> => {
+        const n = players.length;
+        if (n < 4) return [];
+        
+        const combinations: Array<{ p1: string; p2: string; p3: string; p4: string }> = [];
+        const usedPartnerships = new Set<string>();
+        
+        const getPartnershipKey = (id1: string, id2: string): string => {
+          return [id1, id2].sort().join('+');
+        };
+        
+        // Generate all possible pairs
+        const allPairs: Array<{ p1: string; p2: string; key: string }> = [];
+        for (let i = 0; i < n; i++) {
+          for (let j = i + 1; j < n; j++) {
+            const key = getPartnershipKey(players[i].id, players[j].id);
+            allPairs.push({ p1: players[i].id, p2: players[j].id, key });
+          }
+        }
+        
+        // Shuffle pairs for variety
+        const shuffledPairs = [...allPairs].sort(() => Math.random() - 0.5);
+        
+        // Try to create matches using unique partnerships
+        for (let i = 0; i < shuffledPairs.length; i++) {
+          const pair1 = shuffledPairs[i];
+          if (usedPartnerships.has(pair1.key)) continue;
+          
+          for (let j = i + 1; j < shuffledPairs.length; j++) {
+            const pair2 = shuffledPairs[j];
+            if (usedPartnerships.has(pair2.key)) continue;
+            
+            // Check that all 4 players are different
+            const allFour = new Set([pair1.p1, pair1.p2, pair2.p1, pair2.p2]);
+            if (allFour.size !== 4) continue;
+            
+            // Mark partnerships as used
+            usedPartnerships.add(pair1.key);
+            usedPartnerships.add(pair2.key);
+            
+            combinations.push({
+              p1: pair1.p1,
+              p2: pair1.p2,
+              p3: pair2.p1,
+              p4: pair2.p2
+            });
+            break;
+          }
+        }
+        
+        return combinations;
+      };
+      
       if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'individual') {
         // Individual Round Robin (Americano SEM grupos) - todos jogam contra todos com parceiros rotativos
         console.log('[SCHEDULE] Using American scheduler (individual round robin) with', individualPlayers.length, 'players');
@@ -2835,12 +3044,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           status: 'scheduled'
         }));
         
-      } else if (currentTournament.format === 'individual_groups_knockout') {
-        // Americano COM grupos + eliminatórias
-        console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players');
+      } else if (currentTournament.format === 'individual_groups_knockout' || 
+                 currentTournament.format === 'crossed_playoffs' || 
+                 currentTournament.format === 'mixed_gender') {
+        // Americano COM grupos + eliminatórias (inclui crossed_playoffs e mixed_gender)
+        console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', currentTournament.format);
         
-        // Verificar se é formato de playoffs cruzados (3 categorias = 3 grupos)
-        const isCrossedPlayoffs = categories.length === 3;
+        // Verificar se é formato de playoffs cruzados ou mixed_gender (cada categoria = 1 grupo)
+        const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || 
+                                   currentTournament.format === 'mixed_gender' || 
+                                   categories.length === 3;
         
         if (isCrossedPlayoffs) {
           // PLAYOFFS CRUZADOS: Gerar APENAS jogos de grupo para cada categoria
@@ -2849,10 +3062,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
           let matchNumber = 1;
-          let currentTime = new Date(`${startDate}T${startTime}:00`);
+          const baseStartTime = new Date(`${startDate}T${startTime}:00`);
           const endOfDay = new Date(`${startDate}T${endTime}:00`);
           
-          // Para cada categoria, gerar jogos americanos (3 jogos para 4 jogadores)
+          // Primeiro, processar cada categoria para calcular campos por grupo
+          const categoryData: Array<{
+            category: typeof sortedCategories[0];
+            players: typeof individualPlayers;
+            combinations: Array<{ p1: string; p2: string; p3: string; p4: string }>;
+            courtsPerGroup: number;
+            baseCourtForGroup: number;
+            groupName: string;
+          }> = [];
+          
+          let totalCourtsUsed = 0;
           for (let catIdx = 0; catIdx < sortedCategories.length; catIdx++) {
             const category = sortedCategories[catIdx];
             const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
@@ -2865,43 +3088,172 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               continue;
             }
             
-            // Gerar combinações americanas para 4 jogadores (3 jogos)
-            // Jogo 1: P1+P2 vs P3+P4, Jogo 2: P1+P3 vs P2+P4, Jogo 3: P1+P4 vs P2+P3
-            const p = categoryPlayers.slice(0, 4);
-            const americanCombinations = [
-              { p1: p[0].id, p2: p[1].id, p3: p[2].id, p4: p[3].id },
-              { p1: p[0].id, p2: p[2].id, p3: p[1].id, p4: p[3].id },
-              { p1: p[0].id, p2: p[3].id, p3: p[1].id, p4: p[2].id }
-            ];
+            const americanCombinations = generateAmericanCombinations(categoryPlayers);
+            const courtsPerGroup = Math.max(1, Math.floor(categoryPlayers.length / 4));
+            const baseCourtForGroup = totalCourtsUsed;
+            totalCourtsUsed += courtsPerGroup;
             
-            for (let i = 0; i < americanCombinations.length; i++) {
-              const combo = americanCombinations[i];
-              const court = (catIdx + 1).toString(); // Cada categoria no seu campo
+            categoryData.push({
+              category,
+              players: categoryPlayers,
+              combinations: americanCombinations,
+              courtsPerGroup,
+              baseCourtForGroup,
+              groupName
+            });
+            
+            console.log(`[SCHEDULE] Category ${category.name}: ${categoryPlayers.length} players, ${americanCombinations.length} matches, ${courtsPerGroup} courts (courts ${baseCourtForGroup + 1}-${baseCourtForGroup + courtsPerGroup})`);
+          }
+          
+          // Agora, gerar jogos COM TODOS OS GRUPOS EM PARALELO
+          // Cada grupo começa ao mesmo tempo mas tem os seus próprios campos
+          for (const catData of categoryData) {
+            // Cada grupo tem o seu próprio tracking de tempo (todos começam ao mesmo tempo)
+            let groupTime = new Date(baseStartTime);
+            
+            for (let i = 0; i < catData.combinations.length; i++) {
+              const combo = catData.combinations[i];
+              // Atribuir campos dentro do grupo
+              const courtInGroup = (i % catData.courtsPerGroup);
+              const court = (catData.baseCourtForGroup + courtInGroup + 1).toString();
               
               matchesToInsert.push({
                 tournament_id: currentTournament.id,
-                category_id: category.id,
-                round: `group_${groupName}`,
+                category_id: catData.category.id,
+                round: `group_${catData.groupName}`,
                 match_number: matchNumber++,
                 player1_individual_id: combo.p1,
                 player2_individual_id: combo.p2,
                 player3_individual_id: combo.p3,
                 player4_individual_id: combo.p4,
-                scheduled_time: currentTime.toISOString(),
+                scheduled_time: groupTime.toISOString(),
                 court: court,
                 status: 'scheduled'
               });
-            }
-            
-            // Avançar tempo após cada ronda de jogos
-            currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
-            if (currentTime >= endOfDay) {
-              currentTime.setDate(currentTime.getDate() + 1);
-              currentTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+              
+              // Avançar tempo do GRUPO a cada X jogos (baseado nos campos por grupo)
+              if ((i + 1) % catData.courtsPerGroup === 0) {
+                groupTime = new Date(groupTime.getTime() + matchDuration * 60000);
+                if (groupTime >= endOfDay) {
+                  groupTime.setDate(groupTime.getDate() + 1);
+                  groupTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+                }
+              }
             }
           }
           
-          console.log(`[SCHEDULE] Crossed Playoffs: Generated ${matchesToInsert.length} group matches (3 per category)`);
+          console.log(`[SCHEDULE] Crossed/Mixed Playoffs: Generated ${matchesToInsert.length} group matches total (all groups in parallel)`);
+          
+          // AGORA GERAR AUTOMATICAMENTE OS PLAYOFFS CRUZADOS COM TBD
+          // Estrutura: R1 (3 jogos) + R2 (3 jogos) + R3 (2 jogos) = 8 jogos total
+          console.log('[SCHEDULE] Generating Crossed Playoffs matches with TBD...');
+          
+          // Calcular o tempo máximo dos grupos para começar os playoffs depois
+          let maxGroupEndTime = new Date(baseStartTime);
+          for (const catData of categoryData) {
+            const numRounds = Math.ceil(catData.combinations.length / catData.courtsPerGroup);
+            const groupEndTime = new Date(baseStartTime.getTime() + numRounds * matchDuration * 60000);
+            if (groupEndTime > maxGroupEndTime) {
+              maxGroupEndTime = groupEndTime;
+            }
+          }
+          
+          let playoffsTime = new Date(maxGroupEndTime);
+          // Verificar se passou do fim do dia
+          if (playoffsTime >= endOfDay) {
+            playoffsTime.setDate(playoffsTime.getDate() + 1);
+            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+          }
+          
+          // RONDA 1 - Playoffs Cruzados (3 jogos simultâneos)
+          // J1: (1°A + 4°C) vs (2°A + 3°C)
+          // J2: (3°A + 2°B) vs (4°A + 1°B)
+          // J3: (3°B + 2°C) vs (4°B + 1°C)
+          const r1Matches = [
+            { round: 'crossed_r1_j1', court: '1' },
+            { round: 'crossed_r1_j2', court: '2' },
+            { round: 'crossed_r1_j3', court: '3' },
+          ];
+          
+          for (const m of r1Matches) {
+            matchesToInsert.push({
+              tournament_id: currentTournament.id,
+              category_id: null,
+              round: m.round,
+              match_number: matchNumber++,
+              player1_individual_id: null, // TBD - será preenchido quando grupos terminarem
+              player2_individual_id: null,
+              player3_individual_id: null,
+              player4_individual_id: null,
+              scheduled_time: playoffsTime.toISOString(),
+              court: m.court,
+              status: 'scheduled'
+            });
+          }
+          
+          // RONDA 2 - Meias-finais (3 jogos)
+          playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
+          if (playoffsTime >= endOfDay) {
+            playoffsTime.setDate(playoffsTime.getDate() + 1);
+            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+          }
+          
+          // J4: Vencedor J1 vs Vencedor J2
+          // J5: Vencedor J3 vs Melhor Perdedor
+          // J6: Perdedor J3 vs Pior Perdedor (5º/6º lugar)
+          const r2Matches = [
+            { round: 'crossed_r2_j4', court: '1' },
+            { round: 'crossed_r2_j5', court: '2' },
+            { round: 'crossed_r2_j6', court: '3' },
+          ];
+          
+          for (const m of r2Matches) {
+            matchesToInsert.push({
+              tournament_id: currentTournament.id,
+              category_id: null,
+              round: m.round,
+              match_number: matchNumber++,
+              player1_individual_id: null,
+              player2_individual_id: null,
+              player3_individual_id: null,
+              player4_individual_id: null,
+              scheduled_time: playoffsTime.toISOString(),
+              court: m.court,
+              status: 'scheduled'
+            });
+          }
+          
+          // RONDA 3 - Finais (2 jogos)
+          playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
+          if (playoffsTime >= endOfDay) {
+            playoffsTime.setDate(playoffsTime.getDate() + 1);
+            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+          }
+          
+          // J7: Final (Vencedor J4 vs Vencedor J5)
+          // J8: 3º/4º lugar (Perdedor J4 vs Perdedor J5)
+          const r3Matches = [
+            { round: 'crossed_r3_j7', court: '1' }, // Final
+            { round: 'crossed_r3_j8', court: '2' }, // 3º/4º
+          ];
+          
+          for (const m of r3Matches) {
+            matchesToInsert.push({
+              tournament_id: currentTournament.id,
+              category_id: null,
+              round: m.round,
+              match_number: matchNumber++,
+              player1_individual_id: null,
+              player2_individual_id: null,
+              player3_individual_id: null,
+              player4_individual_id: null,
+              scheduled_time: playoffsTime.toISOString(),
+              court: m.court,
+              status: 'scheduled'
+            });
+          }
+          
+          console.log(`[SCHEDULE] Crossed Playoffs: Added 8 playoff matches (R1:3 + R2:3 + R3:2) with TBD. Total matches: ${matchesToInsert.length}`);
           
         } else {
           // Formato normal: usar scheduler completo
@@ -2961,29 +3313,203 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }));
         
       } else {
-        // Torneios de equipas standard
+        // Torneios de equipas standard (round_robin, single_elimination, groups_knockout)
         console.log('[SCHEDULE] Using standard Tournament scheduler with', teams.length, 'teams');
-        const teamMatches = generateTournamentSchedule(
-          teams,
-          numberOfCourts,
-          startDate,
-          currentTournament.format || 'round_robin',
-          startTime,
-          endTime,
-          matchDuration,
-          dailySchedules
-        );
         
-        matchesToInsert = teamMatches.map(m => ({
-          tournament_id: currentTournament.id,
-          round: m.round,
-          match_number: m.match_number,
-          team1_id: m.team1_id,
-          team2_id: m.team2_id,
-          scheduled_time: m.scheduled_time,
-          court: m.court,
-          status: 'scheduled'
-        }));
+        // Se há categorias e não é round_robin puro, gerar quadros separados por categoria
+        const hasCategories = categories.length > 0 && teams.some(t => t.category_id);
+        const isRoundRobin = currentTournament.format === 'round_robin' && !currentTournament.round_robin_type;
+        
+        if (hasCategories && !isRoundRobin) {
+          console.log('[SCHEDULE] Generating separate brackets for', categories.length, 'categories - ALL PARALLEL');
+          
+          // 1. Gerar todos os jogos de todas as categorias (sem horário ainda)
+          const allCategoryMatches: Array<{
+            category_id: string;
+            round: string;
+            round_order: number; // Para ordenar: primeira ronda = 1, SF = 2, Final = 3
+            team1_id: string | null;
+            team2_id: string | null;
+          }> = [];
+          
+          const getRoundOrder = (round: string): number => {
+            if (round === 'final') return 100;
+            if (round === '3rd_place') return 99;
+            if (round === 'semi_final' || round === 'semifinal') return 90;
+            if (round === 'quarter_final') return 80;
+            if (round.startsWith('round_of_')) return 70;
+            if (round.startsWith('round_')) return 60;
+            return 50;
+          };
+          
+          for (const category of categories) {
+            const categoryTeams = teams.filter(t => t.category_id === category.id);
+            
+            if (categoryTeams.length === 0) {
+              console.log(`[SCHEDULE] Skipping category ${category.name} - no teams`);
+              continue;
+            }
+            
+            console.log(`[SCHEDULE] Category ${category.name}: ${categoryTeams.length} teams`);
+            
+            // Gerar os jogos desta categoria
+            const categoryMatches = generateTournamentSchedule(
+              categoryTeams,
+              numberOfCourts,
+              startDate,
+              currentTournament.format || 'single_elimination',
+              startTime,
+              endTime,
+              matchDuration,
+              false,
+              dailySchedules
+            );
+            
+            categoryMatches.forEach(m => {
+              allCategoryMatches.push({
+                category_id: category.id,
+                round: m.round,
+                round_order: getRoundOrder(m.round),
+                team1_id: m.team1_id,
+                team2_id: m.team2_id,
+              });
+            });
+          }
+          
+          console.log(`[SCHEDULE] Total matches from all categories: ${allCategoryMatches.length}`);
+          
+          // 2. Ordenar por round_order (primeiras rondas primeiro, finais por último)
+          allCategoryMatches.sort((a, b) => a.round_order - b.round_order);
+          
+          // 3. Distribuir pelos slots de tempo, preenchendo todos os campos
+          matchesToInsert = [];
+          let matchNumber = 1;
+          
+          console.log('[SCHEDULE] dailySchedules:', JSON.stringify(dailySchedules));
+          
+          // Função para obter o horário de um dia específico
+          const getDaySchedule = (dateStr: string) => {
+            console.log(`[SCHEDULE] Looking for schedule for date: ${dateStr}`);
+            if (dailySchedules && dailySchedules.length > 0) {
+              const schedule = dailySchedules.find((s: { date: string; start_time: string; end_time: string }) => s.date === dateStr);
+              if (schedule) {
+                console.log(`[SCHEDULE] Found schedule: ${schedule.start_time} - ${schedule.end_time}`);
+                return { start: schedule.start_time, end: schedule.end_time };
+              }
+            }
+            console.log(`[SCHEDULE] No schedule found, using defaults: ${startTime} - ${endTime}`);
+            return { start: startTime, end: endTime };
+          };
+          
+          // Começar com o horário do primeiro dia
+          let currentDateStr = startDate;
+          let daySchedule = getDaySchedule(currentDateStr);
+          
+          // Criar data corretamente (sem problemas de timezone)
+          const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+          const [startHr, startMin] = daySchedule.start.split(':').map(Number);
+          let currentTime = new Date(startYear, startMonth - 1, startDay, startHr, startMin, 0, 0);
+          
+          console.log(`[SCHEDULE] Starting on ${currentDateStr} at ${daySchedule.start} (ends ${daySchedule.end})`);
+          console.log(`[SCHEDULE] Initial currentTime: ${currentTime.toISOString()}`);
+          
+          let matchIndex = 0;
+          while (matchIndex < allCategoryMatches.length) {
+            // Criar string de data/hora no formato ISO LOCAL (sem Z para não converter para UTC)
+            const year = currentTime.getFullYear();
+            const month = String(currentTime.getMonth() + 1).padStart(2, '0');
+            const day = String(currentTime.getDate()).padStart(2, '0');
+            const hours = String(currentTime.getHours()).padStart(2, '0');
+            const minutes = String(currentTime.getMinutes()).padStart(2, '0');
+            // Usar formato sem Z para evitar conversão de timezone
+            const scheduledTimeStr = `${year}-${month}-${day}T${hours}:${minutes}:00`;
+            
+            console.log(`[SCHEDULE] Slot: ${hours}:${minutes} on ${day}/${month}/${year}`);
+            
+            // Preencher todos os campos neste slot de tempo
+            for (let court = 1; court <= numberOfCourts && matchIndex < allCategoryMatches.length; court++) {
+              const m = allCategoryMatches[matchIndex];
+              
+              matchesToInsert.push({
+                tournament_id: currentTournament.id,
+                category_id: m.category_id,
+                round: m.round,
+                match_number: matchNumber++,
+                team1_id: m.team1_id,
+                team2_id: m.team2_id,
+                scheduled_time: scheduledTimeStr,
+                court: court.toString(),
+                status: 'scheduled'
+              });
+              
+              matchIndex++;
+            }
+            
+            // Calcular o fim do dia em minutos desde meia-noite
+            const endOfDayHour = parseInt(daySchedule.end.split(':')[0]);
+            const endOfDayMinute = parseInt(daySchedule.end.split(':')[1] || '0');
+            const endOfDayInMinutes = endOfDayHour * 60 + endOfDayMinute;
+            
+            // Calcular a hora do próximo slot em minutos desde meia-noite
+            const currentHour = currentTime.getHours();
+            const currentMinute = currentTime.getMinutes();
+            const currentInMinutes = currentHour * 60 + currentMinute;
+            const nextSlotInMinutes = currentInMinutes + matchDuration;
+            
+            // Se o próximo slot passar do fim do dia, mover para o dia seguinte
+            if (nextSlotInMinutes > endOfDayInMinutes) {
+              // Mover para o dia seguinte
+              currentTime.setDate(currentTime.getDate() + 1);
+              // Obter a data em formato local
+              const nextYear = currentTime.getFullYear();
+              const nextMonth = String(currentTime.getMonth() + 1).padStart(2, '0');
+              const nextDay = String(currentTime.getDate()).padStart(2, '0');
+              currentDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+              daySchedule = getDaySchedule(currentDateStr);
+              // Definir a hora de início do novo dia
+              currentTime.setHours(parseInt(daySchedule.start.split(':')[0]), parseInt(daySchedule.start.split(':')[1] || '0'), 0, 0);
+              console.log(`[SCHEDULE] Moving to ${currentDateStr} at ${daySchedule.start} (ends ${daySchedule.end})`);
+            } else {
+              // Avançar para o próximo slot de tempo
+              currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+            }
+          }
+          
+          console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} matches across ${Math.ceil(matchesToInsert.length / numberOfCourts)} time slots`);
+        } else {
+          // Sem categorias ou round_robin puro - gerar quadro único
+          console.log('[SCHEDULE] Generating single bracket for all teams');
+          const teamMatches = generateTournamentSchedule(
+            teams,
+            numberOfCourts,
+            startDate,
+            currentTournament.format || 'round_robin',
+            startTime,
+            endTime,
+            matchDuration,
+            false, // skipLaterRounds - queremos todas as rondas
+            dailySchedules
+          );
+          
+          matchesToInsert = teamMatches.map(m => {
+            // Para cada match, pegar o category_id da team1 (se houver)
+            const matchTeam1 = teams.find(t => t.id === m.team1_id);
+            const matchTeam2 = teams.find(t => t.id === m.team2_id);
+            const categoryId = matchTeam1?.category_id || matchTeam2?.category_id || null;
+            
+            return {
+              tournament_id: currentTournament.id,
+              category_id: categoryId,
+              round: m.round,
+              match_number: m.match_number,
+              team1_id: m.team1_id,
+              team2_id: m.team2_id,
+              scheduled_time: m.scheduled_time,
+              court: m.court,
+              status: 'scheduled'
+            };
+          });
+        }
       }
       
       console.log('[SCHEDULE] Generated', matchesToInsert.length, 'matches');
@@ -3940,29 +4466,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     Gerar Calendário
                   </button>
                   
-                  {/* Botão Playoffs Cruzados - aparece quando há 3 categorias */}
-                  {categories.length === 3 && filteredMatches.some(m => m.round?.startsWith('group_')) && !filteredMatches.some(m => m.round?.startsWith('crossed_')) && (
-                    <button
-                      onClick={handleGenerateCrossedPlayoffsBetweenCategories}
-                      disabled={loading}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
-                    >
-                      <Shuffle className="w-4 h-4" />
-                      Gerar Playoffs Cruzados
-                    </button>
-                  )}
-                  
-                  {/* Botão Avançar Jogadores - aparece quando há playoffs cruzados */}
-                  {filteredMatches.some(m => m.round?.startsWith('crossed_')) && (
-                    <button
-                      onClick={handleAdvanceCrossedPlayoffs}
-                      disabled={loading}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
-                    >
-                      <Trophy className="w-4 h-4" />
-                      Avançar Jogadores
-                    </button>
-                  )}
+                  {/* Playoffs cruzados são agora gerados automaticamente pelo scheduler */}
+                  {/* Jogadores avançam automaticamente quando os jogos terminam */}
                   
                   {filteredMatches.length > 0 && (
                     <button
@@ -3990,6 +4495,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   categories={categories}
                   showCategoryLabels={categories.length > 1}
                   printTitle={currentTournament.name}
+                  onScheduleUpdate={fetchTournamentData}
                 />
               ) : (
                 <div className="text-center py-12 text-gray-500">
@@ -4498,7 +5004,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           tournamentId={currentTournament.id}
           onClose={() => setShowManageCategories(false)}
           onCategoriesUpdated={() => {
-            setShowManageCategories(false);
             fetchTournamentData();
           }}
         />

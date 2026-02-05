@@ -574,5 +574,64 @@ function generateGroupStageSchedule(
   }
 
   console.log('[GROUP STAGE V4] ✅ COMPLETE! Total group matches scheduled:', scheduledMatches.length);
+  
+  // ============================================================================
+  // ADD KNOCKOUT STAGE MATCHES (semifinals, final, 3rd place)
+  // ============================================================================
+  console.log('[GROUP STAGE V4] Adding knockout stage matches...');
+  
+  // Calculate time for knockout matches (after all group matches)
+  const lastGroupMatchTime = scheduledMatches.length > 0 
+    ? new Date(scheduledMatches[scheduledMatches.length - 1].scheduled_time)
+    : new Date(`${startDate}T${startTime}:00`);
+  
+  // Add match duration to get start time for knockout stage
+  let knockoutTime = new Date(lastGroupMatchTime.getTime() + matchDurationMinutes * 60000);
+  
+  // Semifinals (2 matches)
+  scheduledMatches.push({
+    round: 'semifinal',
+    match_number: globalMatchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: knockoutTime.toISOString(),
+    court: '1'
+  });
+  
+  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
+  scheduledMatches.push({
+    round: 'semifinal',
+    match_number: globalMatchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: knockoutTime.toISOString(),
+    court: '1'
+  });
+  
+  // 3rd place match
+  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
+  scheduledMatches.push({
+    round: '3rd_place',
+    match_number: globalMatchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: knockoutTime.toISOString(),
+    court: '1'
+  });
+  
+  // Final
+  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
+  scheduledMatches.push({
+    round: 'final',
+    match_number: globalMatchNumber++,
+    team1_id: null,
+    team2_id: null,
+    scheduled_time: knockoutTime.toISOString(),
+    court: '1'
+  });
+  
+  console.log('[GROUP STAGE V4] ✅ Added 4 knockout matches (2 semifinals, 3rd place, final)');
+  console.log('[GROUP STAGE V4] ✅ TOTAL matches (group + knockout):', scheduledMatches.length);
+  
   return scheduledMatches;
 }
