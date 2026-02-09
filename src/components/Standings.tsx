@@ -63,6 +63,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
   const isIndividualGroupsKnockout = format === 'individual_groups_knockout';
+  const isMixedAmerican = format === 'mixed_american';
 
   useEffect(() => {
     console.log('[STANDINGS] Component mounted, fetching standings...');
@@ -183,6 +184,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             name: p.name,
             group_name: groupName,
             wins: p.wins,
+            draws: p.draws,
             gamesWon: p.gamesWon,
             gamesLost: p.gamesLost
           }));
@@ -214,11 +216,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           .not('round', 'like', 'group_%');
 
         // Create a global stats map for all players from group stage
-        const globalPlayerStats = new Map<string, { wins: number; gamesWon: number; gamesLost: number }>();
+        const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
         groupedStatsMap.forEach((groupPlayers) => {
           groupPlayers.forEach(player => {
             globalPlayerStats.set(player.id, {
               wins: player.wins,
+              draws: player.draws,
               gamesWon: player.gamesWon,
               gamesLost: player.gamesLost
             });
@@ -251,9 +254,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           const unrankedPlayers = filteredPlayers
             .filter(p => !rankedIds.has(p.id))
             .sort((a, b) => {
-              const statsA = globalPlayerStats.get(a.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              const statsB = globalPlayerStats.get(b.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              const statsA = globalPlayerStats.get(a.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              const statsB = globalPlayerStats.get(b.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
               if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
+              const ptsA = statsA.wins * 2 + (statsA.draws || 0);
+              const ptsB = statsB.wins * 2 + (statsB.draws || 0);
+              if (ptsB !== ptsA) return ptsB - ptsA;
               const diffA = statsA.gamesWon - statsA.gamesLost;
               const diffB = statsB.gamesWon - statsB.gamesLost;
               return diffB - diffA;
@@ -272,9 +278,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         } else {
           const sortPlayersByGroupPerformance = (playerIds: string[]): string[] => {
             return [...playerIds].sort((a, b) => {
-              const statsA = globalPlayerStats.get(a) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              const statsB = globalPlayerStats.get(b) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              const statsA = globalPlayerStats.get(a) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              const statsB = globalPlayerStats.get(b) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
               if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
+              const ptsA = statsA.wins * 2 + (statsA.draws || 0);
+              const ptsB = statsB.wins * 2 + (statsB.draws || 0);
+              if (ptsB !== ptsA) return ptsB - ptsA;
               const diffA = statsA.gamesWon - statsA.gamesLost;
               const diffB = statsB.gamesWon - statsB.gamesLost;
               if (diffB !== diffA) return diffB - diffA;
@@ -440,9 +449,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           });
 
           const playerStats = Array.from(playerStatsMap.values());
-          // Sort by wins, then game diff, then games won
+          // Sort by: 1) Wins, 2) Points (V=2, E=1, D=0), 3) Game diff, 4) Games won
           playerStats.sort((a, b) => {
             if (b.wins !== a.wins) return b.wins - a.wins;
+            const ptsA = a.wins * 2 + a.draws;
+            const ptsB = b.wins * 2 + b.draws;
+            if (ptsB !== ptsA) return ptsB - ptsA;
             const aDiff = a.gamesWon - a.gamesLost;
             const bDiff = b.gamesWon - b.gamesLost;
             if (bDiff !== aDiff) return bDiff - aDiff;
@@ -472,11 +484,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           playerOrder.set(player.id, index);
         });
 
-        const globalPlayerStats = new Map<string, { wins: number; gamesWon: number; gamesLost: number }>();
+        const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
         groupedStatsMap.forEach((groupPlayers) => {
           groupPlayers.forEach(player => {
             globalPlayerStats.set(player.id, {
               wins: player.wins,
+              draws: player.draws,
               gamesWon: player.gamesWon,
               gamesLost: player.gamesLost
             });
@@ -516,24 +529,29 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         };
 
         // Sort function with all tiebreakers
-        const sortPlayers = (players: { id: string; name: string; stats: { wins: number; gamesWon: number; gamesLost: number } }[]) => {
+        const sortPlayers = (players: { id: string; name: string; stats: { wins: number; draws?: number; gamesWon: number; gamesLost: number } }[]) => {
           return players.sort((a, b) => {
             // 1. Vitórias
             if (b.stats.wins !== a.stats.wins) return b.stats.wins - a.stats.wins;
             
-            // 2. Confronto direto (only for 2 players)
+            // 2. Pontos (V=2, E=1, D=0)
+            const ptsA = a.stats.wins * 2 + (a.stats.draws || 0);
+            const ptsB = b.stats.wins * 2 + (b.stats.draws || 0);
+            if (ptsB !== ptsA) return ptsB - ptsA;
+            
+            // 3. Confronto direto (only for 2 players)
             const h2h = getHeadToHead(a.id, b.id);
             if (h2h !== 0) return -h2h; // negative h2h means b wins, so return positive to put b first
             
-            // 3. Diferença de jogos
+            // 4. Diferença de jogos
             const aDiff = a.stats.gamesWon - a.stats.gamesLost;
             const bDiff = b.stats.gamesWon - b.stats.gamesLost;
             if (bDiff !== aDiff) return bDiff - aDiff;
             
-            // 4. Maior número de jogos ganhos
+            // 5. Maior número de jogos ganhos
             if (b.stats.gamesWon !== a.stats.gamesWon) return b.stats.gamesWon - a.stats.gamesWon;
             
-            // 5. Ordem de inscrição
+            // 6. Ordem de inscrição
             return (playerOrder.get(a.id) || 0) - (playerOrder.get(b.id) || 0);
           });
         };
@@ -695,6 +713,106 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       }
     }
 
+    // For Mixed American (Americano Misto), fetch ALL players from BOTH categories
+    // Matches have category_id = null, so we don't filter by category
+    if (isMixedAmerican) {
+      console.log('[STANDINGS-MIXED] Fetching all players for mixed american tournament:', tournamentId);
+      const { data: playersData, error: playersError } = await supabase
+        .from('players')
+        .select('id, name, group_name, category_id, final_position')
+        .eq('tournament_id', tournamentId);
+
+      console.log('[STANDINGS-MIXED] Players:', playersData?.length, 'Error:', playersError);
+
+      // Fetch ALL completed matches (category_id is null for mixed matches)
+      const { data: matches, error: matchesError } = await supabase
+        .from('matches')
+        .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
+        .eq('tournament_id', tournamentId)
+        .eq('status', 'completed');
+
+      console.log('[STANDINGS-MIXED] Completed matches:', matches?.length, 'Error:', matchesError);
+
+      if (!playersData || !matches) {
+        setLoading(false);
+        return;
+      }
+
+      // Calculate individual player stats
+      const playerStatsMap = new Map<string, IndividualPlayerStats>();
+
+      playersData.forEach(player => {
+        playerStatsMap.set(player.id, {
+          id: player.id,
+          name: player.name,
+          matchesPlayed: 0,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          gamesWon: 0,
+          gamesLost: 0,
+          final_position: player.final_position,
+          group_name: player.group_name,
+        });
+      });
+
+      matches.forEach(match => {
+        const player1Id = (match as any).player1_individual_id;
+        const player2Id = (match as any).player2_individual_id;
+        const player3Id = (match as any).player3_individual_id;
+        const player4Id = (match as any).player4_individual_id;
+
+        const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        const isDraw = team1Games === team2Games;
+
+        // Team 1 players (player1 and player2)
+        [player1Id, player2Id].forEach(pid => {
+          if (pid && playerStatsMap.has(pid)) {
+            const stats = playerStatsMap.get(pid)!;
+            stats.matchesPlayed++;
+            stats.gamesWon += team1Games;
+            stats.gamesLost += team2Games;
+            if (isDraw) stats.draws++;
+            else if (team1Games > team2Games) stats.wins++;
+            else stats.losses++;
+          }
+        });
+
+        // Team 2 players (player3 and player4)
+        [player3Id, player4Id].forEach(pid => {
+          if (pid && playerStatsMap.has(pid)) {
+            const stats = playerStatsMap.get(pid)!;
+            stats.matchesPlayed++;
+            stats.gamesWon += team2Games;
+            stats.gamesLost += team1Games;
+            if (isDraw) stats.draws++;
+            else if (team2Games > team1Games) stats.wins++;
+            else stats.losses++;
+          }
+        });
+      });
+
+      const playerStats = Array.from(playerStatsMap.values());
+
+      // Sort by: 1. Wins, 2. Points (V=2, E=1, D=0), 3. Game difference, 4. Games won
+      playerStats.sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        const ptsA = a.wins * 2 + a.draws;
+        const ptsB = b.wins * 2 + b.draws;
+        if (ptsB !== ptsA) return ptsB - ptsA;
+        const aDiff = a.gamesWon - a.gamesLost;
+        const bDiff = b.gamesWon - b.gamesLost;
+        if (bDiff !== aDiff) return bDiff - aDiff;
+        return b.gamesWon - a.gamesWon;
+      });
+
+      console.log('[STANDINGS-MIXED] Setting', playerStats.length, 'players in standings');
+      setIndividualPlayers(playerStats);
+      setLoading(false);
+      return;
+    }
+
     // For individual round robin, fetch individual players instead of teams
     if (isIndividualRoundRobin) {
       console.log('[STANDINGS-INDIVIDUAL] Fetching individual players for tournament:', tournamentId);
@@ -811,9 +929,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
       console.log('[STANDINGS-INDIVIDUAL] Final stats:', playerStats);
 
-      // Sort by: 1. Wins, 2. Game difference, 3. Games won
+      // Sort by: 1. Wins, 2. Points (V=2, E=1, D=0), 3. Game difference, 4. Games won
       playerStats.sort((a, b) => {
         if (b.wins !== a.wins) return b.wins - a.wins;
+        const ptsA = a.wins * 2 + a.draws;
+        const ptsB = b.wins * 2 + b.draws;
+        if (ptsB !== ptsA) return ptsB - ptsA;
         const aDiff = a.gamesWon - a.gamesLost;
         const bDiff = b.gamesWon - b.gamesLost;
         if (bDiff !== aDiff) return bDiff - aDiff;
@@ -963,6 +1084,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           name: t.name,
           group_name: groupName,
           wins: t.wins,
+          draws: t.draws,
           gamesWon: t.gamesWon,
           gamesLost: t.gamesLost
         }));
@@ -997,6 +1119,9 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
       knockoutTeams.sort((a, b) => {
         if (b.wins !== a.wins) return b.wins - a.wins;
+        const ptsA = a.wins * 2 + a.draws;
+        const ptsB = b.wins * 2 + b.draws;
+        if (ptsB !== ptsA) return ptsB - ptsA;
         const aSetDiff = a.setsWon - a.setsLost;
         const bSetDiff = b.setsWon - b.setsLost;
         if (bSetDiff !== aSetDiff) return bSetDiff - aSetDiff;
@@ -1012,15 +1137,38 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         return { ...team, ...stats };
       });
 
-      teamsWithStats.sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        const aSetDiff = a.setsWon - a.setsLost;
-        const bSetDiff = b.setsWon - b.setsLost;
-        if (bSetDiff !== aSetDiff) return bSetDiff - aSetDiff;
-        const aGameDiff = a.gamesWon - a.gamesLost;
-        const bGameDiff = b.gamesWon - b.gamesLost;
-        return bGameDiff - aGameDiff;
-      });
+      const allHaveFinalPosition = teamsWithStats.every(t => t.final_position != null);
+      if (allHaveFinalPosition) {
+        teamsWithStats.sort((a, b) => (a.final_position || 999) - (b.final_position || 999));
+      } else {
+        const roundRobinMatches = matches?.filter(m => m.round === 'round_robin' || !m.round || m.round?.startsWith('group_')) ?? matches ?? [];
+        const teamStatsForSort: TeamStats[] = teamsWithStats.map(t => ({
+          id: t.id,
+          name: t.name,
+          group_name: t.group_name || 'Geral',
+          wins: t.wins,
+          draws: t.draws,
+          gamesWon: t.gamesWon,
+          gamesLost: t.gamesLost,
+          created_at: t.created_at
+        }));
+        const matchDataForSort: MatchData[] = (roundRobinMatches).map(m => ({
+          team1_id: m.team1_id,
+          team2_id: m.team2_id,
+          team1_score_set1: m.team1_score_set1,
+          team2_score_set1: m.team2_score_set1,
+          team1_score_set2: m.team1_score_set2,
+          team2_score_set2: m.team2_score_set2,
+          team1_score_set3: m.team1_score_set3,
+          team2_score_set3: m.team2_score_set3
+        }));
+        const teamOrderMap = new Map(teamsWithStats.map((t, i) => [t.id, i]));
+        const sortedStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrderMap);
+        const sortedTeams = sortedStats.map(s => teamsWithStats.find(t => t.id === s.id)!);
+        setTeams(sortedTeams);
+        setLoading(false);
+        return;
+      }
 
       setTeams(teamsWithStats);
     }
@@ -1053,7 +1201,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
-  if (format !== 'groups_knockout' && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
+  if (format !== 'groups_knockout' && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout && !isMixedAmerican) {
     return (
       <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
         <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -1262,6 +1410,80 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
+  // Mixed American (Americano Misto) standings - all players in one table
+  if (isMixedAmerican) {
+    if (individualPlayers.length === 0) {
+      return (
+        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+          <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">{t.standings.noPlayers}</h3>
+          <p className="text-gray-500">{t.standings.addPlayers}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 bg-gradient-to-r from-pink-500 to-rose-600">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5" />
+            Classificação - Americano Misto
+          </h2>
+        </div>
+
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Jogador</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+              <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {individualPlayers.map((player, index) => {
+              const gameDiff = player.gamesWon - player.gamesLost;
+              const pts = player.wins * 2 + player.draws;
+              return (
+                <tr key={player.id} className={index < 3 ? 'bg-pink-50/30' : ''}>
+                  <td className="pl-3 pr-1 py-2">
+                    <div className="flex items-center gap-1">
+                      {getMedalIcon(index + 1)}
+                      <span className="font-bold text-gray-700">{index + 1}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 font-medium text-gray-900">{player.name}</td>
+                  <td className="px-1 py-2 text-center text-gray-600">{player.matchesPlayed}</td>
+                  <td className="px-1 py-2 text-center font-semibold text-green-600">{player.wins}</td>
+                  <td className="px-1 py-2 text-center text-yellow-600">{player.draws}</td>
+                  <td className="px-1 py-2 text-center text-red-500">{player.losses}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{player.gamesWon}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{player.gamesLost}</td>
+                  <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                    {gameDiff > 0 ? '+' : ''}{gameDiff}
+                  </td>
+                  <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+          <p className="text-xs text-gray-500">
+            <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Diferença de jogos (+/-), 4. Jogos ganhos
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   // Individual round robin standings
   if (isIndividualRoundRobin) {
     if (individualPlayers.length === 0) {
@@ -1276,94 +1498,58 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
     return (
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700">
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Trophy className="w-6 h-6" />
+        <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5" />
             {t.standings.individualTitle}
           </h2>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t.standings.position}
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t.standings.player}
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t.standings.matches}
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  V
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  E
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  D
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  {t.standings.games}
-                </th>
-                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  +/-
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {individualPlayers.map((player, index) => {
-                const gameDiff = player.gamesWon - player.gamesLost;
-                return (
-                  <tr
-                    key={player.id}
-                    className={`hover:bg-gray-50 transition-colors ${
-                      index < 3 ? 'bg-blue-50/30' : ''
-                    }`}
-                  >
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        {getMedalIcon(index + 1)}
-                        <span className="text-lg font-bold text-gray-900">{index + 1}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{player.name}</div>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center text-sm text-gray-900">
-                      {player.matchesPlayed}
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center text-sm font-semibold text-green-600">
-                      {player.wins}
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center text-sm font-semibold text-gray-500">
-                      {player.draws}
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center text-sm font-semibold text-red-600">
-                      {player.losses}
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center">
-                      <span className="text-sm text-gray-900">
-                        {player.gamesWon}-{player.gamesLost}
-                      </span>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-center">
-                      <span className={`text-sm font-semibold ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                        {gameDiff > 0 ? '+' : ''}{gameDiff}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Jogador</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+              <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {individualPlayers.map((player, index) => {
+              const gameDiff = player.gamesWon - player.gamesLost;
+              const pts = player.wins * 2 + player.draws;
+              return (
+                <tr key={player.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
+                  <td className="pl-3 pr-1 py-2">
+                    <div className="flex items-center gap-1">
+                      {getMedalIcon(index + 1)}
+                      <span className="font-bold text-gray-700">{index + 1}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 font-medium text-gray-900">{player.name}</td>
+                  <td className="px-1 py-2 text-center font-semibold text-green-600">{player.wins}</td>
+                  <td className="px-1 py-2 text-center text-yellow-600">{player.draws}</td>
+                  <td className="px-1 py-2 text-center text-red-500">{player.losses}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{player.gamesWon}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{player.gamesLost}</td>
+                  <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                    {gameDiff > 0 ? '+' : ''}{gameDiff}
+                  </td>
+                  <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
 
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
-          <p className="text-sm text-gray-600">
-            <strong>{t.standings.rankingCriteria}:</strong> 1. {t.standings.criteriaWins}, 2. {t.standings.criteriaGameDifference} (+/-), 3. {t.standings.criteriaTotalGamesWon}
+        <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+          <p className="text-xs text-gray-500">
+            <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
           </p>
         </div>
       </div>
@@ -1374,60 +1560,60 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     const sortedGroups = Array.from(groupedTeams.keys()).sort();
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         {sortedGroups.map(groupName => {
           const groupTeams = groupedTeams.get(groupName)!;
           return (
             <div key={groupName} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-6 py-4 bg-gradient-to-r from-green-600 to-green-700">
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <div className="px-4 py-3 bg-gradient-to-r from-green-600 to-green-700">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
                   <Trophy className="w-5 h-5" />
-                  {t.standings.groupStandings} {groupName} {t.standings.title}
+                  Grupo {groupName}
                 </h2>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.position}</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.team}</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.playersLabel}</th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.matches}</th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.won}</th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">D</th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.lost}</th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">{t.standings.games}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {groupTeams.map((team, index) => (
-                      <tr key={team.id} className={`hover:bg-gray-50 transition-colors ${index < 2 ? 'bg-green-50/30' : ''}`}>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="text-lg font-bold text-gray-900">{index + 1}</span>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+                    <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {groupTeams.map((team, index) => {
+                    const gameDiff = team.gamesWon - team.gamesLost;
+                    const pts = team.wins * 2 + team.draws;
+                    return (
+                      <tr key={team.id} className={index < 2 ? 'bg-green-50/30' : ''}>
+                        <td className="pl-3 pr-1 py-2 font-bold text-gray-700">{index + 1}</td>
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                          <div className="text-xs text-gray-500 leading-tight">{team.player1.name} / {team.player2.name}</div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">{team.name}</div>
+                        <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                        <td className="px-1 py-2 text-center text-yellow-600">{team.draws}</td>
+                        <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                        <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                        <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                        <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                          {gameDiff > 0 ? '+' : ''}{gameDiff}
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="text-sm text-gray-600">{team.player1.name} / {team.player2.name}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">{team.matchesPlayed}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-green-600">{team.wins}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-gray-600">{team.draws}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-red-600">{team.losses}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <span className="text-sm text-gray-900">{team.gamesWon}-{team.gamesLost}</span>
-                          <span className="text-xs text-gray-500 ml-1">({team.gamesWon - team.gamesLost > 0 ? '+' : ''}{team.gamesWon - team.gamesLost})</span>
-                        </td>
+                        <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    );
+                  })}
+                </tbody>
+              </table>
 
-              <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
-                <p className="text-xs text-gray-600"><strong>{t.standings.ranking}:</strong> 1. {t.standings.criteriaWins}, 2. {t.standings.criteriaSetDifference}, 3. {t.standings.criteriaGameDifference}</p>
+              <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+                <p className="text-xs text-gray-500"><strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos</p>
               </div>
             </div>
           );
@@ -1435,56 +1621,43 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
         {teams.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 <Trophy className="w-5 h-5" />
-                Knockout Stage Standings
+                Fase Eliminatória
               </h2>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Position</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Players</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Matches</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">W</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">D</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">L</th>
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+                  <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {teams.map((team, index) => (
+                  <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
+                    <td className="pl-3 pr-1 py-2">
+                      <div className="flex items-center gap-1">
+                        {getMedalIcon(index + 1)}
+                        <span className="font-bold text-gray-700">{index + 1}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2">
+                      <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                      <div className="text-xs text-gray-500 leading-tight">{team.player1.name} / {team.player2.name}</div>
+                    </td>
+                    <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                    <td className="px-1 py-2 text-center text-yellow-600">{team.draws}</td>
+                    <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {teams.map((team, index) => (
-                    <tr key={team.id} className={`hover:bg-gray-50 transition-colors ${index < 3 ? 'bg-blue-50/30' : ''}`}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          {getMedalIcon(index + 1)}
-                          <span className="text-lg font-bold text-gray-900">{index + 1}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{team.name}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm text-gray-600">{team.player1.name} / {team.player2.name}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${team.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                          {team.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">{team.matchesPlayed}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-green-600">{team.wins}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-gray-600">{team.draws}</td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-red-600">{team.losses}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -1493,142 +1666,63 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-          <Trophy className="w-6 h-6" />
-          Tournament Standings
+      <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          <Trophy className="w-5 h-5" />
+          Classificação
         </h2>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Position
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Team
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Players
-              </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Matches
-              </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                W
-              </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                D
-              </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                L
-              </th>
-              {format === 'round_robin' && (
-                <>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Sets
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Games
-                  </th>
-                </>
-              )}
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {teams.map((team, index) => (
-              <tr
-                key={team.id}
-                className={`hover:bg-gray-50 transition-colors ${
-                  index < 3 ? 'bg-blue-50/30' : ''
-                }`}
-              >
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center gap-2">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-b border-gray-200">
+          <tr>
+            <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+            <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+            <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+            <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {teams.map((team, index) => {
+            const gameDiff = team.gamesWon - team.gamesLost;
+            const pts = team.wins * 2 + team.draws;
+            return (
+              <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
+                <td className="pl-3 pr-1 py-2">
+                  <div className="flex items-center gap-1">
                     {getMedalIcon(index + 1)}
-                    <span className="text-lg font-bold text-gray-900">{index + 1}</span>
+                    <span className="font-bold text-gray-700">{index + 1}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{team.name}</div>
+                <td className="px-2 py-2">
+                  <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                  <div className="text-xs text-gray-500 leading-tight">{team.player1.name} / {team.player2.name}</div>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="text-sm text-gray-600">
-                    {team.player1.name} / {team.player2.name}
-                  </div>
+                <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                <td className="px-1 py-2 text-center text-yellow-600">{team.draws}</td>
+                <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                  {gameDiff > 0 ? '+' : ''}{gameDiff}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">
-                  <span
-                    className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      team.status === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-red-100 text-red-800'
-                    }`}
-                  >
-                    {team.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
-                  {team.matchesPlayed}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-green-600">
-                  {team.wins}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-gray-600">
-                  {team.draws}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-semibold text-red-600">
-                  {team.losses}
-                </td>
-                {format === 'round_robin' && (
-                  <>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <span className="text-sm text-gray-900">
-                        {team.setsWon}-{team.setsLost}
-                      </span>
-                      <span className="text-xs text-gray-500 ml-1">
-                        ({team.setsWon - team.setsLost > 0 ? '+' : ''}
-                        {team.setsWon - team.setsLost})
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <span className="text-sm text-gray-900">
-                        {team.gamesWon}-{team.gamesLost}
-                      </span>
-                      <span className="text-xs text-gray-500 ml-1">
-                        ({team.gamesWon - team.gamesLost > 0 ? '+' : ''}
-                        {team.gamesWon - team.gamesLost})
-                      </span>
-                    </td>
-                  </>
-                )}
+                <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+        <p className="text-xs text-gray-500">
+          <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
+        </p>
       </div>
-
-      {format === 'single_elimination' && (
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
-          <p className="text-sm text-gray-600">
-            <strong>Single Elimination:</strong> Teams are eliminated after losing a match. Rankings
-            are based on wins and furthest round reached.
-          </p>
-        </div>
-      )}
-
-      {format === 'round_robin' && (
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
-          <p className="text-sm text-gray-600">
-            <strong>{t.standings.rankingCriteria}:</strong> 1. {t.standings.criteriaWins}, 2. {t.standings.criteriaSetDifference}, 3. {t.standings.criteriaGameDifference}
-          </p>
-        </div>
-      )}
     </div>
   );
 }

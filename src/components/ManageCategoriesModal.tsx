@@ -16,7 +16,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [editingCategory, setEditingCategory] = useState<TournamentCategory | null>(null);
   const [newCategory, setNewCategory] = useState({
     name: '',
-    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender',
+    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
@@ -216,7 +216,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   value={newCategory.format}
                   onChange={(e) => setNewCategory({
                     ...newCategory,
-                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender'
+                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american'
                   })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -227,6 +227,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   <option value="super_teams">{t.format.super_teams}</option>
                   <option value="crossed_playoffs">Crossed Playoffs</option>
                   <option value="mixed_gender">Mixed Gender</option>
+                  <option value="mixed_american">Americano Misto (1H+1M vs 1H+1M)</option>
                 </select>
               </div>
 
@@ -348,7 +349,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               value={editingCategory.format}
                               onChange={(e) => setEditingCategory({
                                 ...editingCategory,
-                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender'
+                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american'
                               })}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
@@ -359,6 +360,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               <option value="super_teams">{t.format.super_teams}</option>
                               <option value="crossed_playoffs">Crossed Playoffs</option>
                               <option value="mixed_gender">Mixed Gender</option>
+                              <option value="mixed_american">Americano Misto (1H+1M vs 1H+1M)</option>
                             </select>
                           </div>
 
@@ -465,6 +467,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             {category.format === 'super_teams' && t.format.super_teams}
                             {category.format === 'crossed_playoffs' && 'Crossed Playoffs'}
                             {category.format === 'mixed_gender' && 'Mixed Gender'}
+                            {category.format === 'mixed_american' && 'Americano Misto'}
                             {category.format === 'groups_knockout' && `${t.format.groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
                             {category.format === 'individual_groups_knockout' && `${t.format.individual_groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
                             {(category.format === 'groups_knockout' || category.format === 'individual_groups_knockout' || category.format === 'super_teams') && category.knockout_stage && (

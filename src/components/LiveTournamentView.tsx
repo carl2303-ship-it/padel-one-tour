@@ -71,6 +71,7 @@ interface Standing {
   entity_type: string;
   group_name: string;
   wins: number;
+  draws: number;
   losses: number;
   points_for: number;
   points_against: number;
@@ -91,6 +92,7 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
         entity_type: 'player',
         group_name: player.group_name || 'Geral',
         wins: 0,
+        draws: 0,
         losses: 0,
         points_for: 0,
         points_against: 0,
@@ -109,17 +111,22 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
       const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
       const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
 
+      const isDraw = scores.team1 === scores.team2;
+      const team1Won = scores.team1! > scores.team2!;
+
       team1Players.forEach(playerId => {
         const standing = standings.get(playerId!);
         if (standing) {
           standing.points_for += scores.team1!;
           standing.points_against += scores.team2!;
-          if (scores.team1! > scores.team2!) {
+          if (isDraw) {
+            standing.draws++;
+            standing.points += 1;
+          } else if (team1Won) {
             standing.wins++;
             standing.points += 2;
           } else {
             standing.losses++;
-            standing.points += 1;
           }
           standing.points_diff = standing.points_for - standing.points_against;
         }
@@ -130,12 +137,14 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
         if (standing) {
           standing.points_for += scores.team2!;
           standing.points_against += scores.team1!;
-          if (scores.team2! > scores.team1!) {
+          if (isDraw) {
+            standing.draws++;
+            standing.points += 1;
+          } else if (!team1Won) {
             standing.wins++;
             standing.points += 2;
           } else {
             standing.losses++;
-            standing.points += 1;
           }
           standing.points_diff = standing.points_for - standing.points_against;
         }
@@ -149,6 +158,7 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
         entity_type: 'team',
         group_name: team.group_name || 'Geral',
         wins: 0,
+        draws: 0,
         losses: 0,
         points_for: 0,
         points_against: 0,
@@ -177,12 +187,15 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
           team1Standing.wins++;
           team1Standing.points += 2;
           team2Standing.losses++;
-          team2Standing.points += 1;
         } else if (scores.team2 > scores.team1) {
           team2Standing.wins++;
           team2Standing.points += 2;
           team1Standing.losses++;
+        } else {
+          team1Standing.draws++;
           team1Standing.points += 1;
+          team2Standing.draws++;
+          team2Standing.points += 1;
         }
 
         team1Standing.points_diff = team1Standing.points_for - team1Standing.points_against;
@@ -204,8 +217,13 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
   const result: Standing[] = [];
   grouped.forEach((groupStandings, groupName) => {
     groupStandings.sort((a, b) => {
+      // 1. Vitórias
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      // 2. Pontos (V=2, E=1, D=0)
       if (b.points !== a.points) return b.points - a.points;
+      // 3. Diferença de jogos
       if (b.points_diff !== a.points_diff) return b.points_diff - a.points_diff;
+      // 4. Jogos ganhos
       if (b.points_for !== a.points_for) return b.points_for - a.points_for;
       return (a.entity_name || '').localeCompare(b.entity_name || '');
     });
@@ -583,39 +601,36 @@ export default function LiveTournamentView() {
             ))}
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-6">
             {Object.entries(groupedStandings).map(([group, groupStandings]) => (
               <div key={group}>
-                <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <h2 className="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
                   <Users className="w-5 h-5 text-blue-600" />
                   {group}
                 </h2>
                 <div className="bg-white rounded-lg shadow-md overflow-hidden">
-                  <table className="w-full">
+                  <table className="w-full text-sm">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">Pos</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 uppercase">
+                        <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-600 w-8">#</th>
+                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-600">
                           {groupStandings[0]?.entity_type === 'team' ? 'Equipa' : 'Jogador'}
                         </th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">V</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">D</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">PF</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">PC</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">Diff</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-600 uppercase">Pts</th>
+                        <th className="px-1 py-2 text-center text-xs font-medium text-gray-600 w-7">V</th>
+                        <th className="px-1 py-2 text-center text-xs font-medium text-gray-600 w-7">E</th>
+                        <th className="px-1 py-2 text-center text-xs font-medium text-gray-600 w-7">D</th>
+                        <th className="px-1 py-2 text-center text-xs font-medium text-gray-600 w-9">+/-</th>
+                        <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-700 w-8">Pts</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
+                    <tbody className="divide-y divide-gray-100">
                       {groupStandings.map((standing) => (
                         <tr
                           key={standing.entity_id}
-                          className={`${
-                            standing.position <= 2 ? 'bg-green-50' : ''
-                          } hover:bg-gray-50 transition-colors`}
+                          className={standing.position <= 2 ? 'bg-green-50' : ''}
                         >
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
+                          <td className="pl-3 pr-1 py-2">
+                            <div className="flex items-center gap-1">
                               {standing.position <= 3 && (
                                 <Trophy
                                   className={`w-4 h-4 ${
@@ -627,23 +642,22 @@ export default function LiveTournamentView() {
                                   }`}
                                 />
                               )}
-                              <span className="font-semibold">{standing.position}</span>
+                              <span className="font-bold text-gray-700">{standing.position}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-3 font-medium text-gray-900">{standing.entity_name}</td>
-                          <td className="px-4 py-3 text-center text-green-600 font-semibold">{standing.wins}</td>
-                          <td className="px-4 py-3 text-center text-red-600 font-semibold">{standing.losses}</td>
-                          <td className="px-4 py-3 text-center">{standing.points_for}</td>
-                          <td className="px-4 py-3 text-center">{standing.points_against}</td>
+                          <td className="px-2 py-2 font-medium text-gray-900">{standing.entity_name}</td>
+                          <td className="px-1 py-2 text-center font-semibold text-green-600">{standing.wins}</td>
+                          <td className="px-1 py-2 text-center text-yellow-600">{standing.draws}</td>
+                          <td className="px-1 py-2 text-center text-red-500">{standing.losses}</td>
                           <td
-                            className={`px-4 py-3 text-center font-medium ${
-                              standing.points_diff > 0 ? 'text-green-600' : standing.points_diff < 0 ? 'text-red-600' : 'text-gray-600'
+                            className={`px-1 py-2 text-center text-xs ${
+                              standing.points_diff > 0 ? 'text-green-600' : standing.points_diff < 0 ? 'text-red-500' : 'text-gray-400'
                             }`}
                           >
                             {standing.points_diff > 0 ? '+' : ''}
                             {standing.points_diff}
                           </td>
-                          <td className="px-4 py-3 text-center font-bold text-blue-600">{standing.points}</td>
+                          <td className="pl-1 pr-3 py-2 text-center font-bold">{standing.points}</td>
                         </tr>
                       ))}
                     </tbody>

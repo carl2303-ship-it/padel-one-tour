@@ -146,6 +146,14 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   }, [tournament.id]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('enrolled') === '1') {
+      fetchAllRegistered();
+      setShowRegisteredList(true);
+    }
+  }, [tournament.id]);
+
+  useEffect(() => {
     if (formData.categoryId && categories.length > 0) {
       fetchCategoryTeams(formData.categoryId);
     } else {
@@ -875,28 +883,74 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               <ChevronDown className={`w-4 h-4 transition-transform ${showRegisteredList ? 'rotate-180' : ''}`} />
             </button>
             {showRegisteredList && (
-              <div className="mt-3 bg-gray-50 rounded-lg p-3 max-h-60 overflow-y-auto">
+              <div className="mt-3 bg-gray-50 rounded-lg p-3 max-h-80 overflow-y-auto">
                 {allRegistered.length === 0 ? (
                   <p className="text-sm text-gray-500 text-center py-2">Nenhum inscrito ainda</p>
                 ) : (
-                  <ul className="space-y-2">
-                    {allRegistered.map((item, index) => {
-                      const categoryName = categories.find(c => c.id === item.category_id)?.name;
-                      return (
-                        <li key={item.id} className="text-sm">
-                          <span className="font-medium text-gray-700">{index + 1}.</span>{' '}
-                          {item.player1_name ? (
-                            <span className="text-gray-900">{item.player1_name} / {item.player2_name}</span>
-                          ) : (
-                            <span className="text-gray-900">{item.name}</span>
-                          )}
-                          {categoryName && categories.length > 1 && (
-                            <span className="text-gray-500 text-xs ml-2">({categoryName})</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <div className="space-y-4">
+                    {categories.length > 1
+                      ? (() => {
+                          const byCategory = categories.map((cat) => ({
+                            cat,
+                            items: allRegistered.filter((i) => i.category_id === cat.id),
+                          }));
+                          const uncategorized = allRegistered.filter((i) => !categories.some((c) => c.id === i.category_id));
+                          return (
+                            <>
+                              {byCategory.map(({ cat, items }) =>
+                                items.length > 0 ? (
+                                  <div key={cat.id}>
+                                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{cat.name}</p>
+                                    <ul className="space-y-1">
+                                      {items.map((item, idx) => (
+                                        <li key={item.id} className="text-sm">
+                                          <span className="font-medium text-gray-700">{idx + 1}.</span>{' '}
+                                          {item.player1_name ? (
+                                            <span className="text-gray-900">{item.player1_name} / {item.player2_name}</span>
+                                          ) : (
+                                            <span className="text-gray-900">{item.name}</span>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : null
+                              )}
+                              {uncategorized.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Outros</p>
+                                  <ul className="space-y-1">
+                                    {uncategorized.map((item, idx) => (
+                                      <li key={item.id} className="text-sm">
+                                        <span className="font-medium text-gray-700">{idx + 1}.</span>{' '}
+                                        {item.player1_name ? (
+                                          <span className="text-gray-900">{item.player1_name} / {item.player2_name}</span>
+                                        ) : (
+                                          <span className="text-gray-900">{item.name}</span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()
+                      : (
+                        <ul className="space-y-2">
+                          {allRegistered.map((item, index) => (
+                            <li key={item.id} className="text-sm">
+                              <span className="font-medium text-gray-700">{index + 1}.</span>{' '}
+                              {item.player1_name ? (
+                                <span className="text-gray-900">{item.player1_name} / {item.player2_name}</span>
+                              ) : (
+                                <span className="text-gray-900">{item.name}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                  </div>
                 )}
               </div>
             )}

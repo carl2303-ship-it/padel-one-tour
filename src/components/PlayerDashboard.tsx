@@ -16,7 +16,8 @@ import {
   History,
   Zap,
   Bell,
-  BellOff
+  BellOff,
+  ExternalLink
 } from 'lucide-react';
 
 interface Tournament {
@@ -92,6 +93,7 @@ export default function PlayerDashboard() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [upcomingTournaments, setUpcomingTournaments] = useState<Tournament[]>([]);
+  const [openTournaments, setOpenTournaments] = useState<Tournament[]>([]);
   const [pastTournaments, setPastTournaments] = useState<Tournament[]>([]);
   const [upcomingMatches, setUpcomingMatches] = useState<Match[]>([]);
   const [recentMatches, setRecentMatches] = useState<Match[]>([]);
@@ -117,6 +119,7 @@ export default function PlayerDashboard() {
   const [tournamentMatches, setTournamentMatches] = useState<TournamentMatch[]>([]);
   const [tournamentDetailTab, setTournamentDetailTab] = useState<'standings' | 'matches'>('standings');
   const [viewingTournamentName, setViewingTournamentName] = useState<string>('');
+  const [pastTournamentDetails, setPastTournamentDetails] = useState<Record<string, { standings: any[]; myMatches: any[]; playerPosition?: number; tournamentName: string }>>({});
 
   const {
     isSubscribed: isPushSubscribed,
@@ -139,9 +142,40 @@ export default function PlayerDashboard() {
       fetchPlayerInfo(),
       fetchTournaments(),
       fetchMatches(),
-      fetchLeagueStandings(),
+      fetchDashboardFromEdgeFunction(),
     ]);
     setLoading(false);
+  };
+
+  const fetchDashboardFromEdgeFunction = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+
+    const { data, error } = await supabase.functions.invoke('get-player-dashboard', {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+
+    if (error) {
+      console.error('get-player-dashboard error:', error);
+      return;
+    }
+
+    if (data?.leagueStandings?.length) {
+      setLeagueStandings(data.leagueStandings);
+    }
+    if (data?.pastTournaments?.length) {
+      setPastTournaments(data.pastTournaments.map((t: any) => ({
+        id: t.id,
+        name: t.name,
+        start_date: t.start_date,
+        end_date: t.end_date,
+        status: t.status,
+      })));
+      setStats(prev => ({ ...prev, tournamentsPlayed: data.pastTournaments.length }));
+    }
+    if (data?.pastTournamentDetails && Object.keys(data.pastTournamentDetails).length > 0) {
+      setPastTournamentDetails(data.pastTournamentDetails);
+    }
   };
 
   const fetchPlayerInfo = async () => {
@@ -166,109 +200,123 @@ export default function PlayerDashboard() {
       .eq('user_id', user?.id)
       .maybeSingle();
 
-    if (!playerAccount) return;
+    let enrolledIds = new Set<string>();
 
-    const { data: playersByPhone } = playerAccount.phone_number
-      ? await supabase
-          .from('players')
-          .select('id, tournament_id')
-          .eq('phone_number', playerAccount.phone_number)
-      : { data: [] };
+    if (playerAccount) {
+      const { data: playersByPhone } = playerAccount.phone_number
+        ? await supabase
+            .from('players')
+            .select('id, tournament_id')
+            .eq('phone_number', playerAccount.phone_number)
+        : { data: [] };
 
-    const { data: playersByName } = playerAccount.name
-      ? await supabase
-          .from('players')
-          .select('id, tournament_id')
-          .ilike('name', playerAccount.name)
-      : { data: [] };
+      const { data: playersByName } = playerAccount.name
+        ? await supabase
+            .from('players')
+            .select('id, tournament_id')
+            .ilike('name', playerAccount.name)
+        : { data: [] };
 
-    const allPlayersMap = new Map<string, { id: string; tournament_id: string | null }>();
-    [...(playersByPhone || []), ...(playersByName || [])].forEach(p => {
-      allPlayersMap.set(p.id, p);
-    });
-    const allPlayers = Array.from(allPlayersMap.values());
+      const allPlayersMap = new Map<string, { id: string; tournament_id: string | null }>();
+      [...(playersByPhone || []), ...(playersByName || [])].forEach(p => {
+        allPlayersMap.set(p.id, p);
+      });
+      const allPlayers = Array.from(allPlayersMap.values());
 
-    if (allPlayers.length === 0) return;
+      if (allPlayers.length > 0) {
+        const playerIds = allPlayers.map(p => p.id);
+        const tournamentIds = allPlayers.filter(p => p.tournament_id).map(p => p.tournament_id);
 
-    const playerIds = allPlayers.map(p => p.id);
-    const tournamentIds = allPlayers.filter(p => p.tournament_id).map(p => p.tournament_id);
+        const { data: individualTournaments } = tournamentIds.length > 0
+          ? await supabase
+              .from('tournaments')
+              .select('id, name, start_date, end_date, status')
+              .in('id', tournamentIds)
+          : { data: [] };
 
-    const { data: individualTournaments } = tournamentIds.length > 0
-      ? await supabase
-          .from('tournaments')
-          .select('id, name, start_date, end_date, status')
-          .in('id', tournamentIds)
-      : { data: [] };
+        const playerConditions = playerIds.map(id => `player1_id.eq.${id},player2_id.eq.${id}`).join(',');
 
-    const playerConditions = playerIds.map(id => `player1_id.eq.${id},player2_id.eq.${id}`).join(',');
+        const { data: teamsData } = playerIds.length > 0
+          ? await supabase
+              .from('teams')
+              .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status)')
+              .or(playerConditions)
+          : { data: [] };
 
-    const { data: teamsData } = playerIds.length > 0
-      ? await supabase
-          .from('teams')
-          .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status)')
-          .or(playerConditions)
-      : { data: [] };
+        const allTournamentData = [
+          ...(individualTournaments || []),
+          ...(teamsData?.map((t: any) => t.tournaments) || [])
+        ];
 
-    const allTournamentData = [
-      ...(individualTournaments || []),
-      ...(teamsData?.map((t: any) => t.tournaments) || [])
-    ];
+        const uniqueTournaments = allTournamentData.reduce((acc: any[], tournament: any) => {
+          if (!acc.find((t) => t.id === tournament.id)) {
+            acc.push(tournament);
+          }
+          return acc;
+        }, []);
 
-    const uniqueTournaments = allTournamentData.reduce((acc: any[], tournament: any) => {
-      if (!acc.find((t) => t.id === tournament.id)) {
-        acc.push(tournament);
+        const now = new Date();
+        const upcoming: Tournament[] = [];
+        const past: Tournament[] = [];
+
+        const uniqueTournamentIds = uniqueTournaments.map(t => t.id);
+        const [playersResult, teamsResult] = await Promise.all([
+          supabase.from('players').select('tournament_id').in('tournament_id', uniqueTournamentIds),
+          supabase.from('teams').select('tournament_id').in('tournament_id', uniqueTournamentIds)
+        ]);
+
+        const playerCountMap = new Map<string, number>();
+        const teamCountMap = new Map<string, number>();
+        (playersResult.data || []).forEach(p => playerCountMap.set(p.tournament_id, (playerCountMap.get(p.tournament_id) || 0) + 1));
+        (teamsResult.data || []).forEach(t => teamCountMap.set(t.tournament_id, (teamCountMap.get(t.tournament_id) || 0) + 1));
+
+        const tournamentsWithCounts = uniqueTournaments.map(t => {
+          const teamCount = teamCountMap.get(t.id) || 0;
+          const playerCount = playerCountMap.get(t.id) || 0;
+          return {
+            ...t,
+            enrolled_count: teamCount > 0 ? teamCount : playerCount
+          };
+        });
+
+        tournamentsWithCounts.forEach(t => {
+          const isOngoingStatus = t.status === 'in_progress' || t.status === 'active';
+          const isCompleted = t.status === 'completed' || t.status === 'finished';
+
+          if (isCompleted) {
+            past.push(t);
+          } else if (isOngoingStatus) {
+            upcoming.push(t);
+          } else {
+            const endDate = new Date(t.end_date + 'T23:59:59');
+            if (endDate >= now) {
+              upcoming.push(t);
+            } else {
+              past.push(t);
+            }
+          }
+        });
+
+        upcoming.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+        past.sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
+
+        setUpcomingTournaments(upcoming);
+        setPastTournaments(past);
+        setStats(prev => ({ ...prev, tournamentsPlayed: past.length }));
+        enrolledIds = new Set(upcoming.map(t => t.id));
       }
-      return acc;
-    }, []);
+    }
 
-    const now = new Date();
-    const upcoming: Tournament[] = [];
-    const past: Tournament[] = [];
-
-    const uniqueTournamentIds = uniqueTournaments.map(t => t.id);
-    const [playersResult, teamsResult] = await Promise.all([
-      supabase.from('players').select('tournament_id').in('tournament_id', uniqueTournamentIds),
-      supabase.from('teams').select('tournament_id').in('tournament_id', uniqueTournamentIds)
-    ]);
-
-    const playerCountMap = new Map<string, number>();
-    const teamCountMap = new Map<string, number>();
-    (playersResult.data || []).forEach(p => playerCountMap.set(p.tournament_id, (playerCountMap.get(p.tournament_id) || 0) + 1));
-    (teamsResult.data || []).forEach(t => teamCountMap.set(t.tournament_id, (teamCountMap.get(t.tournament_id) || 0) + 1));
-
-    const tournamentsWithCounts = uniqueTournaments.map(t => {
-      const teamCount = teamCountMap.get(t.id) || 0;
-      const playerCount = playerCountMap.get(t.id) || 0;
-      return {
-        ...t,
-        enrolled_count: teamCount > 0 ? teamCount : playerCount
-      };
-    });
-
-    tournamentsWithCounts.forEach(t => {
-      const isOngoingStatus = t.status === 'in_progress' || t.status === 'active';
-      const isCompleted = t.status === 'completed' || t.status === 'finished';
-
-      if (isCompleted) {
-        past.push(t);
-      } else if (isOngoingStatus) {
-        upcoming.push(t);
-      } else {
-        const endDate = new Date(t.end_date + 'T23:59:59');
-        if (endDate >= now) {
-          upcoming.push(t);
-        } else {
-          past.push(t);
-        }
-      }
-    });
-
-    upcoming.sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
-    past.sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
-
-    setUpcomingTournaments(upcoming);
-    setPastTournaments(past);
-    setStats(prev => ({ ...prev, tournamentsPlayed: past.length }));
+    const today = new Date().toISOString().split('T')[0];
+    const { data: openData } = await supabase
+      .from('tournaments')
+      .select('id, name, start_date, end_date, status')
+      .gte('end_date', today)
+      .in('status', ['draft', 'active'])
+      .order('start_date', { ascending: true })
+      .limit(20);
+    const open = (openData || []).filter((t: any) => !enrolledIds.has(t.id));
+    setOpenTournaments(open);
   };
 
   const fetchMatches = async () => {
@@ -553,6 +601,17 @@ export default function PlayerDashboard() {
   };
 
   const viewTournamentStandings = async (tournamentId: string) => {
+    const cached = pastTournamentDetails[tournamentId];
+    if (cached) {
+      setTournamentStandings(cached.standings);
+      setTournamentMatches(cached.myMatches);
+      const tournament = pastTournaments.find(t => t.id === tournamentId);
+      setViewingTournamentName(cached.tournamentName || tournament?.name || '');
+      setViewingStandingsId(tournamentId);
+      setTournamentDetailTab('standings');
+      return;
+    }
+
     const { data: matches } = await supabase
       .from('matches')
       .select(`
@@ -1016,7 +1075,7 @@ export default function PlayerDashboard() {
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              {t.playerDashboard.upcoming} ({upcomingTournaments.length})
+              {t.playerDashboard.upcoming} ({upcomingTournaments.length + openTournaments.length})
             </button>
             <button
               onClick={() => setActiveTab('past')}
@@ -1034,45 +1093,88 @@ export default function PlayerDashboard() {
         <div className="divide-y divide-gray-100">
           {activeTab === 'upcoming' && (
             <>
-              {upcomingTournaments.length === 0 ? (
+              {upcomingTournaments.length === 0 && openTournaments.length === 0 ? (
                 <div className="p-8 text-center">
                   <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500">{t.playerDashboard.noUpcomingTournaments}</p>
                   <p className="text-sm text-gray-400 mt-1">{t.playerDashboard.registerToStart}</p>
                 </div>
               ) : (
-                upcomingTournaments.map((tournament) => (
-                  <div key={tournament.id} className="p-4 hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-gray-900">{tournament.name}</h3>
-                        <div className="flex items-center gap-4 mt-1">
-                          <span className="text-sm text-gray-500 flex items-center gap-1">
-                            <Calendar className="w-4 h-4" />
-                            {formatDate(tournament.start_date)}
-                          </span>
-                          {tournament.enrolled_count !== undefined && (
-                            <span className="text-sm text-blue-600 flex items-center gap-1">
-                              <Users className="w-4 h-4" />
-                              {tournament.enrolled_count} {t.playerDashboard.enrolled}
-                            </span>
-                          )}
-                          {tournament.status === 'in_progress' && (
-                            <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
-                              {t.playerDashboard.inProgress}
-                            </span>
-                          )}
-                        </div>
+                <>
+                  {upcomingTournaments.length > 0 && (
+                    <div className="p-4 bg-green-50/50 border-b border-gray-100">
+                      <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-green-500" />
+                        {t.playerDashboard.enrolledSection}
+                      </h3>
+                      <div className="space-y-2">
+                        {upcomingTournaments.map((tournament) => (
+                          <div key={tournament.id} className="p-3 bg-white rounded-lg hover:bg-gray-50 transition-colors">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
+                                <div className="flex items-center gap-4 mt-1">
+                                  <span className="text-sm text-gray-500 flex items-center gap-1">
+                                    <Calendar className="w-4 h-4" />
+                                    {formatDate(tournament.start_date)}
+                                  </span>
+                                  {tournament.enrolled_count !== undefined && (
+                                    <span className="text-sm text-blue-600 flex items-center gap-1">
+                                      <Users className="w-4 h-4" />
+                                      {tournament.enrolled_count} {t.playerDashboard.enrolled}
+                                    </span>
+                                  )}
+                                  {tournament.status === 'in_progress' && (
+                                    <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                                      {t.playerDashboard.inProgress}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <a
+                                href={`/?register=${tournament.id}&enrolled=1`}
+                                className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
+                              >
+                                <Users className="w-4 h-4" />
+                                {t.playerDashboard.viewEnrolledByCategory}
+                              </a>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <button
-                        onClick={() => viewTournamentPlayers(tournament.id)}
-                        className="ml-4 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                      >
-                        {t.playerDashboard.viewEnrolled}
-                      </button>
                     </div>
-                  </div>
-                ))
+                  )}
+                  {openTournaments.length > 0 && (
+                    <div className="p-4">
+                      <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        {t.playerDashboard.openSection}
+                      </h3>
+                      <div className="space-y-2">
+                        {openTournaments.map((tournament) => (
+                          <div key={tournament.id} className="p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
+                                <span className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                                  <Calendar className="w-4 h-4" />
+                                  {formatDate(tournament.start_date)}
+                                </span>
+                              </div>
+                              <a
+                                href={`/?register=${tournament.id}`}
+                                className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
+                              >
+                                {t.playerDashboard.registrationLink}
+                                <ExternalLink className="w-4 h-4" />
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1103,13 +1205,22 @@ export default function PlayerDashboard() {
                           )}
                         </div>
                       </div>
-                      <button
-                        onClick={() => viewTournamentStandings(tournament.id)}
-                        className="ml-4 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
-                      >
-                        <Trophy className="w-4 h-4" />
-                        {t.playerDashboard.viewStandings}
-                      </button>
+                      <div className="ml-4 flex items-center gap-2">
+                        <button
+                          onClick={() => viewTournamentStandings(tournament.id)}
+                          className="px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
+                        >
+                          <Trophy className="w-4 h-4" />
+                          {t.playerDashboard.viewStandings}
+                        </button>
+                        <a
+                          href={`/tournament/${tournament.id}/live`}
+                          className="px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
+                        >
+                          {t.playerDashboard.viewTournament || 'Ver torneio'}
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      </div>
                     </div>
                   </div>
                 ))

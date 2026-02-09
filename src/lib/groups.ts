@@ -15,6 +15,7 @@ export type TeamStats = {
   name?: string;
   group_name: string;
   wins: number;
+  draws?: number;
   gamesWon: number;
   gamesLost: number;
   created_at?: string;
@@ -61,20 +62,25 @@ export function sortTeamsByTiebreaker(
     // 1° Número de vitórias
     if (b.wins !== a.wins) return b.wins - a.wins;
 
-    // 2° Confronto direto (apenas aplicável quando comparamos 2 equipas)
+    // 2° Pontos (V=2, E=1, D=0)
+    const ptsA = a.wins * 2 + (a.draws || 0);
+    const ptsB = b.wins * 2 + (b.draws || 0);
+    if (ptsB !== ptsA) return ptsB - ptsA;
+
+    // 3° Confronto direto (apenas aplicável quando comparamos 2 equipas)
     const h2hWinner = getHeadToHeadWinner(a.id, b.id, matches);
     if (h2hWinner === a.id) return -1;
     if (h2hWinner === b.id) return 1;
 
-    // 3° Diferença de jogos
+    // 4° Diferença de jogos
     const diffA = a.gamesWon - a.gamesLost;
     const diffB = b.gamesWon - b.gamesLost;
     if (diffB !== diffA) return diffB - diffA;
 
-    // 4° Maior número de jogos ganhos
+    // 5° Maior número de jogos ganhos
     if (b.gamesWon !== a.gamesWon) return b.gamesWon - a.gamesWon;
 
-    // 5° Data de inscrição (quem se inscreveu primeiro)
+    // 6° Data de inscrição (quem se inscreveu primeiro)
     if (teamOrder) {
       const orderA = teamOrder.get(a.id) ?? 999;
       const orderB = teamOrder.get(b.id) ?? 999;

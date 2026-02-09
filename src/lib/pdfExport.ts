@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Tournament, Player, Match, TournamentCategory, Team } from './supabase';
+import { sortTeamsByTiebreaker } from './groups';
+import type { TeamStats, MatchData } from './groups';
 
 interface LeagueStanding {
   id: string;
@@ -132,6 +134,47 @@ interface PlayerStats {
   final_position?: number | null;
   group_name?: string | null;
   category_id?: string | null;
+}
+
+/** Ordena teamStats com a mesma lógica do Standings: final_position ou sortTeamsByTiebreaker (confronto direto) */
+function sortTeamStatsForPDF(
+  teamStats: PlayerStats[],
+  matches: MatchWithTeams[],
+  teamOrder: Map<string, number>
+): PlayerStats[] {
+  const allHaveFinalPosition = teamStats.every(s => s.final_position != null);
+  if (allHaveFinalPosition) {
+    return [...teamStats].sort((a, b) => (a.final_position || 999) - (b.final_position || 999));
+  }
+  const teamIds = new Set(teamStats.map(s => s.id));
+  const roundRobinMatches = matches.filter(m => {
+    const r = m.round || '';
+    const isGroupRound = r === 'round_robin' || r === 'group_stage' || r.startsWith('group_') || r.startsWith('group ') || /^[A-Z]$/.test(r);
+    return isGroupRound && teamIds.has(m.team1_id ?? '') && teamIds.has(m.team2_id ?? '');
+  });
+  const matchData: MatchData[] = roundRobinMatches.map(m => ({
+    team1_id: m.team1_id!,
+    team2_id: m.team2_id!,
+    winner_id: m.winner_id,
+    team1_score_set1: m.team1_score_set1,
+    team2_score_set1: m.team2_score_set1,
+    team1_score_set2: m.team1_score_set2,
+    team2_score_set2: m.team2_score_set2,
+    team1_score_set3: m.team1_score_set3,
+    team2_score_set3: m.team2_score_set3
+  }));
+  const teamStatsForSort: TeamStats[] = teamStats.map(s => ({
+    id: s.id,
+    name: s.name,
+    group_name: s.group_name || 'Geral',
+    wins: s.wins,
+    draws: s.draws ?? 0,
+    gamesWon: s.gamesWon,
+    gamesLost: s.gamesLost
+  }));
+  const sorted = sortTeamsByTiebreaker(teamStatsForSort, matchData, teamOrder);
+  const orderMap = new Map(sorted.map((s, i) => [s.id, i]));
+  return [...teamStats].sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
 }
 
 // Main export function that receives data directly
@@ -395,45 +438,54 @@ function exportIndividualTournament(
       return stats;
     });
 
-    // Sort by wins, then game difference, then games won
+    // Sort by: 1) Wins, 2) Points (V=2, E=1, D=0), 3) Game difference, 4) Games won
     playerStats.sort((a, b) => {
       if (b.wins !== a.wins) return b.wins - a.wins;
+      const ptsA = a.wins * 2 + a.draws;
+      const ptsB = b.wins * 2 + b.draws;
+      if (ptsB !== ptsA) return ptsB - ptsA;
       const diffA = a.gamesWon - a.gamesLost;
       const diffB = b.gamesWon - b.gamesLost;
       if (diffB !== diffA) return diffB - diffA;
       return b.gamesWon - a.gamesWon;
     });
 
-    // Group standings table (com E = empates)
-    const standingsData = playerStats.map((s, idx) => [
-      (idx + 1).toString(),
-      s.name,
-      s.matchesPlayed.toString(),
-      s.wins.toString(),
-      s.draws.toString(),
-      s.losses.toString(),
-      s.gamesWon.toString(),
-      s.gamesLost.toString(),
-      (s.gamesWon - s.gamesLost).toString()
-    ]);
+    // Group standings table (com E = empates e Pts)
+    const standingsData = playerStats.map((s, idx) => {
+      const pts = s.wins * 2 + s.draws;
+      const diff = s.gamesWon - s.gamesLost;
+      return [
+        (idx + 1).toString(),
+        s.name,
+        s.matchesPlayed.toString(),
+        s.wins.toString(),
+        s.draws.toString(),
+        s.losses.toString(),
+        s.gamesWon.toString(),
+        s.gamesLost.toString(),
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
+      ];
+    });
 
     autoTable(doc, {
       startY: yPos,
-      head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+      head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
       body: standingsData,
       theme: 'striped',
       headStyles: { fillColor: [34, 197, 94], fontSize: 9 },
       bodyStyles: { fontSize: 8 },
       columnStyles: {
         0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 45 },
-        2: { cellWidth: 12, halign: 'center' },
-        3: { cellWidth: 12, halign: 'center' },
-        4: { cellWidth: 12, halign: 'center' },
-        5: { cellWidth: 12, halign: 'center' },
-        6: { cellWidth: 12, halign: 'center' },
-        7: { cellWidth: 12, halign: 'center' },
-        8: { cellWidth: 12, halign: 'center' }
+        1: { cellWidth: 40 },
+        2: { cellWidth: 10, halign: 'center' },
+        3: { cellWidth: 10, halign: 'center' },
+        4: { cellWidth: 10, halign: 'center' },
+        5: { cellWidth: 10, halign: 'center' },
+        6: { cellWidth: 10, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 12, halign: 'center' },
+        9: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
       },
       margin: { left: 14, right: 14 }
     });
@@ -531,6 +583,9 @@ function exportIndividualTournament(
   allPlayerStats.sort((a, b) => {
     if (a.final_position != null && b.final_position != null) return a.final_position - b.final_position;
     if (b.wins !== a.wins) return b.wins - a.wins;
+    const ptsA = a.wins * 2 + a.draws;
+    const ptsB = b.wins * 2 + b.draws;
+    if (ptsB !== ptsA) return ptsB - ptsA;
     const diffA = a.gamesWon - a.gamesLost;
     const diffB = b.gamesWon - b.gamesLost;
     if (diffB !== diffA) return diffB - diffA;
@@ -551,6 +606,7 @@ function exportIndividualTournament(
   const finalData = allPlayerStats.map((s, idx) => {
     const posLabel = s.final_position != null ? `${s.final_position}o` : `${idx + 1}o`;
     const diff = s.gamesWon - s.gamesLost;
+    const pts = s.wins * 2 + s.draws;
     return [
       posLabel,
       s.name,
@@ -560,26 +616,28 @@ function exportIndividualTournament(
       s.losses.toString(),
       s.gamesWon.toString(),
       s.gamesLost.toString(),
-      (diff >= 0 ? '+' : '') + diff.toString()
+      (diff >= 0 ? '+' : '') + diff.toString(),
+      pts.toString()
     ];
   });
   autoTable(doc, {
     startY: yPos,
-    head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+    head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
     body: finalData,
     theme: 'striped',
     headStyles: { fillColor: [139, 92, 246], fontSize: 9 },
     bodyStyles: { fontSize: 8 },
     columnStyles: {
-      0: { cellWidth: 12, halign: 'center' },
-      1: { cellWidth: 45 },
-      2: { cellWidth: 12, halign: 'center' },
-      3: { cellWidth: 12, halign: 'center' },
-      4: { cellWidth: 12, halign: 'center' },
-      5: { cellWidth: 12, halign: 'center' },
-      6: { cellWidth: 12, halign: 'center' },
-      7: { cellWidth: 12, halign: 'center' },
-      8: { cellWidth: 14, halign: 'center' }
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 40 },
+      2: { cellWidth: 10, halign: 'center' },
+      3: { cellWidth: 10, halign: 'center' },
+      4: { cellWidth: 10, halign: 'center' },
+      5: { cellWidth: 10, halign: 'center' },
+      6: { cellWidth: 10, halign: 'center' },
+      7: { cellWidth: 10, halign: 'center' },
+      8: { cellWidth: 12, halign: 'center' },
+      9: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
     },
     margin: { left: 14, right: 14 }
   });
@@ -694,49 +752,50 @@ function exportSuperTeamsTournament(
       });
       return stats;
     });
-    teamStats.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      const dA = a.gamesWon - a.gamesLost;
-      const dB = b.gamesWon - b.gamesLost;
-      if (dB !== dA) return dB - dA;
-      return b.gamesWon - a.gamesWon;
-    });
+    const teamOrder = new Map(categoryTeams.map((t, i) => [t.id, i]));
+    const sortedTeamStats = sortTeamStatsForPDF(teamStats, catGroupMatches, teamOrder);
 
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
     doc.text('Classificacao dos Grupos', 14, yPos);
     yPos += 5;
-    const standingsData = teamStats.map((s, idx) => {
+    const standingsData = sortedTeamStats.map((s, idx) => {
       const team = categoryTeams.find(t => t.id === s.id);
+      const pts = s.wins * 2 + s.draws;
+      const diff = s.gamesWon - s.gamesLost;
       return [
         (idx + 1).toString(),
         s.name,
         getTeamPlayerNames(team),
         s.matchesPlayed.toString(),
         s.wins.toString(),
+        s.draws.toString(),
         s.losses.toString(),
         s.gamesWon.toString(),
         s.gamesLost.toString(),
-        (s.gamesWon - s.gamesLost).toString()
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
       ];
     });
     autoTable(doc, {
       startY: yPos,
-      head: [['#', 'Super Equipa', 'Jogadores', 'J', 'V', 'D', 'JG', 'JP', 'Dif']],
+      head: [['#', 'Super Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
       body: standingsData,
       theme: 'striped',
       headStyles: { fillColor: [59, 130, 246], fontSize: 8 },
       bodyStyles: { fontSize: 7 },
       columnStyles: {
         0: { cellWidth: 8, halign: 'center' },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 55, fontSize: 6 },
-        3: { cellWidth: 10, halign: 'center' },
-        4: { cellWidth: 10, halign: 'center' },
-        5: { cellWidth: 10, halign: 'center' },
-        6: { cellWidth: 12, halign: 'center' },
-        7: { cellWidth: 12, halign: 'center' },
-        8: { cellWidth: 12, halign: 'center' }
+        1: { cellWidth: 30 },
+        2: { cellWidth: 45, fontSize: 6 },
+        3: { cellWidth: 8, halign: 'center' },
+        4: { cellWidth: 8, halign: 'center' },
+        5: { cellWidth: 8, halign: 'center' },
+        6: { cellWidth: 8, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 10, halign: 'center' },
+        9: { cellWidth: 12, halign: 'center' },
+        10: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
       },
       margin: { left: 14, right: 14 }
     });
@@ -1020,14 +1079,8 @@ function exportNonStopTournament(
       return stats;
     });
 
-    // Sort by: 1) Wins, 2) Game difference, 3) Games won
-    teamStats.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      const diffA = a.gamesWon - a.gamesLost;
-      const diffB = b.gamesWon - b.gamesLost;
-      if (diffB !== diffA) return diffB - diffA;
-      return b.gamesWon - a.gamesWon;
-    });
+    const teamOrder = new Map(categoryTeams.map((t, i) => [t.id, i]));
+    const sortedTeamStats = sortTeamStatsForPDF(teamStats, matches, teamOrder);
 
     // Standings table (TEAMS ONLY)
     doc.setFontSize(12);
@@ -1035,32 +1088,37 @@ function exportNonStopTournament(
     doc.text('Classificacao (Equipas):', 14, yPos);
     yPos += 5;
 
-    const standingsData = teamStats.map((s, idx) => {
+    const standingsData = sortedTeamStats.map((s, idx) => {
       const team = categoryTeams.find(t => t.id === s.id);
       const playerNames = getTeamPlayerNames(team);
+      const pts = s.wins * 2 + s.draws;
+      const diff = s.gamesWon - s.gamesLost;
       return [
         (idx + 1).toString(),
         s.name,
         playerNames,
         s.matchesPlayed.toString(),
         s.wins.toString(),
+        s.draws.toString(),
         s.losses.toString(),
         s.gamesWon.toString(),
         s.gamesLost.toString(),
-        (s.gamesWon - s.gamesLost).toString()
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
       ];
     });
 
     autoTable(doc, {
       startY: yPos,
-      head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'D', 'JG', 'JP', 'Dif']],
+      head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
       body: standingsData,
       theme: 'striped',
       styles: { fontSize: 7, cellPadding: 2 },
       headStyles: { fillColor: [249, 115, 22], fontSize: 8, fontStyle: 'bold' },
       columnStyles: {
         0: { halign: 'center' },
-        4: { fontStyle: 'bold' }
+        4: { fontStyle: 'bold' },
+        10: { fontStyle: 'bold', halign: 'center' }
       },
       margin: { left: 14, right: 14 }
     });
@@ -1191,14 +1249,8 @@ function exportAmericanTournament(
     return stats;
   });
 
-  // Sort
-  teamStats.sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
-    const diffA = a.gamesWon - a.gamesLost;
-    const diffB = b.gamesWon - b.gamesLost;
-    if (diffB !== diffA) return diffB - diffA;
-    return b.gamesWon - a.gamesWon;
-  });
+  const teamOrder = new Map(teams.map((t, i) => [t.id, i]));
+  const sortedTeamStats = sortTeamStatsForPDF(teamStats, matches, teamOrder);
 
   // Standings table
   doc.setFontSize(12);
@@ -1206,32 +1258,36 @@ function exportAmericanTournament(
   doc.text('Classificacao:', 14, yPos);
   yPos += 5;
 
-  const standingsData = teamStats.map((s, idx) => {
+  const standingsData = sortedTeamStats.map((s, idx) => {
     const playerNames = getTeamPlayerNames(teams.find(t => t.id === s.id));
+    const pts = s.wins * 2 + s.draws;
+    const diff = s.gamesWon - s.gamesLost;
     return [
       (idx + 1).toString(),
       s.name,
       playerNames,
       s.matchesPlayed.toString(),
       s.wins.toString(),
-      (s.draws ?? 0).toString(),
+      s.draws.toString(),
       s.losses.toString(),
       s.gamesWon.toString(),
       s.gamesLost.toString(),
-      (s.gamesWon - s.gamesLost).toString()
+      (diff >= 0 ? '+' : '') + diff.toString(),
+      pts.toString()
     ];
   });
 
   autoTable(doc, {
     startY: yPos,
-    head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+    head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
     body: standingsData,
     theme: 'striped',
     styles: { fontSize: 7, cellPadding: 2 },
     headStyles: { fillColor: [249, 115, 22], fontSize: 8 },
     columnStyles: {
       0: { halign: 'center' },
-      4: { fontStyle: 'bold' }
+      4: { fontStyle: 'bold' },
+      10: { fontStyle: 'bold', halign: 'center' }
     },
     margin: { left: 14, right: 14 }
   });
@@ -1349,9 +1405,12 @@ function exportAmericanTournament(
     });
   });
 
-  // Sort players
+  // Sort by: 1) Wins, 2) Points (V=2, E=1, D=0), 3) Game difference, 4) Games won
   const individualStats = Array.from(playerMap.values()).sort((a, b) => {
     if (b.wins !== a.wins) return b.wins - a.wins;
+    const ptsA = a.wins * 2 + a.draws;
+    const ptsB = b.wins * 2 + b.draws;
+    if (ptsB !== ptsA) return ptsB - ptsA;
     const diffA = a.gamesWon - a.gamesLost;
     const diffB = b.gamesWon - b.gamesLost;
     if (diffB !== diffA) return diffB - diffA;
@@ -1374,6 +1433,7 @@ function exportAmericanTournament(
     const individualData = individualStats.map((s, idx) => {
       const posLabel = idx === 0 ? '1o' : idx === 1 ? '2o' : idx === 2 ? '3o' : `${idx + 1}o`;
       const diff = s.gamesWon - s.gamesLost;
+      const pts = s.wins * 2 + s.draws;
       return [
         posLabel,
         s.name,
@@ -1383,27 +1443,29 @@ function exportAmericanTournament(
         s.losses.toString(),
         s.gamesWon.toString(),
         s.gamesLost.toString(),
-        (diff >= 0 ? '+' : '') + diff.toString()
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
       ];
     });
 
     autoTable(doc, {
       startY: yPos,
-      head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+      head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
       body: individualData,
       theme: 'striped',
       headStyles: { fillColor: [139, 92, 246], fontSize: 9 },
       bodyStyles: { fontSize: 8 },
       columnStyles: {
         0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 45 },
-        2: { cellWidth: 12, halign: 'center' },
-        3: { cellWidth: 12, halign: 'center' },
-        4: { cellWidth: 12, halign: 'center' },
-        5: { cellWidth: 12, halign: 'center' },
-        6: { cellWidth: 12, halign: 'center' },
-        7: { cellWidth: 12, halign: 'center' },
-        8: { cellWidth: 14, halign: 'center' }
+        1: { cellWidth: 40 },
+        2: { cellWidth: 10, halign: 'center' },
+        3: { cellWidth: 10, halign: 'center' },
+        4: { cellWidth: 10, halign: 'center' },
+        5: { cellWidth: 10, halign: 'center' },
+        6: { cellWidth: 10, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 12, halign: 'center' },
+        9: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
       },
       margin: { left: 14, right: 14 }
     });
@@ -1510,9 +1572,12 @@ function exportAmericanIndividualTournament(
     });
   });
 
-  // Sort players by stats
+  // Sort by: 1) Wins, 2) Points (V=2, E=1, D=0), 3) Game difference, 4) Games won
   const sortedPlayers = Array.from(playerStats.values()).sort((a, b) => {
     if (b.wins !== a.wins) return b.wins - a.wins;
+    const ptsA = a.wins * 2 + a.draws;
+    const ptsB = b.wins * 2 + b.draws;
+    if (ptsB !== ptsA) return ptsB - ptsA;
     const diffA = a.gamesWon - a.gamesLost;
     const diffB = b.gamesWon - b.gamesLost;
     if (diffB !== diffA) return diffB - diffA;
@@ -1527,6 +1592,7 @@ function exportAmericanIndividualTournament(
 
   const standingsData = sortedPlayers.map((s, idx) => {
     const diff = s.gamesWon - s.gamesLost;
+    const pts = s.wins * 2 + s.draws;
     return [
       (idx + 1).toString(),
       s.name,
@@ -1536,20 +1602,22 @@ function exportAmericanIndividualTournament(
       s.losses.toString(),
       s.gamesWon.toString(),
       s.gamesLost.toString(),
-      (diff >= 0 ? '+' : '') + diff.toString()
+      (diff >= 0 ? '+' : '') + diff.toString(),
+      pts.toString()
     ];
   });
 
   autoTable(doc, {
     startY: yPos,
-    head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+    head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
     body: standingsData,
     theme: 'striped',
     styles: { fontSize: 7, cellPadding: 2 },
     headStyles: { fillColor: [249, 115, 22], fontSize: 8 },
     columnStyles: {
       0: { halign: 'center' },
-      3: { fontStyle: 'bold' }
+      3: { fontStyle: 'bold' },
+      9: { fontStyle: 'bold', halign: 'center' }
     },
     margin: { left: 14, right: 14 }
   });
@@ -1721,51 +1789,49 @@ function exportTeamsTournament(
       return stats;
     });
 
-    // Sort
-    teamStats.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      const diffA = a.gamesWon - a.gamesLost;
-      const diffB = b.gamesWon - b.gamesLost;
-      if (diffB !== diffA) return diffB - diffA;
-      return b.gamesWon - a.gamesWon;
-    });
+    const teamOrder = new Map(groupTeams.map((t, i) => [t.id, i]));
+    const sortedTeamStats = sortTeamStatsForPDF(teamStats, matchesForStats, teamOrder);
 
-    // Group standings table (com E = empates)
-    const standingsData = teamStats.map((s, idx) => {
+    // Group standings table (com E = empates e Pts)
+    const standingsData = sortedTeamStats.map((s, idx) => {
       const team = groupTeams.find(t => t.id === s.id);
       const playerNames = getTeamPlayerNames(team);
+      const pts = s.wins * 2 + s.draws;
+      const diff = s.gamesWon - s.gamesLost;
       return [
         (idx + 1).toString(),
         s.name,
         playerNames,
         s.matchesPlayed.toString(),
         s.wins.toString(),
-        (s.draws ?? 0).toString(),
+        s.draws.toString(),
         s.losses.toString(),
         s.gamesWon.toString(),
         s.gamesLost.toString(),
-        (s.gamesWon - s.gamesLost).toString()
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
       ];
     });
 
     autoTable(doc, {
       startY: yPos,
-      head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif']],
+      head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
       body: standingsData,
       theme: 'striped',
       headStyles: { fillColor: [34, 197, 94], fontSize: 9 },
       bodyStyles: { fontSize: 8 },
       columnStyles: {
-        0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 26 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 10, halign: 'center' },
-        4: { cellWidth: 10, halign: 'center' },
-        5: { cellWidth: 10, halign: 'center' },
-        6: { cellWidth: 10, halign: 'center' },
-        7: { cellWidth: 12, halign: 'center' },
-        8: { cellWidth: 12, halign: 'center' },
-        9: { cellWidth: 12, halign: 'center' }
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 24 },
+        2: { cellWidth: 36 },
+        3: { cellWidth: 8, halign: 'center' },
+        4: { cellWidth: 8, halign: 'center' },
+        5: { cellWidth: 8, halign: 'center' },
+        6: { cellWidth: 8, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 10, halign: 'center' },
+        9: { cellWidth: 12, halign: 'center' },
+        10: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
       },
       margin: { left: 14, right: 14 }
     });

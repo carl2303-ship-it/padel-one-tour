@@ -470,6 +470,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <optgroup label={t.tournament.formatOptgroupSpecial}>
                 <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
                 <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
+                <option value="mixed_american">{t.tournament.formatOption_mixed_american || 'Americano Misto - 1H+1M vs 1H+1M (São Valentim)'}</option>
               </optgroup>
             </select>
             <p className="text-xs text-gray-500 mt-1">{t.tournament.formatHelper}</p>
@@ -514,6 +515,17 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             <div className="bg-pink-50 border border-pink-200 rounded-lg p-4">
               <h4 className="font-semibold text-pink-900 mb-2">{t.tournament.mixedGenderTitle}</h4>
               <p className="text-sm text-pink-800">{t.tournament.mixedGenderDescription}</p>
+            </div>
+          )}
+
+          {formData.format === 'mixed_american' && (
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-4">
+              <h4 className="font-semibold text-rose-900 mb-2">Americano Misto Individual</h4>
+              <p className="text-sm text-rose-800">
+                Formato especial: 1 Homem + 1 Mulher vs 1 Homem + 1 Mulher. 
+                Os pares trocam a cada ronda. Todos contra todos com classificação individual. 
+                Crie 2 categorias (ex: Masc e Fem) e inscreva os jogadores na respetiva categoria.
+              </p>
             </div>
           )}
 

@@ -1,0 +1,5 @@
+# Ignorar pastas pesadas para reduzir uso de memoria
+node_modules/
+dist/
+.git/
+

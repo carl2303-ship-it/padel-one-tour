@@ -596,7 +596,7 @@ export async function updateLeagueStandings(tournamentId: string) {
       .eq('league_id', leagueId);
     console.log('[LEAGUE_UPDATE] Standings BEFORE RPC:', standingsBefore?.length || 0, 'entries');
     
-    const { error, data } = await supabase.rpc('recalculate_league_standings', {
+    const { error, data } = await supabase.rpc('recalculate_league_standings_for_league', {
       league_uuid: leagueId
     });
 
@@ -641,7 +641,7 @@ export async function recalculateLeagueStandingsForTournament(tournamentId: stri
 
   for (const leagueId of uniqueLeagueIds) {
     console.log('Calling recalculate_league_standings for:', leagueId);
-    const { error } = await supabase.rpc('recalculate_league_standings', {
+    const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
       league_uuid: leagueId
     });
 
