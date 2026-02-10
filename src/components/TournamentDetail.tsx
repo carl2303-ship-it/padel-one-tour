@@ -16,7 +16,7 @@ import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
-import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker } from '../lib/groups';
+import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
@@ -174,8 +174,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // Avançar R1→R2 ou R2→R3
             setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
           } else if (newRecord.round?.startsWith('group_')) {
-            // Verificar se todos os grupos terminaram para preencher R1
             setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
+            if (currentTournament?.format === 'individual_groups_knockout') {
+              const groupMatches = updated.filter(m => m.round.startsWith('group_'));
+              const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
+              if (allGroupsDone) {
+                setTimeout(async () => {
+                  console.log('[REALTIME] All groups done, populating knockout brackets');
+                  await populatePlacementMatches(tournament.id);
+                  fetchTournamentData();
+                }, 600);
+              }
+            }
           }
         }
         return updated;
@@ -996,6 +1006,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
         );
         setMatches(sortedMatches);
+
+        if (currentTournament?.format === 'individual_groups_knockout') {
+          const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
+          const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
+          const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
+          const hasUnpopulatedKnockout = knockoutMatches.some((m: any) =>
+            !m.player1_individual_id && !m.player3_individual_id
+          );
+
+          if (allGroupsDone && hasUnpopulatedKnockout) {
+            console.log('[FETCH] Auto-populating knockout brackets - all groups done but knockout unpopulated');
+            populatePlacementMatches(tournament.id).then(() => {
+              fetchTournamentData();
+            });
+            return;
+          }
+        }
       }
       if (categoriesResult.data) {
         console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
