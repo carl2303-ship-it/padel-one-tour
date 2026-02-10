@@ -978,7 +978,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1040,7 +1040,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('seed', { ascending: true }),
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
