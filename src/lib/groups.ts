@@ -793,6 +793,172 @@ export async function updateTeamPlacements(tournamentId: string, qualifiedPerGro
   }
 }
 
+async function populateDirectFinals(
+  tournamentId: string,
+  allMatches: any[],
+  categoryId?: string
+): Promise<void> {
+  const directFinalRounds = allMatches
+    .filter(m => m.round === 'final' || m.round.endsWith('_place'))
+    .sort((a, b) => a.match_number - b.match_number);
+
+  if (directFinalRounds.length === 0) {
+    console.log('[POPULATE_DIRECT_FINALS] No direct final/placement matches found');
+    return;
+  }
+
+  const alreadyPopulated = directFinalRounds.every(m =>
+    m.player1_individual_id && m.player1_individual_id !== 'TBD' &&
+    m.player3_individual_id && m.player3_individual_id !== 'TBD'
+  );
+  if (alreadyPopulated) {
+    console.log('[POPULATE_DIRECT_FINALS] Already populated, skipping');
+    return;
+  }
+
+  const { data: players, error: playersError } = await supabase
+    .from('players')
+    .select('id, name, group_name, category_id')
+    .eq('tournament_id', tournamentId)
+    .not('group_name', 'is', null);
+
+  if (playersError || !players) {
+    console.error('[POPULATE_DIRECT_FINALS] Error fetching players:', playersError);
+    return;
+  }
+
+  const groupMatches = allMatches.filter(m => m.round.startsWith('group_') && m.status === 'completed');
+
+  const playerStats = new Map<string, { id: string; name: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>();
+
+  players.forEach(player => {
+    playerStats.set(player.id, {
+      id: player.id,
+      name: player.name,
+      group_name: player.group_name!,
+      wins: 0,
+      gamesWon: 0,
+      gamesLost: 0
+    });
+  });
+
+  groupMatches.forEach(match => {
+    const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+    const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+    const team1Won = team1Games > team2Games;
+
+    const p1Stats = playerStats.get(match.player1_individual_id);
+    const p2Stats = playerStats.get(match.player2_individual_id);
+    const p3Stats = playerStats.get(match.player3_individual_id);
+    const p4Stats = playerStats.get(match.player4_individual_id);
+
+    if (p1Stats) { p1Stats.gamesWon += team1Games; p1Stats.gamesLost += team2Games; if (team1Won) p1Stats.wins++; }
+    if (p2Stats) { p2Stats.gamesWon += team1Games; p2Stats.gamesLost += team2Games; if (team1Won) p2Stats.wins++; }
+    if (p3Stats) { p3Stats.gamesWon += team2Games; p3Stats.gamesLost += team1Games; if (!team1Won) p3Stats.wins++; }
+    if (p4Stats) { p4Stats.gamesWon += team2Games; p4Stats.gamesLost += team1Games; if (!team1Won) p4Stats.wins++; }
+  });
+
+  const playersByGroup = new Map<string, Array<{ id: string; name: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>>();
+
+  Array.from(playerStats.values()).forEach(player => {
+    if (!playersByGroup.has(player.group_name)) {
+      playersByGroup.set(player.group_name, []);
+    }
+    playersByGroup.get(player.group_name)!.push(player);
+  });
+
+  const sortedGroups = Array.from(playersByGroup.keys()).sort();
+
+  const rankedByGroup = new Map<string, string[]>();
+  sortedGroups.forEach((groupName) => {
+    const groupPlayers = playersByGroup.get(groupName)!;
+    const sorted = [...groupPlayers].sort((a, b) => {
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      const diffA = a.gamesWon - a.gamesLost;
+      const diffB = b.gamesWon - b.gamesLost;
+      return diffB - diffA;
+    });
+    rankedByGroup.set(groupName, sorted.map(p => p.id));
+    console.log(`[POPULATE_DIRECT_FINALS] Group ${groupName} ranking:`, sorted.map((p, i) => `${i + 1}. ${p.name}`));
+  });
+
+  const maxPlayersPerGroup = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+
+  for (let matchIdx = 0; matchIdx < directFinalRounds.length; matchIdx++) {
+    const match = directFinalRounds[matchIdx];
+    const startRank = matchIdx * 2;
+
+    if (startRank >= maxPlayersPerGroup) break;
+
+    if (match.player1_individual_id && match.player1_individual_id !== 'TBD') {
+      console.log(`[POPULATE_DIRECT_FINALS] Match ${match.round} already populated, skipping`);
+      continue;
+    }
+
+    if (sortedGroups.length === 2) {
+      const groupA = sortedGroups[0];
+      const groupB = sortedGroups[1];
+      const rankingA = rankedByGroup.get(groupA)!;
+      const rankingB = rankedByGroup.get(groupB)!;
+
+      const a1 = rankingA[startRank];
+      const a2 = rankingA[startRank + 1];
+      const b1 = rankingB[startRank];
+      const b2 = rankingB[startRank + 1];
+
+      if (!a1 || !b1) continue;
+
+      const updateData: any = {
+        player1_individual_id: a1,
+        player2_individual_id: b2 || a1,
+        player3_individual_id: b1,
+        player4_individual_id: a2 || b1,
+      };
+
+      const { error } = await supabase
+        .from('matches')
+        .update(updateData)
+        .eq('id', match.id);
+
+      if (error) {
+        console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
+      } else {
+        console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
+      }
+    } else {
+      const neededPlayers: string[] = [];
+      for (const groupName of sortedGroups) {
+        const groupRanking = rankedByGroup.get(groupName)!;
+        for (let r = startRank; r < startRank + 2 && r < groupRanking.length; r++) {
+          neededPlayers.push(groupRanking[r]);
+        }
+      }
+
+      if (neededPlayers.length < 4) continue;
+
+      const shuffled = [...neededPlayers].sort(() => Math.random() - 0.5);
+
+      const { error } = await supabase
+        .from('matches')
+        .update({
+          player1_individual_id: shuffled[0],
+          player2_individual_id: shuffled[1],
+          player3_individual_id: shuffled[2],
+          player4_individual_id: shuffled[3],
+        })
+        .eq('id', match.id);
+
+      if (error) {
+        console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
+      } else {
+        console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: populated with shuffled players`);
+      }
+    }
+  }
+
+  console.log('[POPULATE_DIRECT_FINALS] Done populating direct finals');
+}
+
 export async function populatePlacementMatches(
   tournamentId: string,
   categoryId?: string
@@ -822,7 +988,8 @@ export async function populatePlacementMatches(
   console.log('[POPULATE_PLACEMENT] Found', allSemis.length, 'total semifinal matches across all tiers');
 
   if (allSemis.length === 0) {
-    console.log('[POPULATE_PLACEMENT] No semifinal matches to populate');
+    console.log('[POPULATE_PLACEMENT] No semifinal matches found, checking for direct finals/placement matches');
+    await populateDirectFinals(tournamentId, allMatches, categoryId);
     return;
   }
 
