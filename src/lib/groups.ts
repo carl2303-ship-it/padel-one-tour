@@ -799,44 +799,38 @@ export async function populatePlacementMatches(
 ): Promise<void> {
   console.log('[POPULATE_PLACEMENT] Starting for tournament:', tournamentId, 'category:', categoryId);
 
-  let matchesQuery = supabase
+  const { data: allMatches, error: matchesError } = await supabase
     .from('matches')
     .select('*')
     .eq('tournament_id', tournamentId);
-
-  if (categoryId) {
-    matchesQuery = matchesQuery.eq('category_id', categoryId);
-  }
-
-  const { data: allMatches, error: matchesError } = await matchesQuery;
 
   if (matchesError || !allMatches) {
     console.error('[POPULATE_PLACEMENT] Error fetching matches:', matchesError);
     return;
   }
 
-  const semifinalMatches = allMatches
-    .filter(m => m.round === 'semifinal' || m.round === 'semi_final')
+  const tierPrefixes = ['1st', '5th', '9th', '13th', '17th', '21st'];
+  const allSemifinalRounds = [
+    'semifinal', 'semi_final',
+    ...tierPrefixes.map(p => `${p}_semifinal`)
+  ];
+
+  const allSemis = allMatches
+    .filter(m => allSemifinalRounds.includes(m.round))
     .sort((a, b) => a.match_number - b.match_number);
 
-  console.log('[POPULATE_PLACEMENT] Found', semifinalMatches.length, 'semifinal matches');
+  console.log('[POPULATE_PLACEMENT] Found', allSemis.length, 'total semifinal matches across all tiers');
 
-  if (semifinalMatches.length === 0) {
+  if (allSemis.length === 0) {
     console.log('[POPULATE_PLACEMENT] No semifinal matches to populate');
     return;
   }
 
-  let playersQuery = supabase
+  const { data: players, error: playersError } = await supabase
     .from('players')
     .select('id, name, group_name, category_id')
     .eq('tournament_id', tournamentId)
     .not('group_name', 'is', null);
-
-  if (categoryId) {
-    playersQuery = playersQuery.eq('category_id', categoryId);
-  }
-
-  const { data: players, error: playersError } = await playersQuery;
 
   if (playersError || !players) {
     console.error('[POPULATE_PLACEMENT] Error fetching players:', playersError);
@@ -845,11 +839,12 @@ export async function populatePlacementMatches(
 
   const groupMatches = allMatches.filter(m => m.round.startsWith('group_') && m.status === 'completed');
 
-  const playerStats = new Map<string, { id: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>();
+  const playerStats = new Map<string, { id: string; name: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>();
 
   players.forEach(player => {
     playerStats.set(player.id, {
       id: player.id,
+      name: player.name,
       group_name: player.group_name!,
       wins: 0,
       gamesWon: 0,
@@ -889,7 +884,7 @@ export async function populatePlacementMatches(
     }
   });
 
-  const playersByGroup = new Map<string, Array<{ id: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>>();
+  const playersByGroup = new Map<string, Array<{ id: string; name: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>>();
 
   Array.from(playerStats.values()).forEach(player => {
     if (!playersByGroup.has(player.group_name)) {
@@ -899,8 +894,8 @@ export async function populatePlacementMatches(
   });
 
   const sortedGroups = Array.from(playersByGroup.keys()).sort();
-  const rankedPlayers: Array<{ id: string; group: string; rank: number }> = [];
 
+  const rankedByGroup = new Map<string, string[]>();
   sortedGroups.forEach((groupName) => {
     const groupPlayers = playersByGroup.get(groupName)!;
     const sorted = groupPlayers.sort((a, b) => {
@@ -909,81 +904,128 @@ export async function populatePlacementMatches(
       const diffB = b.gamesWon - b.gamesLost;
       return diffB - diffA;
     });
-
-    sorted.forEach((player, index) => {
-      rankedPlayers.push({ id: player.id, group: groupName, rank: index + 1 });
-    });
+    rankedByGroup.set(groupName, sorted.map(p => p.id));
+    console.log(`[POPULATE_PLACEMENT] Group ${groupName} ranking:`, sorted.map((p, i) => `${i + 1}. ${p.name}`));
   });
 
-  console.log('[POPULATE_PLACEMENT] Ranked players:', rankedPlayers);
+  const maxPlayersPerGroup = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+  const totalPlayers = players.length;
 
-  const numGroups = sortedGroups.length;
-  const playersNeeded = semifinalMatches.length * 4;
-  const qualifiedPerGroup = Math.ceil(playersNeeded / numGroups);
+  console.log(`[POPULATE_PLACEMENT] ${sortedGroups.length} groups, max ${maxPlayersPerGroup} per group, ${totalPlayers} total`);
 
-  console.log(`[POPULATE_PLACEMENT] Need ${playersNeeded} players for ${semifinalMatches.length} semifinal(s), ${qualifiedPerGroup} per group from ${numGroups} groups`);
+  const populateTier = async (tierIndex: number, tierPrefix: string) => {
+    const semifinalRound = `${tierPrefix}_semifinal`;
+    const tierSemis = allSemis.filter(m => m.round === semifinalRound);
 
-  const qualified: string[] = [];
-  for (let rank = 1; rank <= qualifiedPerGroup; rank++) {
-    const playersAtRank = rankedPlayers.filter(p => p.rank === rank);
-    qualified.push(...playersAtRank.map(p => p.id));
-  }
-
-  console.log('[POPULATE_PLACEMENT] Qualified for semifinals:', qualified);
-
-  if (qualified.length < playersNeeded) {
-    console.log(`[POPULATE_PLACEMENT] Not enough qualified players (${qualified.length}/${playersNeeded})`);
-    return;
-  }
-
-  const shuffle = (array: string[]) => {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    if (tierSemis.length < 2) {
+      if (tierPrefix === '1st') {
+        const fallbackSemis = allSemis.filter(m => m.round === 'semifinal' || m.round === 'semi_final');
+        if (fallbackSemis.length >= 2) {
+          tierSemis.push(...fallbackSemis);
+        }
+      }
     }
-    return shuffled;
+
+    if (tierSemis.length < 2) {
+      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: not enough semifinals (${tierSemis.length})`);
+      return;
+    }
+
+    const startRank = tierIndex * 2;
+    const neededPlayers: string[] = [];
+
+    for (const groupName of sortedGroups) {
+      const groupRanking = rankedByGroup.get(groupName)!;
+      for (let r = startRank; r < startRank + 2 && r < groupRanking.length; r++) {
+        neededPlayers.push(groupRanking[r]);
+      }
+    }
+
+    if (neededPlayers.length < 4) {
+      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: not enough players (${neededPlayers.length}/4)`);
+      return;
+    }
+
+    const alreadyPopulated = tierSemis.every(m =>
+      m.player1_individual_id && m.player2_individual_id &&
+      m.player3_individual_id && m.player4_individual_id
+    );
+    if (alreadyPopulated) {
+      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: already populated, skipping`);
+      return;
+    }
+
+    if (sortedGroups.length === 2) {
+      const groupA = sortedGroups[0];
+      const groupB = sortedGroups[1];
+      const rankingA = rankedByGroup.get(groupA)!;
+      const rankingB = rankedByGroup.get(groupB)!;
+
+      const a1 = rankingA[startRank];
+      const a2 = rankingA[startRank + 1];
+      const b1 = rankingB[startRank];
+      const b2 = rankingB[startRank + 1];
+
+      if (!a1 || !a2 || !b1 || !b2) return;
+
+      const { error: sf1Error } = await supabase
+        .from('matches')
+        .update({
+          player1_individual_id: a1,
+          player2_individual_id: b2,
+          player3_individual_id: b1,
+          player4_individual_id: a2,
+        })
+        .eq('id', tierSemis[0].id);
+
+      if (sf1Error) {
+        console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF1:`, sf1Error);
+      } else {
+        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF1: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
+      }
+
+      const { error: sf2Error } = await supabase
+        .from('matches')
+        .update({
+          player1_individual_id: a2,
+          player2_individual_id: b1,
+          player3_individual_id: b2,
+          player4_individual_id: a1,
+        })
+        .eq('id', tierSemis[1].id);
+
+      if (sf2Error) {
+        console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF2:`, sf2Error);
+      } else {
+        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF2: ${groupA}${startRank + 2}+${groupB}${startRank + 1} vs ${groupB}${startRank + 2}+${groupA}${startRank + 1}`);
+      }
+    } else {
+      const shuffled = [...neededPlayers].sort(() => Math.random() - 0.5);
+
+      for (let i = 0; i < tierSemis.length && (i * 4 + 3) < shuffled.length; i++) {
+        const base = i * 4;
+        await supabase
+          .from('matches')
+          .update({
+            player1_individual_id: shuffled[base],
+            player2_individual_id: shuffled[base + 1],
+            player3_individual_id: shuffled[base + 2],
+            player4_individual_id: shuffled[base + 3],
+          })
+          .eq('id', tierSemis[i].id);
+      }
+    }
+
+    console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: populated successfully`);
   };
 
-  const shuffledQualified = shuffle(qualified);
-
-  if (semifinalMatches.length >= 1) {
-    const { error: sf1Error } = await supabase
-      .from('matches')
-      .update({
-        player1_individual_id: shuffledQualified[0],
-        player2_individual_id: shuffledQualified[1],
-        player3_individual_id: shuffledQualified[2],
-        player4_individual_id: shuffledQualified[3],
-      })
-      .eq('id', semifinalMatches[0].id);
-
-    if (sf1Error) {
-      console.error('[POPULATE_PLACEMENT] Error updating SF1:', sf1Error);
-    } else {
-      console.log('[POPULATE_PLACEMENT] Updated SF1 with players:', shuffledQualified.slice(0, 4));
-    }
+  for (let i = 0; i < tierPrefixes.length; i++) {
+    const startRank = i * 2;
+    if (startRank >= maxPlayersPerGroup) break;
+    await populateTier(i, tierPrefixes[i]);
   }
 
-  if (semifinalMatches.length >= 2) {
-    const { error: sf2Error } = await supabase
-      .from('matches')
-      .update({
-        player1_individual_id: shuffledQualified[4],
-        player2_individual_id: shuffledQualified[5],
-        player3_individual_id: shuffledQualified[6],
-        player4_individual_id: shuffledQualified[7],
-      })
-      .eq('id', semifinalMatches[1].id);
-
-    if (sf2Error) {
-      console.error('[POPULATE_PLACEMENT] Error updating SF2:', sf2Error);
-    } else {
-      console.log('[POPULATE_PLACEMENT] Updated SF2 with players:', shuffledQualified.slice(4, 8));
-    }
-  }
-
-  console.log('[POPULATE_PLACEMENT] Done populating semifinal matches');
+  console.log('[POPULATE_PLACEMENT] Done populating all placement tiers');
 }
 
 export async function advanceKnockoutWinner(
