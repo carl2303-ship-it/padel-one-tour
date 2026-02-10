@@ -272,36 +272,59 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
     }
   };
 
+  const { data: groupMatches } = await supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .like('round', 'group_%');
+
+  const playerGroupStats = new Map<string, { wins: number; gamesWon: number; gamesLost: number }>();
+  (groupMatches || []).forEach((m: any) => {
+    const t1Games = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+    const t2Games = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+    const t1Won = t1Games > t2Games;
+    const t1Players = [m.player1_individual_id, m.player2_individual_id].filter(Boolean);
+    const t2Players = [m.player3_individual_id, m.player4_individual_id].filter(Boolean);
+    for (const pid of t1Players) {
+      const s = playerGroupStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+      s.gamesWon += t1Games; s.gamesLost += t2Games;
+      if (t1Won) s.wins++;
+      playerGroupStats.set(pid, s);
+    }
+    for (const pid of t2Players) {
+      const s = playerGroupStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+      s.gamesWon += t2Games; s.gamesLost += t1Games;
+      if (!t1Won) s.wins++;
+      playerGroupStats.set(pid, s);
+    }
+  });
+
+  const rankWithinPair = (playerIds: string[]): string[] => {
+    return [...playerIds].sort((a, b) => {
+      const sa = playerGroupStats.get(a) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+      const sb = playerGroupStats.get(b) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+      if (sb.wins !== sa.wins) return sb.wins - sa.wins;
+      const diffA = sa.gamesWon - sa.gamesLost;
+      const diffB = sb.gamesWon - sb.gamesLost;
+      if (diffB !== diffA) return diffB - diffA;
+      return sb.gamesWon - sa.gamesWon;
+    });
+  };
+
   const finalWinners = getMatchWinner(finalMatch);
   const finalLosers = getMatchLoser(finalMatch);
 
   console.log('[CALCULATE_POSITIONS] Final winners:', finalWinners);
   console.log('[CALCULATE_POSITIONS] Final losers:', finalLosers);
 
-  for (const playerId of finalWinners) {
-    await supabase
-      .from('players')
-      .update({ final_position: 1 })
-      .eq('id', playerId);
-  }
-
-  for (const playerId of finalLosers) {
-    await supabase
-      .from('players')
-      .update({ final_position: 2 })
-      .eq('id', playerId);
-  }
-
-  // Try to find 3rd place match with different round names
   let thirdPlaceMatch = null;
-  
   const { data: normal3rd } = await supabase
     .from('matches')
     .select('*')
     .match(matchFilter)
     .eq('round', '3rd_place')
     .maybeSingle();
-  
   if (normal3rd) {
     thirdPlaceMatch = normal3rd;
   } else {
@@ -311,33 +334,7 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
       .match(matchFilter)
       .eq('round', 'mixed_3rd_place')
       .maybeSingle();
-    
-    if (mixed3rd) {
-      thirdPlaceMatch = mixed3rd;
-    }
-  }
-
-  if (thirdPlaceMatch) {
-    console.log('[CALCULATE_POSITIONS] Found 3rd place match with round:', thirdPlaceMatch.round);
-    const thirdPlaceWinners = getMatchWinner(thirdPlaceMatch);
-    const fourthPlaceLosers = getMatchLoser(thirdPlaceMatch);
-
-    console.log('[CALCULATE_POSITIONS] 3rd place winners:', thirdPlaceWinners);
-    console.log('[CALCULATE_POSITIONS] 4th place losers:', fourthPlaceLosers);
-
-    for (const playerId of thirdPlaceWinners) {
-      await supabase
-        .from('players')
-        .update({ final_position: 3 })
-        .eq('id', playerId);
-    }
-
-    for (const playerId of fourthPlaceLosers) {
-      await supabase
-        .from('players')
-        .update({ final_position: 4 })
-        .eq('id', playerId);
-    }
+    if (mixed3rd) thirdPlaceMatch = mixed3rd;
   }
 
   const { data: fifthPlaceMatch } = await supabase
@@ -347,28 +344,6 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
     .eq('round', '5th_place')
     .maybeSingle();
 
-  if (fifthPlaceMatch) {
-    const fifthPlaceWinners = getMatchWinner(fifthPlaceMatch);
-    const sixthPlaceLosers = getMatchLoser(fifthPlaceMatch);
-
-    console.log('[CALCULATE_POSITIONS] 5th place winners:', fifthPlaceWinners);
-    console.log('[CALCULATE_POSITIONS] 6th place losers:', sixthPlaceLosers);
-
-    for (const playerId of fifthPlaceWinners) {
-      await supabase
-        .from('players')
-        .update({ final_position: 5 })
-        .eq('id', playerId);
-    }
-
-    for (const playerId of sixthPlaceLosers) {
-      await supabase
-        .from('players')
-        .update({ final_position: 6 })
-        .eq('id', playerId);
-    }
-  }
-
   const { data: seventhPlaceMatch } = await supabase
     .from('matches')
     .select('*')
@@ -376,25 +351,61 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
     .eq('round', '7th_place')
     .maybeSingle();
 
-  if (seventhPlaceMatch) {
-    const seventhPlaceWinners = getMatchWinner(seventhPlaceMatch);
-    const eighthPlaceLosers = getMatchLoser(seventhPlaceMatch);
+  const sortedFinalWinners = rankWithinPair(finalWinners);
+  for (let i = 0; i < sortedFinalWinners.length; i++) {
+    await supabase.from('players').update({ final_position: 1 + i }).eq('id', sortedFinalWinners[i]);
+  }
 
-    console.log('[CALCULATE_POSITIONS] 7th place winners:', seventhPlaceWinners);
-    console.log('[CALCULATE_POSITIONS] 8th place losers:', eighthPlaceLosers);
+  const finalLoserBase = thirdPlaceMatch ? (sortedFinalWinners.length + 1) : (sortedFinalWinners.length + 1);
+  if (thirdPlaceMatch) {
+    console.log('[CALCULATE_POSITIONS] Found 3rd place match with round:', thirdPlaceMatch.round);
+    const thirdWinners = rankWithinPair(getMatchWinner(thirdPlaceMatch));
+    const thirdLosers = rankWithinPair(getMatchLoser(thirdPlaceMatch));
+    for (let i = 0; i < thirdWinners.length; i++) {
+      await supabase.from('players').update({ final_position: 3 + i }).eq('id', thirdWinners[i]);
+    }
+    for (let i = 0; i < thirdLosers.length; i++) {
+      await supabase.from('players').update({ final_position: 3 + thirdWinners.length + i }).eq('id', thirdLosers[i]);
+    }
+  } else {
+    const sortedFinalLosers = rankWithinPair(finalLosers);
+    const loserBase = sortedFinalWinners.length + 1;
+    for (let i = 0; i < sortedFinalLosers.length; i++) {
+      await supabase.from('players').update({ final_position: loserBase + i }).eq('id', sortedFinalLosers[i]);
+    }
+  }
 
-    for (const playerId of seventhPlaceWinners) {
-      await supabase
-        .from('players')
-        .update({ final_position: 7 })
-        .eq('id', playerId);
+  if (fifthPlaceMatch) {
+    const fifthWinners = rankWithinPair(getMatchWinner(fifthPlaceMatch));
+    const fifthLosers = rankWithinPair(getMatchLoser(fifthPlaceMatch));
+
+    console.log('[CALCULATE_POSITIONS] 5th place winners:', fifthWinners);
+    console.log('[CALCULATE_POSITIONS] 5th place losers:', fifthLosers);
+
+    for (let i = 0; i < fifthWinners.length; i++) {
+      await supabase.from('players').update({ final_position: 5 + i }).eq('id', fifthWinners[i]);
     }
 
-    for (const playerId of eighthPlaceLosers) {
-      await supabase
-        .from('players')
-        .update({ final_position: 8 })
-        .eq('id', playerId);
+    const loserBase = seventhPlaceMatch ? 6 : 5 + fifthWinners.length;
+    if (!seventhPlaceMatch) {
+      for (let i = 0; i < fifthLosers.length; i++) {
+        await supabase.from('players').update({ final_position: loserBase + i }).eq('id', fifthLosers[i]);
+      }
+    }
+  }
+
+  if (seventhPlaceMatch) {
+    const seventhWinners = rankWithinPair(getMatchWinner(seventhPlaceMatch));
+    const seventhLosers = rankWithinPair(getMatchLoser(seventhPlaceMatch));
+
+    console.log('[CALCULATE_POSITIONS] 7th place winners:', seventhWinners);
+    console.log('[CALCULATE_POSITIONS] 8th place losers:', seventhLosers);
+
+    for (let i = 0; i < seventhWinners.length; i++) {
+      await supabase.from('players').update({ final_position: 7 + i }).eq('id', seventhWinners[i]);
+    }
+    for (let i = 0; i < seventhLosers.length; i++) {
+      await supabase.from('players').update({ final_position: 7 + seventhWinners.length + i }).eq('id', seventhLosers[i]);
     }
   }
 
