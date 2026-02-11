@@ -4221,8 +4221,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             {player.name.charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-gray-900">{player.name}</p>
+                              {player.category_id && categories.length > 0 && (
+                                <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">
+                                  {categories.find(c => c.id === player.category_id)?.name || ''}
+                                </span>
+                              )}
                               {player.group_name && (
                                 <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
                                   Grupo {player.group_name}
@@ -5099,7 +5104,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showEditPlayer && selectedPlayer && (
         <EditIndividualPlayerModal
           player={selectedPlayer}
-          categories={categories}
+          tournamentId={tournament.id}
           onClose={() => {
             setShowEditPlayer(false);
             setSelectedPlayer(undefined);

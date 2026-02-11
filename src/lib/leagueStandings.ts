@@ -186,6 +186,135 @@ export async function clearIndividualFinalPositions(tournamentId: string, catego
   return true;
 }
 
+// Calcular posições finais para torneios round_robin individuais (americano)
+// baseado nas standings (vitórias, pontos, diferença de jogos)
+async function calculateRoundRobinIndividualPositions(tournamentId: string, categoryId?: string | null): Promise<boolean> {
+  console.log('[RR_POSITIONS] Calculating round robin individual positions for tournament:', tournamentId, 'category:', categoryId);
+
+  // Buscar jogadores do torneio
+  let playersQuery = supabase
+    .from('players')
+    .select('id, name')
+    .eq('tournament_id', tournamentId);
+
+  if (categoryId && categoryId !== 'no-category') {
+    playersQuery = playersQuery.eq('category_id', categoryId);
+  }
+
+  const { data: players } = await playersQuery;
+
+  if (!players || players.length === 0) {
+    console.log('[RR_POSITIONS] No players found');
+    return false;
+  }
+
+  // Buscar todos os jogos completados do torneio
+  let matchesQuery = supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed');
+
+  if (categoryId && categoryId !== 'no-category') {
+    matchesQuery = matchesQuery.eq('category_id', categoryId);
+  }
+
+  const { data: completedMatches } = await matchesQuery;
+
+  if (!completedMatches || completedMatches.length === 0) {
+    console.log('[RR_POSITIONS] No completed matches found');
+    return false;
+  }
+
+  console.log('[RR_POSITIONS] Found', players.length, 'players and', completedMatches.length, 'completed matches');
+
+  // Calcular estatísticas de cada jogador
+  const playerStats = new Map<string, {
+    id: string;
+    name: string;
+    wins: number;
+    draws: number;
+    losses: number;
+    gamesWon: number;
+    gamesLost: number;
+  }>();
+
+  players.forEach(p => {
+    playerStats.set(p.id, {
+      id: p.id,
+      name: p.name,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      gamesWon: 0,
+      gamesLost: 0,
+    });
+  });
+
+  completedMatches.forEach(match => {
+    const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+    const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+    const isDraw = t1Games === t2Games;
+    const t1Won = t1Games > t2Games;
+
+    // Team 1: player1_individual_id + player2_individual_id
+    // Team 2: player3_individual_id + player4_individual_id
+    const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+    const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+
+    team1Players.forEach(pid => {
+      const stats = playerStats.get(pid);
+      if (stats) {
+        stats.gamesWon += t1Games;
+        stats.gamesLost += t2Games;
+        if (isDraw) stats.draws++;
+        else if (t1Won) stats.wins++;
+        else stats.losses++;
+      }
+    });
+
+    team2Players.forEach(pid => {
+      const stats = playerStats.get(pid);
+      if (stats) {
+        stats.gamesWon += t2Games;
+        stats.gamesLost += t1Games;
+        if (isDraw) stats.draws++;
+        else if (!t1Won) stats.wins++;
+        else stats.losses++;
+      }
+    });
+  });
+
+  // Ordenar jogadores: pontos (V*2 + E*1), diferença de jogos, jogos ganhos
+  const sortedPlayers = Array.from(playerStats.values()).sort((a, b) => {
+    const pointsA = a.wins * 2 + a.draws;
+    const pointsB = b.wins * 2 + b.draws;
+    if (pointsA !== pointsB) return pointsB - pointsA;
+
+    const diffA = a.gamesWon - a.gamesLost;
+    const diffB = b.gamesWon - b.gamesLost;
+    if (diffA !== diffB) return diffB - diffA;
+
+    return b.gamesWon - a.gamesWon;
+  });
+
+  // Atribuir posições finais
+  for (let i = 0; i < sortedPlayers.length; i++) {
+    const position = i + 1;
+    const player = sortedPlayers[i];
+    const points = player.wins * 2 + player.draws;
+    console.log(`[RR_POSITIONS] Position ${position}: ${player.name} (W:${player.wins} D:${player.draws} L:${player.losses} Pts:${points} GW:${player.gamesWon} GL:${player.gamesLost})`);
+
+    await supabase
+      .from('players')
+      .update({ final_position: position })
+      .eq('id', player.id);
+  }
+
+  console.log('[RR_POSITIONS] Successfully assigned positions to', sortedPlayers.length, 'players');
+  return true;
+}
+
 export async function calculateIndividualFinalPositions(tournamentId: string, categoryId?: string | null) {
   console.log('[CALCULATE_POSITIONS] Starting for tournament:', tournamentId, 'category:', categoryId);
 
@@ -240,8 +369,8 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   }
 
   if (!finalMatch) {
-    console.log('[CALCULATE_POSITIONS] No completed final match found');
-    return false;
+    console.log('[CALCULATE_POSITIONS] No final match found, trying round_robin individual standings...');
+    return await calculateRoundRobinIndividualPositions(tournamentId, categoryId);
   }
   
   console.log('[CALCULATE_POSITIONS] Found final match with round:', finalMatch.round);

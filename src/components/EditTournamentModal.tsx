@@ -36,6 +36,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     number_of_groups: (tournament as any).number_of_groups || 4,
     knockout_stage: (tournament as any).knockout_stage || 'quarterfinals' as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals',
     registration_fee: (tournament as any).registration_fee || 0,
+    member_price: (tournament as any).member_price || 0,
+    non_member_price: (tournament as any).non_member_price || 0,
+    allow_club_payment: (tournament as any).allow_club_payment || false,
     allow_public_registration: (tournament as any).allow_public_registration || false,
     registration_deadline: (tournament as any).registration_deadline ? new Date((tournament as any).registration_deadline).toISOString().split('T')[0] : '',
     registration_redirect_url: (tournament as any).registration_redirect_url || '',
@@ -303,6 +306,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         number_of_groups: formData.number_of_groups,
         knockout_stage: formData.knockout_stage,
         registration_fee: formData.registration_fee,
+        member_price: formData.member_price || null,
+        non_member_price: formData.non_member_price || null,
+        allow_club_payment: formData.allow_club_payment,
         allow_public_registration: formData.allow_public_registration,
         registration_deadline: formData.registration_deadline ? new Date(formData.registration_deadline).toISOString() : null,
         registration_redirect_url: formData.registration_redirect_url || null,
@@ -718,7 +724,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               onChange={(e) =>
                 setFormData({
                   ...formData,
-                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender',
+                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
                 })
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -736,6 +742,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <optgroup label={t.tournament.formatOptgroupSpecial}>
                 <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
                 <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
+                <option value="mixed_american">{t.tournament.formatOption_mixed_american || 'Americano Misto Individual'}</option>
               </optgroup>
             </select>
             <p className="text-xs text-gray-500 mt-1">{t.tournament.pdfExportNote}</p>
@@ -906,6 +913,64 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             />
             <p className="text-xs text-gray-500 mt-1">
               {t.tournament.registrationFeeHelper}
+            </p>
+          </div>
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Preços no Clube</h3>
+            <p className="text-xs text-gray-500 mb-4">Defina preços diferenciados para membros e não-membros do clube</p>
+            
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para membros do clube</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Não-Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.non_member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, non_member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para não-membros</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="edit_allow_club_payment"
+                checked={formData.allow_club_payment}
+                onChange={(e) => setFormData({ ...formData, allow_club_payment: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="edit_allow_club_payment" className="text-sm font-medium text-gray-700">
+                Permitir pagamento no clube
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem escolher pagar no clube em vez de pagar online. O gestor do clube marca o pagamento na app Manager.
             </p>
           </div>
 

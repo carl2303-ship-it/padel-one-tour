@@ -38,6 +38,9 @@ export type Tournament = {
   registration_code?: string;
   registration_deadline?: string;
   registration_fee?: number;
+  member_price?: number;
+  non_member_price?: number;
+  allow_club_payment?: boolean;
   mixed_knockout?: boolean;
   club_id?: string;
   court_names?: string[];
@@ -71,6 +74,8 @@ export type TournamentCategory = {
   number_of_groups: number;
   max_teams: number;
   registration_fee?: number;
+  member_price?: number;
+  non_member_price?: number;
   knockout_stage?: 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final';
   qualified_per_group?: number;
   game_format?: '1set' | '3sets'; // Formato dos jogos: 1 set ou melhor de 3

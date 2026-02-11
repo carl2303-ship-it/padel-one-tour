@@ -121,8 +121,15 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [partnerFound, setPartnerFound] = useState(false);
   const [showRegisteredList, setShowRegisteredList] = useState(false);
   const [allRegistered, setAllRegistered] = useState<any[]>([]);
+  const [payAtClubSelected, setPayAtClubSelected] = useState(false);
 
   const isIndividualFormat = () => {
+    // Formatos que são sempre individuais
+    if (tournament.format === 'mixed_american' || 
+        tournament.format === 'crossed_playoffs' || 
+        tournament.format === 'mixed_gender') {
+      return true;
+    }
     if (formData.categoryId) {
       const category = categories.find(c => c.id === formData.categoryId);
       if (category) {
@@ -186,7 +193,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const fetchCategoryTeams = async (categoryId: string) => {
     const category = categories.find(c => c.id === categoryId);
     const isCategoryIndividual = category?.format === 'individual_groups_knockout' ||
-      (category?.format === 'round_robin' && tournament.round_robin_type === 'individual');
+      (category?.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
+      tournament.format === 'mixed_american' || tournament.format === 'crossed_playoffs' || tournament.format === 'mixed_gender';
 
     if (isCategoryIndividual) {
       const { data: players, count } = await supabase
@@ -222,7 +230,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
   const fetchTeamsCount = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
-                         tournament.format === 'individual_groups_knockout';
+                         tournament.format === 'individual_groups_knockout' ||
+                         tournament.format === 'mixed_american' || tournament.format === 'crossed_playoffs' || tournament.format === 'mixed_gender';
 
     if (isIndividual) {
       const { count } = await supabase
@@ -241,7 +250,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
   const fetchAllRegistered = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
-                         tournament.format === 'individual_groups_knockout';
+                         tournament.format === 'individual_groups_knockout' ||
+                         tournament.format === 'mixed_american' || tournament.format === 'crossed_playoffs' || tournament.format === 'mixed_gender';
 
     if (isIndividual) {
       const { data } = await supabase
@@ -558,8 +568,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
       const registrationFee = getRegistrationFee();
       const isIndividual = isIndividualFormat();
+      const canPayAtClub = tournament.allow_club_payment === true;
 
-      if (registrationFee && registrationFee > 0) {
+      if (registrationFee && registrationFee > 0 && !(canPayAtClub && payAtClubSelected)) {
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`,
           {
@@ -1249,13 +1260,67 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           )}
 
           {getRegistrationFee() > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-              <CreditCard className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-blue-900">Taxa de Inscricao</p>
-                <p className="text-2xl font-bold text-blue-600">{getRegistrationFee()}EUR</p>
-                <p className="text-xs text-blue-700 mt-1">Sera redirecionado para pagamento seguro via Stripe</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <CreditCard className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-blue-900">Taxa de Inscricao</p>
+                  {tournament.member_price || tournament.non_member_price ? (
+                    <div className="mt-1 space-y-1">
+                      {tournament.member_price !== undefined && tournament.member_price !== null && (
+                        <p className="text-sm text-blue-800">Membros: <span className="font-bold">{tournament.member_price}€</span></p>
+                      )}
+                      {tournament.non_member_price !== undefined && tournament.non_member_price !== null && (
+                        <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{tournament.non_member_price}€</span></p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-2xl font-bold text-blue-600">{getRegistrationFee()}€</p>
+                  )}
+                </div>
               </div>
+
+              {tournament.allow_club_payment && (
+                <div className="mt-4 border-t border-blue-200 pt-4">
+                  <p className="text-sm font-medium text-blue-900 mb-3">Como pretende pagar?</p>
+                  <div className="space-y-2">
+                    <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      !payAtClubSelected ? 'border-blue-400 bg-blue-100' : 'border-gray-200 bg-white hover:border-blue-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="payment_method"
+                        checked={!payAtClubSelected}
+                        onChange={() => setPayAtClubSelected(false)}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Pagar online agora</p>
+                        <p className="text-xs text-gray-500">Pagamento seguro via Stripe</p>
+                      </div>
+                    </label>
+                    <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      payAtClubSelected ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-white hover:border-green-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="payment_method"
+                        checked={payAtClubSelected}
+                        onChange={() => setPayAtClubSelected(true)}
+                        className="w-4 h-4 text-green-600"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Pagar no clube</p>
+                        <p className="text-xs text-gray-500">Pague diretamente no clube antes do torneio</p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {!tournament.allow_club_payment && (
+                <p className="text-xs text-blue-700 mt-2">Sera redirecionado para pagamento seguro via Stripe</p>
+              )}
             </div>
           )}
 
@@ -1399,7 +1464,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               {loading
                 ? t.message.saving
                 : getRegistrationFee() > 0
-                  ? `Pagar ${getRegistrationFee()}EUR`
+                  ? (payAtClubSelected ? 'Inscrever (Pagar no Clube)' : `Pagar ${getRegistrationFee()}€`)
                   : t.registration.submit
               }
             </button>

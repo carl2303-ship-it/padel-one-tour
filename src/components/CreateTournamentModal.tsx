@@ -30,6 +30,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     number_of_groups: 4,
     knockout_stage: 'quarterfinals' as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals',
     registration_fee: 0,
+    member_price: 0,
+    non_member_price: 0,
+    allow_club_payment: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -241,6 +244,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         number_of_groups: formData.number_of_groups,
         knockout_stage: formData.knockout_stage,
         registration_fee: formData.registration_fee,
+        member_price: formData.member_price || null,
+        non_member_price: formData.non_member_price || null,
+        allow_club_payment: formData.allow_club_payment,
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
         status: 'draft',
         user_id: user?.id,
@@ -655,6 +661,64 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             />
             <p className="text-xs text-gray-500 mt-1">
               {t.registration.feeHelper}
+            </p>
+          </div>
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Preços no Clube</h3>
+            <p className="text-xs text-gray-500 mb-4">Defina preços diferenciados para membros e não-membros do clube</p>
+            
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para membros do clube</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Não-Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.non_member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, non_member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para não-membros</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="allow_club_payment"
+                checked={formData.allow_club_payment}
+                onChange={(e) => setFormData({ ...formData, allow_club_payment: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="allow_club_payment" className="text-sm font-medium text-gray-700">
+                Permitir pagamento no clube
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem escolher pagar no clube em vez de pagar online. O gestor do clube marca o pagamento na app Manager.
             </p>
           </div>
 
