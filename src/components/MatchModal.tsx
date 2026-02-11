@@ -3,7 +3,7 @@ import { supabase, Team, Player, IndividualPlayer } from '../lib/supabase';
 import { X, RotateCcw } from 'lucide-react';
 import { rescheduleRemainingMatches } from '../lib/reschedule';
 import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from '../lib/leagueStandings';
-import { advanceKnockoutWinner } from '../lib/groups';
+import { advanceKnockoutWinner, populatePlacementMatches } from '../lib/groups';
 import { useI18n } from '../lib/i18nContext';
 
 async function advanceWinnerToNextRound(
@@ -782,11 +782,30 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       }
 
       if (tournament?.format === 'individual_groups_knockout' && currentMatch) {
+        const isGroupMatch = currentMatch.round.startsWith('group_');
+
+        if (isGroupMatch) {
+          const { data: tournamentMatches } = await supabase
+            .from('matches')
+            .select('id, round, status')
+            .eq('tournament_id', tournamentId);
+
+          if (tournamentMatches) {
+            const groupMatchesAll = tournamentMatches.filter(m => m.round.startsWith('group_'));
+            const allGroupsDone = groupMatchesAll.every(m => m.status === 'completed');
+
+            if (allGroupsDone) {
+              console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');
+              await populatePlacementMatches(tournamentId);
+            }
+          }
+        }
+
         const knockoutRoundsForIndividual = [
           'semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16',
           'final', '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
-          '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal'
+          '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal'
         ];
 
         if (knockoutRoundsForIndividual.includes(currentMatch.round)) {
@@ -810,9 +829,8 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         }
 
         const allFinalRounds = [
-          'final', '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
+          'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
-          // Playoffs cruzados
           'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place'
         ];
 
@@ -820,8 +838,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
           console.log('[MATCH_MODAL] Knockout match completed, calculating positions');
           await calculateIndividualFinalPositions(tournamentId, currentMatch.category_id);
         }
-        
-        // Também calcular se for qualquer jogo de playoffs cruzados R3
+
         if (currentMatch.round?.startsWith('crossed_r3_')) {
           console.log('[MATCH_MODAL] Crossed playoff R3 match completed, calculating all positions');
           await calculateIndividualFinalPositions(tournamentId, null);

@@ -467,23 +467,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         console.log('[STANDINGS-INDIVIDUAL-GROUPS] Grouped stats:', groupedStatsMap.size, 'groups');
         setGroupedTeams(groupedStatsMap as any);
 
-        // Calculate individual final rankings from knockout matches
-        const knockoutMatches = matches.filter(m => 
-          m.round?.startsWith('mixed_') || 
-          m.round?.startsWith('crossed_') ||
-          m.round === 'semifinal' || 
-          m.round === 'final' || 
-          m.round === '3rd_place'
-        );
-
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Knockout matches found:', knockoutMatches.length);
-
-        // Create a map of player stats from groups + player order (for tiebreaker)
-        const playerOrder = new Map<string, number>();
-        playersData.forEach((player, index) => {
-          playerOrder.set(player.id, index);
-        });
-
         const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
         groupedStatsMap.forEach((groupPlayers) => {
           groupPlayers.forEach(player => {
@@ -494,6 +477,72 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               gamesLost: player.gamesLost
             });
           });
+        });
+
+        const playersWithDbPosition = playersData.filter(p => p.final_position);
+        if (playersWithDbPosition.length > 0) {
+          const individualRankings: IndividualFinalRanking[] = [];
+          playersWithDbPosition
+            .sort((a, b) => (a.final_position || 999) - (b.final_position || 999))
+            .forEach(player => {
+              const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              individualRankings.push({
+                position: player.final_position!,
+                player: { id: player.id, name: player.name },
+                groupStats: stats,
+                status: 'confirmed'
+              });
+            });
+
+          const rankedIds = new Set(playersWithDbPosition.map(p => p.id));
+          const unrankedPlayers = playersData
+            .filter(p => !rankedIds.has(p.id))
+            .sort((a, b) => {
+              const statsA = globalPlayerStats.get(a.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              const statsB = globalPlayerStats.get(b.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
+              const diffA = statsA.gamesWon - statsA.gamesLost;
+              const diffB = statsB.gamesWon - statsB.gamesLost;
+              return diffB - diffA;
+            });
+
+          const maxPos = Math.max(...individualRankings.map(r => r.position));
+          unrankedPlayers.forEach((player, idx) => {
+            const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+            individualRankings.push({
+              position: maxPos + 1 + idx,
+              player: { id: player.id, name: player.name },
+              groupStats: stats,
+              status: 'pending'
+            });
+          });
+
+          individualRankings.sort((a, b) => a.position - b.position);
+          console.log('[STANDINGS-INDIVIDUAL-GROUPS] Final rankings (from DB):', individualRankings.length);
+          setIndividualFinalRankings(individualRankings);
+          setKnockoutRankings([]);
+          setLoading(false);
+          return;
+        }
+
+        // Calculate individual final rankings from knockout matches
+        const knockoutMatches = matches.filter(m =>
+          m.round?.startsWith('mixed_') ||
+          m.round?.startsWith('crossed_') ||
+          m.round === 'semifinal' ||
+          m.round === 'final' ||
+          m.round === '3rd_place' ||
+          m.round === '5th_place' ||
+          m.round === '7th_place' ||
+          m.round === '9th_place' ||
+          m.round === '11th_place'
+        );
+
+        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Knockout matches found:', knockoutMatches.length);
+
+        const playerOrder = new Map<string, number>();
+        playersData.forEach((player, index) => {
+          playerOrder.set(player.id, index);
         });
 
         // Helper function to get head-to-head result between two players
@@ -678,6 +727,46 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                 rankedPlayerIds.add(player.id);
               }
             });
+          }
+
+          const placementRounds = ['5th_place', '7th_place', '9th_place', '11th_place'];
+          for (const roundName of placementRounds) {
+            const placementMatch = knockoutMatches.find(m => m.round === roundName);
+            if (placementMatch && placementMatch.status === 'completed') {
+              const t1G = (placementMatch.team1_score_set1 || 0) + (placementMatch.team1_score_set2 || 0) + (placementMatch.team1_score_set3 || 0);
+              const t2G = (placementMatch.team2_score_set1 || 0) + (placementMatch.team2_score_set2 || 0) + (placementMatch.team2_score_set3 || 0);
+              const t1W = t1G > t2G;
+              const wIds = t1W
+                ? [(placementMatch as any).player1_individual_id, (placementMatch as any).player2_individual_id].filter(Boolean)
+                : [(placementMatch as any).player3_individual_id, (placementMatch as any).player4_individual_id].filter(Boolean);
+              const lIds = t1W
+                ? [(placementMatch as any).player3_individual_id, (placementMatch as any).player4_individual_id].filter(Boolean)
+                : [(placementMatch as any).player1_individual_id, (placementMatch as any).player2_individual_id].filter(Boolean);
+
+              let nPos = individualRankings.length + 1;
+              const wStats = wIds.filter(id => !rankedPlayerIds.has(id)).map(id => ({
+                id, name: playersData.find(p => p.id === id)?.name || '',
+                stats: globalPlayerStats.get(id) || { wins: 0, gamesWon: 0, gamesLost: 0 }
+              }));
+              sortPlayers(wStats).forEach(player => {
+                const pd = playersData.find(p => p.id === player.id);
+                if (pd) {
+                  individualRankings.push({ position: nPos++, player: { id: pd.id, name: pd.name }, groupStats: player.stats, status: 'confirmed' });
+                  rankedPlayerIds.add(player.id);
+                }
+              });
+              const lStats = lIds.filter(id => !rankedPlayerIds.has(id)).map(id => ({
+                id, name: playersData.find(p => p.id === id)?.name || '',
+                stats: globalPlayerStats.get(id) || { wins: 0, gamesWon: 0, gamesLost: 0 }
+              }));
+              sortPlayers(lStats).forEach(player => {
+                const pd = playersData.find(p => p.id === player.id);
+                if (pd) {
+                  individualRankings.push({ position: nPos++, player: { id: pd.id, name: pd.name }, groupStats: player.stats, status: 'confirmed' });
+                  rankedPlayerIds.add(player.id);
+                }
+              });
+            }
           }
         }
 
