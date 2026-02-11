@@ -367,7 +367,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     if (selectedCategory && selectedCategory !== 'no-category') {
       const category = categories.find(c => c.id === selectedCategory);
       if (category) {
-        if (category.format === 'individual_groups_knockout') {
+        if (category.format === 'individual_groups_knockout' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender' || category.format === 'mixed_american') {
           return true;
         }
         if (category.format === 'round_robin') {
@@ -3163,9 +3163,85 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
         
-        console.log(`[SCHEDULE] MIXED AMERICAN: Generated ${matchesToInsert.length} matches total`);
-        
-      } else if (currentTournament.format === 'individual_groups_knockout' || 
+        console.log(`[SCHEDULE] MIXED AMERICAN: Generated ${matchesToInsert.length} group matches`);
+
+        const lastMatchTime = new Date(currentTime);
+        let knockoutTime = new Date(lastMatchTime.getTime() + matchDuration * 60000);
+        const knockoutEndOfDay = new Date(`${startDate}T${endTime}:00`);
+        knockoutEndOfDay.setDate(knockoutTime.getDate());
+
+        const advanceKnockoutTime = () => {
+          knockoutTime = new Date(knockoutTime.getTime() + matchDuration * 60000);
+          if (knockoutTime >= knockoutEndOfDay) {
+            knockoutTime.setDate(knockoutTime.getDate() + 1);
+            knockoutTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+            knockoutEndOfDay.setDate(knockoutTime.getDate());
+          }
+        };
+
+        let knockoutMatchNumber = matchesToInsert.length + 1;
+
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: 'semifinal',
+          match_number: knockoutMatchNumber++,
+          player1_individual_id: null,
+          player2_individual_id: null,
+          player3_individual_id: null,
+          player4_individual_id: null,
+          scheduled_time: knockoutTime.toISOString(),
+          court: '1',
+          status: 'scheduled'
+        });
+
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: 'semifinal',
+          match_number: knockoutMatchNumber++,
+          player1_individual_id: null,
+          player2_individual_id: null,
+          player3_individual_id: null,
+          player4_individual_id: null,
+          scheduled_time: knockoutTime.toISOString(),
+          court: '2',
+          status: 'scheduled'
+        });
+
+        advanceKnockoutTime();
+
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: '3rd_place',
+          match_number: knockoutMatchNumber++,
+          player1_individual_id: null,
+          player2_individual_id: null,
+          player3_individual_id: null,
+          player4_individual_id: null,
+          scheduled_time: knockoutTime.toISOString(),
+          court: '1',
+          status: 'scheduled'
+        });
+
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: 'final',
+          match_number: knockoutMatchNumber++,
+          player1_individual_id: null,
+          player2_individual_id: null,
+          player3_individual_id: null,
+          player4_individual_id: null,
+          scheduled_time: knockoutTime.toISOString(),
+          court: '2',
+          status: 'scheduled'
+        });
+
+        console.log(`[SCHEDULE] MIXED AMERICAN: Added 4 knockout matches (2 SF + 3rd + Final). Total: ${matchesToInsert.length}`);
+
+      } else if (currentTournament.format === 'individual_groups_knockout' ||
                  currentTournament.format === 'crossed_playoffs' ||
                  currentTournament.format === 'mixed_gender') {
         // Americano COM grupos + eliminatórias (inclui crossed_playoffs e mixed_gender)
@@ -3377,10 +3453,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           console.log(`[SCHEDULE] Crossed Playoffs: Added 8 playoff matches (R1:3 + R2:3 + R3:2) with TBD. Total matches: ${matchesToInsert.length}`);
           
         } else {
-          // Formato normal: usar scheduler completo
           const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
           const numberOfGroups = groupNames.length || Math.min(Math.floor(individualPlayers.length / 4), 4);
-          
+
+          const categoryKnockoutStage = categories.length > 0
+            ? ((categories[0] as any).knockout_stage || 'semifinals')
+            : 'semifinals';
+
           const individualMatches = generateIndividualGroupsKnockoutSchedule(
             individualPlayers,
             numberOfGroups,
@@ -3389,11 +3468,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             startTime,
             endTime,
             matchDuration,
-            2, // qualified per group
-            numberOfGroups >= 4 ? 'quarterfinals' : 'semifinals'
+            2,
+            'semifinals'
           );
-          
-          matchesToInsert = individualMatches.map(m => ({
+
+          const groupOnlyMatches = individualMatches.filter(m =>
+            m.round.startsWith('group_') || m.round === 'group_stage'
+          );
+
+          matchesToInsert = groupOnlyMatches.map(m => ({
             tournament_id: currentTournament.id,
             round: m.round,
             match_number: m.match_number,
@@ -3405,6 +3488,56 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             court: m.court,
             status: 'scheduled'
           }));
+
+          const lastTime = groupOnlyMatches.length > 0
+            ? new Date(groupOnlyMatches[groupOnlyMatches.length - 1].scheduled_time)
+            : new Date(`${startDate}T${startTime}:00`);
+
+          let koTime = new Date(lastTime.getTime() + matchDuration * 60000);
+          const koEndOfDay = new Date(`${startDate}T${endTime}:00`);
+          koEndOfDay.setDate(koTime.getDate());
+
+          const advanceKoTime = () => {
+            koTime = new Date(koTime.getTime() + matchDuration * 60000);
+            if (koTime >= koEndOfDay) {
+              koTime.setDate(koTime.getDate() + 1);
+              koTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
+              koEndOfDay.setDate(koTime.getDate());
+            }
+          };
+
+          let koMatchNum = matchesToInsert.length + 1;
+          const addKoMatch = (round: string, court: string) => {
+            matchesToInsert.push({
+              tournament_id: currentTournament.id,
+              category_id: categories.length === 1 ? categories[0].id : null,
+              round,
+              match_number: koMatchNum++,
+              player1_individual_id: null,
+              player2_individual_id: null,
+              player3_individual_id: null,
+              player4_individual_id: null,
+              scheduled_time: koTime.toISOString(),
+              court,
+              status: 'scheduled'
+            });
+          };
+
+          if (categoryKnockoutStage === 'quarterfinals') {
+            for (let i = 0; i < 4; i++) {
+              addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
+            }
+            advanceKoTime();
+          }
+
+          addKoMatch('semifinal', '1');
+          addKoMatch('semifinal', '2');
+          advanceKoTime();
+
+          addKoMatch('3rd_place', '1');
+          addKoMatch('final', '2');
+
+          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}). Total: ${matchesToInsert.length}`);
         }
         
       } else if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'teams') {
@@ -3473,7 +3606,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             
             console.log(`[SCHEDULE] Category ${category.name}: ${categoryTeams.length} teams`);
             
-            // Gerar os jogos desta categoria
+            const catKnockoutStage = (category as any).knockout_stage || 'semifinals';
             const categoryMatches = generateTournamentSchedule(
               categoryTeams,
               numberOfCourts,
@@ -3483,7 +3616,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               endTime,
               matchDuration,
               false,
-              dailySchedules
+              dailySchedules,
+              catKnockoutStage
             );
             
             categoryMatches.forEach(m => {
@@ -3598,8 +3732,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} matches across ${Math.ceil(matchesToInsert.length / numberOfCourts)} time slots`);
         } else {
-          // Sem categorias ou round_robin puro - gerar quadro único
           console.log('[SCHEDULE] Generating single bracket for all teams');
+          const tournamentKnockoutStage = (currentTournament as any).knockout_stage || 'semifinals';
           const teamMatches = generateTournamentSchedule(
             teams,
             numberOfCourts,
@@ -3608,8 +3742,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             startTime,
             endTime,
             matchDuration,
-            false, // skipLaterRounds - queremos todas as rondas
-            dailySchedules
+            false,
+            dailySchedules,
+            tournamentKnockoutStage
           );
           
           matchesToInsert = teamMatches.map(m => {

@@ -718,7 +718,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               onChange={(e) =>
                 setFormData({
                   ...formData,
-                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender',
+                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
                 })
               }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -736,6 +736,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <optgroup label={t.tournament.formatOptgroupSpecial}>
                 <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
                 <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
+                <option value="mixed_american">{t.tournament.formatOption_mixed_american}</option>
               </optgroup>
             </select>
             <p className="text-xs text-gray-500 mt-1">{t.tournament.pdfExportNote}</p>

@@ -97,11 +97,12 @@ export default function AddIndividualPlayerModal({
 
     if (data) {
       // Filtrar apenas categorias com formatos individuais
-      const individualCategories = data.filter(cat => 
-        cat.format === 'round_robin' || 
+      const individualCategories = data.filter(cat =>
+        cat.format === 'round_robin' ||
         cat.format === 'individual_groups_knockout' ||
         cat.format === 'crossed_playoffs' ||
-        cat.format === 'mixed_gender'
+        cat.format === 'mixed_gender' ||
+        cat.format === 'mixed_american'
       );
       setCategories(individualCategories);
     }

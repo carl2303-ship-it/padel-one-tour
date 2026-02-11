@@ -165,18 +165,19 @@ export function generateTournamentSchedule(
   dailyStartTime: string = '09:00',
   dailyEndTime: string = '21:00',
   matchDurationMinutes: number = 90,
-  skipLaterRounds: boolean = false,
-  dailySchedules: DailySchedule[] = []
+  skipLaterRounds: any = false,
+  dailySchedules: DailySchedule[] = [],
+  knockoutStage: string = 'semifinals'
 ): ScheduledMatch[] {
   const sortedTeams = [...teams].sort((a, b) => (a.seed || 0) - (b.seed || 0));
   const matches: ScheduledMatch[] = [];
 
   if (format === 'single_elimination') {
-    return generateSingleEliminationSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, skipLaterRounds, dailySchedules);
+    return generateSingleEliminationSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, !!skipLaterRounds, dailySchedules);
   } else if (format === 'round_robin') {
     return generateRoundRobinSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules);
   } else if (format === 'groups_knockout') {
-    return generateGroupStageSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules);
+    return generateGroupStageSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules, knockoutStage);
   }
 
   return matches;
@@ -383,7 +384,8 @@ function generateGroupStageSchedule(
   startTime: string,
   endTime: string,
   matchDurationMinutes: number,
-  dailySchedules: DailySchedule[] = []
+  dailySchedules: DailySchedule[] = [],
+  knockoutStage: string = 'semifinals'
 ): ScheduledMatch[] {
   console.log('[GROUP STAGE] Starting group stage scheduling for', teams.length, 'teams');
 
@@ -575,63 +577,46 @@ function generateGroupStageSchedule(
 
   console.log('[GROUP STAGE V4] ✅ COMPLETE! Total group matches scheduled:', scheduledMatches.length);
   
-  // ============================================================================
-  // ADD KNOCKOUT STAGE MATCHES (semifinals, final, 3rd place)
-  // ============================================================================
-  console.log('[GROUP STAGE V4] Adding knockout stage matches...');
-  
-  // Calculate time for knockout matches (after all group matches)
-  const lastGroupMatchTime = scheduledMatches.length > 0 
+  console.log('[GROUP STAGE V4] Adding knockout stage matches for stage:', knockoutStage);
+
+  const lastGroupMatchTime = scheduledMatches.length > 0
     ? new Date(scheduledMatches[scheduledMatches.length - 1].scheduled_time)
     : new Date(`${startDate}T${startTime}:00`);
-  
-  // Add match duration to get start time for knockout stage
+
   let knockoutTime = new Date(lastGroupMatchTime.getTime() + matchDurationMinutes * 60000);
-  
-  // Semifinals (2 matches)
-  scheduledMatches.push({
-    round: 'semifinal',
-    match_number: globalMatchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: knockoutTime.toISOString(),
-    court: '1'
-  });
-  
-  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
-  scheduledMatches.push({
-    round: 'semifinal',
-    match_number: globalMatchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: knockoutTime.toISOString(),
-    court: '1'
-  });
-  
-  // 3rd place match
-  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
-  scheduledMatches.push({
-    round: '3rd_place',
-    match_number: globalMatchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: knockoutTime.toISOString(),
-    court: '1'
-  });
-  
-  // Final
-  knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
-  scheduledMatches.push({
-    round: 'final',
-    match_number: globalMatchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: knockoutTime.toISOString(),
-    court: '1'
-  });
-  
-  console.log('[GROUP STAGE V4] ✅ Added 4 knockout matches (2 semifinals, 3rd place, final)');
-  console.log('[GROUP STAGE V4] ✅ TOTAL matches (group + knockout):', scheduledMatches.length);
+
+  const addKnockoutMatch = (round: string, court: string) => {
+    scheduledMatches.push({
+      round,
+      match_number: globalMatchNumber++,
+      team1_id: null,
+      team2_id: null,
+      scheduled_time: knockoutTime.toISOString(),
+      court
+    });
+  };
+
+  const advanceTime = () => {
+    knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
+  };
+
+  if (knockoutStage === 'quarterfinals') {
+    for (let i = 0; i < 4; i++) {
+      addKnockoutMatch('quarterfinal', ((i % Math.min(numberOfCourts, 4)) + 1).toString());
+    }
+    advanceTime();
+  }
+
+  addKnockoutMatch('semifinal', '1');
+  addKnockoutMatch('semifinal', '2');
+  advanceTime();
+
+  addKnockoutMatch('3rd_place', '1');
+  addKnockoutMatch('final', '2');
+
+  const knockoutCount = scheduledMatches.length - (scheduledMatches.length - (knockoutStage === 'quarterfinals' ? 8 : 4));
+  console.log(`[GROUP STAGE V4] Added ${knockoutCount} knockout matches (stage: ${knockoutStage})`);
+  console.log('[GROUP STAGE V4] TOTAL matches (group + knockout):', scheduledMatches.length);
   
   return scheduledMatches;
 }

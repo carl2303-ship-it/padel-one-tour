@@ -126,7 +126,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     if (formData.categoryId) {
       const category = categories.find(c => c.id === formData.categoryId);
       if (category) {
-        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american') {
+        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender') {
           return true;
         }
         if (category.format === 'round_robin') {
@@ -137,7 +137,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     }
     return (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
            tournament.format === 'individual_groups_knockout' ||
-           tournament.format === 'mixed_american';
+           tournament.format === 'mixed_american' ||
+           tournament.format === 'crossed_playoffs' ||
+           tournament.format === 'mixed_gender';
   };
 
   useEffect(() => {
@@ -188,6 +190,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     const category = categories.find(c => c.id === categoryId);
     const isCategoryIndividual = category?.format === 'individual_groups_knockout' ||
       category?.format === 'mixed_american' ||
+      category?.format === 'crossed_playoffs' ||
+      category?.format === 'mixed_gender' ||
       (category?.format === 'round_robin' && tournament.round_robin_type === 'individual');
 
     if (isCategoryIndividual) {
@@ -225,7 +229,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const fetchTeamsCount = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
                          tournament.format === 'individual_groups_knockout' ||
-                         tournament.format === 'mixed_american';
+                         tournament.format === 'mixed_american' ||
+                         tournament.format === 'crossed_playoffs' ||
+                         tournament.format === 'mixed_gender';
 
     if (isIndividual) {
       const { count } = await supabase
@@ -245,7 +251,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const fetchAllRegistered = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
                          tournament.format === 'individual_groups_knockout' ||
-                         tournament.format === 'mixed_american';
+                         tournament.format === 'mixed_american' ||
+                         tournament.format === 'crossed_playoffs' ||
+                         tournament.format === 'mixed_gender';
 
     if (isIndividual) {
       const { data } = await supabase
