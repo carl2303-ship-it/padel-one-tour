@@ -1010,7 +1010,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         );
         setMatches(sortedMatches);
 
-        if (currentTournament?.format === 'individual_groups_knockout') {
+        if (currentTournament?.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
