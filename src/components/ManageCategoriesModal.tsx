@@ -157,6 +157,10 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
+      await supabase.from('players').update({ category_id: null }).eq('category_id', categoryId);
+      await supabase.from('teams').update({ category_id: null }).eq('category_id', categoryId);
+      await supabase.from('matches').update({ category_id: null }).eq('category_id', categoryId);
+
       const { error } = await supabase
         .from('tournament_categories')
         .delete()

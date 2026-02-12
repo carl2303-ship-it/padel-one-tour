@@ -251,7 +251,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   }, [showGroupDropdown]);
 
   const isIndividualRoundRobin = currentTournament?.format === 'round_robin' && currentTournament?.round_robin_type === 'individual';
-  const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout';
+  const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout' ||
+    currentTournament?.format === 'crossed_playoffs' ||
+    currentTournament?.format === 'mixed_gender' ||
+    currentTournament?.format === 'mixed_american';
   const isSuperTeams = currentTournament?.format === 'super_teams';
 
   // Early return if tournament is not loaded
