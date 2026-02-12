@@ -251,7 +251,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   }, [showGroupDropdown]);
 
   const isIndividualRoundRobin = currentTournament?.format === 'round_robin' && currentTournament?.round_robin_type === 'individual';
-  const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout';
+  const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout' ||
+    currentTournament?.format === 'crossed_playoffs' ||
+    currentTournament?.format === 'mixed_gender' ||
+    currentTournament?.format === 'mixed_american';
   const isSuperTeams = currentTournament?.format === 'super_teams';
 
   // Early return if tournament is not loaded
@@ -1007,7 +1010,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         );
         setMatches(sortedMatches);
 
-        if (currentTournament?.format === 'individual_groups_knockout') {
+        if (currentTournament?.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
