@@ -263,40 +263,26 @@ export default function LiveTournamentView() {
     fetchTournamentData();
 
     const channel = supabase
-      .channel('live-tv-matches')
+      .channel(`live-tv-${tournamentId}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'matches',
         filter: `tournament_id=eq.${tournamentId}`
-      }, (payload: any) => {
-        const { eventType, new: newRec, old: oldRec } = payload;
-        setLastUpdate(new Date());
-
-        if (eventType === 'INSERT' && newRec) {
-          setMatches(prev => [...prev, newRec as Match].sort((a, b) => a.match_number - b.match_number));
-        } else if (eventType === 'UPDATE' && newRec) {
-          setRecentlyUpdatedId(newRec.id);
-          setTimeout(() => setRecentlyUpdatedId(null), 5000);
-          setMatches(prev => {
-            const updated = prev.map(m => m.id === newRec.id ? { ...m, ...newRec } : m);
-            setStandings(calculateStandings(updated, teams, players));
-            return updated;
-          });
-        } else if (eventType === 'DELETE' && oldRec) {
-          setMatches(prev => prev.filter(m => m.id !== oldRec.id));
-        }
+      }, () => {
+        fetchTournamentData();
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [tournamentId]);
+    const pollInterval = setInterval(() => {
+      fetchTournamentData();
+    }, 15000);
 
-  useEffect(() => {
-    if (matches.length > 0 && (teams.length > 0 || players.length > 0)) {
-      setStandings(calculateStandings(matches, teams, players));
-    }
-  }, [teams, players]);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+    };
+  }, [tournamentId, fetchTournamentData]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
