@@ -312,7 +312,7 @@ export default function PlayerDashboard() {
       .from('tournaments')
       .select('id, name, start_date, end_date, status')
       .gte('end_date', today)
-      .in('status', ['draft', 'active'])
+      .eq('status', 'active') // Apenas ativos, não rascunho
       .order('start_date', { ascending: true })
       .limit(20);
     const open = (openData || []).filter((t: any) => !enrolledIds.has(t.id));
@@ -1075,7 +1075,7 @@ export default function PlayerDashboard() {
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              {t.playerDashboard.upcoming} ({upcomingTournaments.length + openTournaments.length})
+              {t.playerDashboard.upcoming} ({upcomingTournaments.length})
             </button>
             <button
               onClick={() => setActiveTab('past')}
@@ -1093,88 +1093,50 @@ export default function PlayerDashboard() {
         <div className="divide-y divide-gray-100">
           {activeTab === 'upcoming' && (
             <>
-              {upcomingTournaments.length === 0 && openTournaments.length === 0 ? (
+              {upcomingTournaments.length === 0 ? (
                 <div className="p-8 text-center">
                   <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500">{t.playerDashboard.noUpcomingTournaments}</p>
                   <p className="text-sm text-gray-400 mt-1">{t.playerDashboard.registerToStart}</p>
                 </div>
               ) : (
-                <>
-                  {upcomingTournaments.length > 0 && (
-                    <div className="p-4 bg-green-50/50 border-b border-gray-100">
-                      <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        {t.playerDashboard.enrolledSection}
-                      </h3>
-                      <div className="space-y-2">
-                        {upcomingTournaments.map((tournament) => (
-                          <div key={tournament.id} className="p-3 bg-white rounded-lg hover:bg-gray-50 transition-colors">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
-                                <div className="flex items-center gap-4 mt-1">
-                                  <span className="text-sm text-gray-500 flex items-center gap-1">
-                                    <Calendar className="w-4 h-4" />
-                                    {formatDate(tournament.start_date)}
-                                  </span>
-                                  {tournament.enrolled_count !== undefined && (
-                                    <span className="text-sm text-blue-600 flex items-center gap-1">
-                                      <Users className="w-4 h-4" />
-                                      {tournament.enrolled_count} {t.playerDashboard.enrolled}
-                                    </span>
-                                  )}
-                                  {tournament.status === 'in_progress' && (
-                                    <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
-                                      {t.playerDashboard.inProgress}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              <a
-                                href={`/?register=${tournament.id}&enrolled=1`}
-                                className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
-                              >
-                                <Users className="w-4 h-4" />
-                                {t.playerDashboard.viewEnrolledByCategory}
-                              </a>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {openTournaments.length > 0 && (
-                    <div className="p-4">
-                      <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
-                        {t.playerDashboard.openSection}
-                      </h3>
-                      <div className="space-y-2">
-                        {openTournaments.map((tournament) => (
-                          <div key={tournament.id} className="p-3 hover:bg-gray-50 rounded-lg transition-colors">
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
-                                <span className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                  <Calendar className="w-4 h-4" />
-                                  {formatDate(tournament.start_date)}
+                <div className="p-4">
+                  <div className="space-y-2">
+                    {upcomingTournaments.map((tournament) => (
+                      <div key={tournament.id} className="p-3 bg-white rounded-lg hover:bg-gray-50 transition-colors">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
+                            <div className="flex items-center gap-4 mt-1">
+                              <span className="text-sm text-gray-500 flex items-center gap-1">
+                                <Calendar className="w-4 h-4" />
+                                {formatDate(tournament.start_date)}
+                              </span>
+                              {tournament.enrolled_count !== undefined && (
+                                <span className="text-sm text-blue-600 flex items-center gap-1">
+                                  <Users className="w-4 h-4" />
+                                  {tournament.enrolled_count} {t.playerDashboard.enrolled}
                                 </span>
-                              </div>
-                              <a
-                                href={`/?register=${tournament.id}`}
-                                className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
-                              >
-                                {t.playerDashboard.registrationLink}
-                                <ExternalLink className="w-4 h-4" />
-                              </a>
+                              )}
+                              {tournament.status === 'in_progress' && (
+                                <span className="text-xs font-medium text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                                  {t.playerDashboard.inProgress}
+                                </span>
+                              )}
                             </div>
                           </div>
-                        ))}
+                          <a
+                            href={`/?register=${tournament.id}&enrolled=1`}
+                            className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
+                          >
+                            <Users className="w-4 h-4" />
+                            {t.playerDashboard.viewEnrolledByCategory}
+                          </a>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </>
+                    ))}
+                  </div>
+                </div>
               )}
             </>
           )}
@@ -1205,7 +1167,7 @@ export default function PlayerDashboard() {
                           )}
                         </div>
                       </div>
-                      <div className="ml-4 flex items-center gap-2">
+                      <div className="ml-4">
                         <button
                           onClick={() => viewTournamentStandings(tournament.id)}
                           className="px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
@@ -1213,13 +1175,6 @@ export default function PlayerDashboard() {
                           <Trophy className="w-4 h-4" />
                           {t.playerDashboard.viewStandings}
                         </button>
-                        <a
-                          href={`/tournament/${tournament.id}/live`}
-                          className="px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
-                        >
-                          {t.playerDashboard.viewTournament || 'Ver torneio'}
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
                       </div>
                     </div>
                   </div>
@@ -1229,6 +1184,45 @@ export default function PlayerDashboard() {
           )}
         </div>
       </div>
+
+      {/* Torneios Disponíveis */}
+      {openTournaments.filter(t => t.status === 'active').length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-5 border-b border-gray-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <Target className="w-5 h-5 text-green-600" />
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">Torneios Disponíveis</h2>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {openTournaments
+              .filter(t => t.status === 'active')
+              .slice(0, 5)
+              .map((tournament) => (
+                <div key={tournament.id} className="p-4 hover:bg-gray-50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-gray-900">{tournament.name}</h4>
+                      <span className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                        <Calendar className="w-4 h-4" />
+                        {formatDate(tournament.start_date)}
+                      </span>
+                    </div>
+                    <a
+                      href={`/?register=${tournament.id}`}
+                      className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
+                    >
+                      {t.playerDashboard.registrationLink}
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6">
         {recentMatches.length > 0 && (
