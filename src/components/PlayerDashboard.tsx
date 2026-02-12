@@ -572,31 +572,90 @@ export default function PlayerDashboard() {
   };
 
   const viewTournamentPlayers = async (tournamentId: string) => {
-    const { data: teams } = await supabase
-      .from('teams')
-      .select('id, name, player1_id, player2_id, players!teams_player1_id_fkey(name), players_teams_player2_id_fkey:players!teams_player2_id_fkey(name)')
+    // Buscar categorias do torneio
+    const { data: categories } = await supabase
+      .from('tournament_categories')
+      .select('id, name')
       .eq('tournament_id', tournamentId)
       .order('name');
 
-    if (teams && teams.length > 0) {
-      const allEnrolled = teams.map((t: any) => ({
-        type: 'team',
-        name: t.name,
-        player1: t.players?.name,
-        player2: t.players_teams_player2_id_fkey?.name
-      }));
-      setEnrolledPlayers(allEnrolled);
+    const allEnrolled: any[] = [];
+
+    if (categories && categories.length > 0) {
+      // Organizar por categoria
+      for (const category of categories) {
+        const { data: teams } = await supabase
+          .from('teams')
+          .select('id, name, player1_id, player2_id, players!teams_player1_id_fkey(name), players_teams_player2_id_fkey:players!teams_player2_id_fkey(name)')
+          .eq('tournament_id', tournamentId)
+          .eq('category_id', category.id)
+          .order('name');
+
+        if (teams && teams.length > 0) {
+          teams.forEach((t: any) => {
+            allEnrolled.push({
+              type: 'team',
+              name: t.name,
+              player1: t.players?.name,
+              player2: t.players_teams_player2_id_fkey?.name,
+              category: category.name
+            });
+          });
+        } else {
+          const { data: players } = await supabase
+            .from('players')
+            .select('id, name')
+            .eq('tournament_id', tournamentId)
+            .eq('category_id', category.id)
+            .order('name');
+
+          if (players && players.length > 0) {
+            players.forEach((p: any) => {
+              allEnrolled.push({
+                type: 'individual',
+                name: p.name,
+                category: category.name
+              });
+            });
+          }
+        }
+      }
     } else {
-      const { data: players } = await supabase
-        .from('players')
-        .select('id, name')
+      // Sem categorias, buscar todos
+      const { data: teams } = await supabase
+        .from('teams')
+        .select('id, name, player1_id, player2_id, players!teams_player1_id_fkey(name), players_teams_player2_id_fkey:players!teams_player2_id_fkey(name)')
         .eq('tournament_id', tournamentId)
         .order('name');
 
-      const allEnrolled = (players || []).map(p => ({ type: 'individual', name: p.name }));
-      setEnrolledPlayers(allEnrolled);
+      if (teams && teams.length > 0) {
+        teams.forEach((t: any) => {
+          allEnrolled.push({
+            type: 'team',
+            name: t.name,
+            player1: t.players?.name,
+            player2: t.players_teams_player2_id_fkey?.name
+          });
+        });
+      } else {
+        const { data: players } = await supabase
+          .from('players')
+          .select('id, name')
+          .eq('tournament_id', tournamentId)
+          .order('name');
+
+        if (players && players.length > 0) {
+          players.forEach((p: any) => {
+            allEnrolled.push({
+              type: 'individual',
+              name: p.name
+            });
+          });
+        }
+      }
     }
 
+    setEnrolledPlayers(allEnrolled);
     setViewingTournamentId(tournamentId);
   };
 
@@ -1125,13 +1184,13 @@ export default function PlayerDashboard() {
                               )}
                             </div>
                           </div>
-                          <a
-                            href={`/?register=${tournament.id}&enrolled=1`}
+                          <button
+                            onClick={() => viewTournamentPlayers(tournament.id)}
                             className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
                           >
                             <Users className="w-4 h-4" />
                             {t.playerDashboard.viewEnrolledByCategory}
-                          </a>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1361,37 +1420,56 @@ export default function PlayerDashboard() {
                   <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500">{t.playerDashboard.noPlayersEnrolled}</p>
                 </div>
-              ) : (
-                <div className="divide-y divide-gray-100">
-                  {enrolledPlayers.map((enrolled, index) => (
-                    <div key={index} className="p-4 hover:bg-gray-50">
-                      {enrolled.type === 'individual' ? (
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                            <Users className="w-5 h-5 text-blue-600" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{enrolled.name}</p>
-                            <p className="text-xs text-gray-500">{t.playerDashboard.individual}</p>
-                          </div>
+              ) : (() => {
+                // Agrupar por categoria
+                const groupedByCategory = enrolledPlayers.reduce((acc: Record<string, any[]>, enrolled) => {
+                  const category = enrolled.category || 'Geral';
+                  if (!acc[category]) acc[category] = [];
+                  acc[category].push(enrolled);
+                  return acc;
+                }, {});
+
+                return (
+                  <div>
+                    {Object.entries(groupedByCategory).map(([category, players]) => (
+                      <div key={category} className="border-b border-gray-100 last:border-b-0">
+                        <div className="p-3 bg-gray-50 border-b border-gray-100">
+                          <h3 className="text-sm font-semibold text-gray-700">{category}</h3>
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                            <Users className="w-5 h-5 text-green-600" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-gray-900">{enrolled.name}</p>
-                            <p className="text-xs text-gray-500">
-                              {enrolled.player1} {enrolled.player2 && `/ ${enrolled.player2}`}
-                            </p>
-                          </div>
+                        <div className="divide-y divide-gray-100">
+                          {players.map((enrolled, index) => (
+                            <div key={index} className="p-4 hover:bg-gray-50">
+                              {enrolled.type === 'individual' ? (
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <Users className="w-5 h-5 text-blue-600" />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium text-gray-900">{enrolled.name}</p>
+                                    <p className="text-xs text-gray-500">{t.playerDashboard.individual}</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                                    <Users className="w-5 h-5 text-green-600" />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium text-gray-900">{enrolled.name}</p>
+                                    <p className="text-xs text-gray-500">
+                                      {enrolled.player1} {enrolled.player2 && `/ ${enrolled.player2}`}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
