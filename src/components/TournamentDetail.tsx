@@ -13,6 +13,7 @@ import BracketView from './BracketView';
 import ManageCategoriesModal from './ManageCategoriesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
+import { processAllUnratedMatches } from '../lib/ratingEngine';
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
@@ -3956,11 +3957,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       console.log('[FINALIZE] Updating league standings...');
       await updateLeagueStandings(tournament.id);
 
-      // 4. Refresh data
+      // 4. Process ratings for all unprocessed matches in this tournament
+      console.log('[FINALIZE] Processing player ratings...');
+      try {
+        const ratingResult = await processAllUnratedMatches();
+        console.log('[FINALIZE] Rating processing result:', ratingResult);
+      } catch (ratingErr) {
+        console.error('[FINALIZE] Error processing ratings:', ratingErr);
+        // Não bloquear a finalização se o rating falhar
+      }
+
+      // 5. Refresh data
       await fetchTournamentData();
       setCurrentTournament({ ...currentTournament, status: 'completed' });
       
-      alert('Torneio finalizado com sucesso! Os resultados foram adicionados às Ligas.');
+      alert('Torneio finalizado com sucesso! Os resultados e ratings foram atualizados.');
     } catch (error) {
       console.error('Error finalizing tournament:', error);
       alert('Erro ao finalizar o torneio. Tente novamente.');

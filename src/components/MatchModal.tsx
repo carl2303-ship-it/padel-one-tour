@@ -4,6 +4,7 @@ import { X, RotateCcw } from 'lucide-react';
 import { rescheduleRemainingMatches } from '../lib/reschedule';
 import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from '../lib/leagueStandings';
 import { advanceKnockoutWinner, populatePlacementMatches } from '../lib/groups';
+import { processMatchRating } from '../lib/ratingEngine';
 import { useI18n } from '../lib/i18nContext';
 
 async function advanceWinnerToNextRound(
@@ -842,6 +843,20 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         if (currentMatch.round?.startsWith('crossed_r3_')) {
           console.log('[MATCH_MODAL] Crossed playoff R3 match completed, calculating all positions');
           await calculateIndividualFinalPositions(tournamentId, null);
+        }
+      }
+    }
+
+    // Processar rating dos jogadores após jogo completado
+    if (finalStatus === 'completed') {
+      const theMatchId = matchId || result.data?.[0]?.id;
+      if (theMatchId) {
+        try {
+          console.log('[MATCH_MODAL] Processing rating for match:', theMatchId);
+          await processMatchRating(theMatchId);
+        } catch (err) {
+          console.error('[MATCH_MODAL] Error processing match rating:', err);
+          // Não bloquear o fluxo se o rating falhar
         }
       }
     }
