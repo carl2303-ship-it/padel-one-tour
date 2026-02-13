@@ -325,7 +325,15 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     const allUpdatedPlayers = [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4]
 
     for (const rp of allUpdatedPlayers) {
-      const newReliability = calculateReliability(rp.matches)
+      // Ler wins + losses atual da BD para calcular fiabilidade baseada no valor real
+      const { data: currentAccount } = await supabase
+        .from('player_accounts')
+        .select('wins, losses')
+        .eq('id', rp.id)
+        .single()
+
+      const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0)
+      const newReliability = calculateReliability(totalMatchesFromDB)
 
       if (cache) {
         cache.set(rp.id, {
@@ -357,11 +365,22 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       console.error('[RatingEngine] Error marking match as processed:', matchId, markError)
     }
 
+    // Ler valores finais da BD para logging
+    const finalAccounts = await Promise.all(
+      [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4].map(p =>
+        supabase.from('player_accounts').select('wins, losses').eq('id', p.id).single()
+      )
+    )
+
     console.log('[RatingEngine] Updated ratings for match:', matchId)
-    console.log(`  ${result.team1.p1.name}: ${p1.rating.toFixed(2)} → ${result.team1.p1.rating.toFixed(2)} (Δ${result.team1.p1.delta > 0 ? '+' : ''}${result.team1.p1.delta.toFixed(4)}) | fiab: ${calculateReliability(result.team1.p1.matches)}%`)
-    console.log(`  ${result.team1.p2.name}: ${p2.rating.toFixed(2)} → ${result.team1.p2.rating.toFixed(2)} (Δ${result.team1.p2.delta > 0 ? '+' : ''}${result.team1.p2.delta.toFixed(4)}) | fiab: ${calculateReliability(result.team1.p2.matches)}%`)
-    console.log(`  ${result.team2.p3.name}: ${p3.rating.toFixed(2)} → ${result.team2.p3.rating.toFixed(2)} (Δ${result.team2.p3.delta > 0 ? '+' : ''}${result.team2.p3.delta.toFixed(4)}) | fiab: ${calculateReliability(result.team2.p3.matches)}%`)
-    console.log(`  ${result.team2.p4.name}: ${p4.rating.toFixed(2)} → ${result.team2.p4.rating.toFixed(2)} (Δ${result.team2.p4.delta > 0 ? '+' : ''}${result.team2.p4.delta.toFixed(4)}) | fiab: ${calculateReliability(result.team2.p4.matches)}%`)
+    const p1Matches = (finalAccounts[0]?.data?.wins ?? 0) + (finalAccounts[0]?.data?.losses ?? 0)
+    const p2Matches = (finalAccounts[1]?.data?.wins ?? 0) + (finalAccounts[1]?.data?.losses ?? 0)
+    const p3Matches = (finalAccounts[2]?.data?.wins ?? 0) + (finalAccounts[2]?.data?.losses ?? 0)
+    const p4Matches = (finalAccounts[3]?.data?.wins ?? 0) + (finalAccounts[3]?.data?.losses ?? 0)
+    console.log(`  ${result.team1.p1.name}: ${p1.rating.toFixed(2)} → ${result.team1.p1.rating.toFixed(2)} (Δ${result.team1.p1.delta > 0 ? '+' : ''}${result.team1.p1.delta.toFixed(4)}) | jogos: ${p1Matches} | fiab: ${calculateReliability(p1Matches)}%`)
+    console.log(`  ${result.team1.p2.name}: ${p2.rating.toFixed(2)} → ${result.team1.p2.rating.toFixed(2)} (Δ${result.team1.p2.delta > 0 ? '+' : ''}${result.team1.p2.delta.toFixed(4)}) | jogos: ${p2Matches} | fiab: ${calculateReliability(p2Matches)}%`)
+    console.log(`  ${result.team2.p3.name}: ${p3.rating.toFixed(2)} → ${result.team2.p3.rating.toFixed(2)} (Δ${result.team2.p3.delta > 0 ? '+' : ''}${result.team2.p3.delta.toFixed(4)}) | jogos: ${p3Matches} | fiab: ${calculateReliability(p3Matches)}%`)
+    console.log(`  ${result.team2.p4.name}: ${p4.rating.toFixed(2)} → ${result.team2.p4.rating.toFixed(2)} (Δ${result.team2.p4.delta > 0 ? '+' : ''}${result.team2.p4.delta.toFixed(4)}) | jogos: ${p4Matches} | fiab: ${calculateReliability(p4Matches)}%`)
   }
 
   return result
