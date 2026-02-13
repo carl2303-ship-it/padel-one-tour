@@ -325,15 +325,24 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     const allUpdatedPlayers = [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4]
 
     for (const rp of allUpdatedPlayers) {
-      // Ler wins + losses atual da BD para calcular fiabilidade baseada no valor real
+      // Ler wins + losses e level_reliability_percent atual da BD
       const { data: currentAccount } = await supabase
         .from('player_accounts')
-        .select('wins, losses')
+        .select('wins, losses, level_reliability_percent')
         .eq('id', rp.id)
         .single()
 
-      const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0)
-      const newReliability = calculateReliability(totalMatchesFromDB)
+      // Se level_reliability_percent foi definido manualmente (não null), respeitar esse valor
+      // Caso contrário, calcular baseado em wins + losses
+      let newReliability: number
+      if (currentAccount?.level_reliability_percent != null && currentAccount.level_reliability_percent > 0) {
+        // Respeitar valor manual definido pelo utilizador
+        newReliability = currentAccount.level_reliability_percent
+      } else {
+        // Calcular baseado em wins + losses
+        const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0)
+        newReliability = calculateReliability(totalMatchesFromDB)
+      }
 
       if (cache) {
         cache.set(rp.id, {
