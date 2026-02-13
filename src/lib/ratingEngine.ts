@@ -127,6 +127,20 @@ export function calculateReliability(totalMatches: number): number {
   return reliability
 }
 
+/**
+ * Função inversa: dado um valor de fiabilidade, calcula quantos jogos correspondem
+ * Usado quando o utilizador define manualmente a fiabilidade e queremos saber quantos jogos isso representa
+ */
+export function calculateMatchesFromReliability(reliability: number): number {
+  if (reliability <= 0) return 0
+  if (reliability >= 100) return 75
+  // Inverter: reliability = 100 * (ln(matches + 1) / ln(76))
+  // matches + 1 = e^(reliability/100 * ln(76))
+  // matches = e^(reliability/100 * ln(76)) - 1
+  const matches = Math.round(Math.exp((reliability / 100) * Math.log(76)) - 1)
+  return Math.max(0, Math.min(75, matches))
+}
+
 // ============================================
 // Player Cache (para acumular durante batch)
 // ============================================
@@ -332,15 +346,18 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
         .eq('id', rp.id)
         .single()
 
-      // Se level_reliability_percent foi definido manualmente (não null), respeitar esse valor
-      // Caso contrário, calcular baseado em wins + losses
       let newReliability: number
       if (currentAccount?.level_reliability_percent != null && currentAccount.level_reliability_percent > 0) {
-        // Respeitar valor manual definido pelo utilizador
-        newReliability = currentAccount.level_reliability_percent
+        // Se level_reliability_percent foi definido manualmente:
+        // 1. Descobrir quantos jogos correspondem a esse valor de fiabilidade
+        const matchesFromManualReliability = calculateMatchesFromReliability(currentAccount.level_reliability_percent)
+        // 2. Incrementar 1 jogo (este jogo que está a ser processado)
+        const newTotalMatches = matchesFromManualReliability + 1
+        // 3. Recalcular fiabilidade com o novo total de jogos
+        newReliability = calculateReliability(newTotalMatches)
       } else {
-        // Calcular baseado em wins + losses
-        const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0)
+        // Se não foi definido manualmente, calcular baseado em wins + losses + 1 (este jogo)
+        const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0) + 1
         newReliability = calculateReliability(totalMatchesFromDB)
       }
 
