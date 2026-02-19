@@ -35,6 +35,9 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
 
   const mainRoundOrder = [
     'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3',
+    'crossed_r2_j4', 'crossed_r2_j5', 'crossed_r2_j6',
+    'crossed_r3_j7', 'crossed_r3_j8',
+    // Legacy names (backwards compatibility)
     'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_5th_place',
     'crossed_r3_final', 'crossed_r3_3rd_place',
     'crossed_playoff_categories', 'crossed_playoff',
@@ -74,6 +77,12 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       case 'crossed_r1_j1': return 'Playoff R1 - Jogo 1';
       case 'crossed_r1_j2': return 'Playoff R1 - Jogo 2';
       case 'crossed_r1_j3': return 'Playoff R1 - Jogo 3';
+      case 'crossed_r2_j4': return 'Meia-Final 1';
+      case 'crossed_r2_j5': return 'Meia-Final 2';
+      case 'crossed_r2_j6': return '5º/6º Lugar';
+      case 'crossed_r3_j7': return 'Final';
+      case 'crossed_r3_j8': return '3º/4º Lugar';
+      // Legacy names (backwards compatibility)
       case 'crossed_r2_semifinal1': return 'Meia-Final 1';
       case 'crossed_r2_semifinal2': return 'Meia-Final 2';
       case 'crossed_r2_5th_place': return '5º/6º Lugar';
@@ -227,8 +236,12 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
 
   const getPlacementLabel = (round: string, isWinner: boolean) => {
     switch (round) {
-      case 'final': return isWinner ? '1st' : '2nd';
-      case '3rd_place': return isWinner ? '3rd' : '4th';
+      case 'final':
+      case 'crossed_r3_j7':
+      case 'crossed_r3_final': return isWinner ? '1st' : '2nd';
+      case '3rd_place':
+      case 'crossed_r3_j8':
+      case 'crossed_r3_3rd_place': return isWinner ? '3rd' : '4th';
       case '5th_place': return isWinner ? '5th' : '6th';
       case '7th_place': return isWinner ? '7th' : '8th';
       case '9th_place': return isWinner ? '9th' : '10th';
