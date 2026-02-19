@@ -113,8 +113,8 @@ BEGIN
   END IF;
   
   -- Resolver o pedido
-  IF v_new_status IS NOT NULL THEN
-    IF v_new_status = 'confirmed' THEN
+  IF v_new_status IS NOT NULL
+  IF v_new_status = 'confirmed' THEN
       -- Atribuir a próxima posição
       SELECT COALESCE(MAX(position), 0) + 1 INTO v_next_position
       FROM open_game_players
@@ -153,7 +153,6 @@ BEGIN
   );
 END;
 $$;
-
 COMMENT ON FUNCTION vote_on_join_request(UUID, TEXT) IS 'Permite que jogadores confirmados votem para aceitar/rejeitar um pedido de adesão. Resolve automaticamente quando todos votam ou alguém rejeita.';
 GRANT EXECUTE ON FUNCTION vote_on_join_request(UUID, TEXT) TO authenticated;
 
@@ -213,7 +212,7 @@ BEGIN
   FROM player_accounts WHERE id = p_player_account_id;
   
   IF v_target_user_id IS NULL THEN
-    -- O jogador pode não ter user_id (não tem conta auth), aceitar mesmo assim
+  -- O jogador pode não ter user_id (não tem conta auth), aceitar mesmo assim
     v_target_user_id := v_caller_user_id; -- fallback
   END IF;
   
