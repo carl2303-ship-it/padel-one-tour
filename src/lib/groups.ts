@@ -1061,6 +1061,7 @@ export async function populatePlacementMatches(
   });
 
   const sortedGroups = Array.from(playersByGroup.keys()).sort();
+  const isSingleGroup = sortedGroups.length === 1;
 
   const rankedByGroup = new Map<string, string[]>();
   sortedGroups.forEach((groupName) => {
@@ -1069,7 +1070,8 @@ export async function populatePlacementMatches(
       if (a.wins !== b.wins) return b.wins - a.wins;
       const diffA = a.gamesWon - a.gamesLost;
       const diffB = b.gamesWon - b.gamesLost;
-      return diffB - diffA;
+      if (diffB !== diffA) return diffB - diffA;
+      return b.gamesWon - a.gamesWon;
     });
     rankedByGroup.set(groupName, sorted.map(p => p.id));
     console.log(`[POPULATE_PLACEMENT] Group ${groupName} ranking:`, sorted.map((p, i) => `${i + 1}. ${p.name}`));
@@ -1079,6 +1081,54 @@ export async function populatePlacementMatches(
   const totalPlayers = players.length;
 
   console.log(`[POPULATE_PLACEMENT] ${sortedGroups.length} groups, max ${maxPlayersPerGroup} per group, ${totalPlayers} total`);
+
+  // SINGLE GROUP (e.g. mixed_american): populate semifinals with top 4 directly
+  if (isSingleGroup) {
+    const singleGroupRanking = rankedByGroup.get(sortedGroups[0])!;
+    console.log(`[POPULATE_PLACEMENT] Single group mode: ${singleGroupRanking.length} players ranked`);
+
+    // Find the semifinal matches (look for both 'semifinal' and '1st_semifinal')
+    const semifinalMatches = allSemis.filter(m =>
+      m.round === 'semifinal' || m.round === 'semi_final' || m.round === '1st_semifinal'
+    ).sort((a, b) => a.match_number - b.match_number);
+
+    if (semifinalMatches.length >= 2 && singleGroupRanking.length >= 4) {
+      const alreadyPopulated = semifinalMatches.every(m =>
+        m.player1_individual_id && m.player2_individual_id &&
+        m.player3_individual_id && m.player4_individual_id
+      );
+
+      if (!alreadyPopulated) {
+        const [p1, p2, p3, p4] = singleGroupRanking; // Top 4 players
+        // SF1: 1st + 4th vs 2nd + 3rd
+        await supabase
+          .from('matches')
+          .update({
+            player1_individual_id: p1,
+            player2_individual_id: p4,
+            player3_individual_id: p2,
+            player4_individual_id: p3,
+          })
+          .eq('id', semifinalMatches[0].id);
+        console.log(`[POPULATE_PLACEMENT] SF1: 1st+4th vs 2nd+3rd`);
+
+        // SF2: 2nd + 3rd vs 1st + 4th (swapped sides for variety)
+        await supabase
+          .from('matches')
+          .update({
+            player1_individual_id: p2,
+            player2_individual_id: p3,
+            player3_individual_id: p1,
+            player4_individual_id: p4,
+          })
+          .eq('id', semifinalMatches[1].id);
+        console.log(`[POPULATE_PLACEMENT] SF2: 2nd+3rd vs 1st+4th`);
+      }
+    }
+
+    console.log('[POPULATE_PLACEMENT] Single group population done');
+    return;
+  }
 
   const populateTier = async (tierIndex: number, tierPrefix: string) => {
     const semifinalRound = `${tierPrefix}_semifinal`;

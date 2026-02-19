@@ -782,7 +782,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         }
       }
 
-      if (tournament?.format === 'individual_groups_knockout' && currentMatch) {
+      if ((tournament?.format === 'individual_groups_knockout' || tournament?.format === 'mixed_american') && currentMatch) {
         const isGroupMatch = currentMatch.round.startsWith('group_');
 
         if (isGroupMatch) {

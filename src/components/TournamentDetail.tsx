@@ -176,7 +176,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
           } else if (newRecord.round?.startsWith('group_')) {
             setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
-            if (currentTournament?.format === 'individual_groups_knockout') {
+            if (currentTournament?.format === 'individual_groups_knockout' || currentTournament?.format === 'mixed_american') {
               const groupMatches = updated.filter(m => m.round.startsWith('group_'));
               const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
               if (allGroupsDone) {
@@ -1011,7 +1011,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         );
         setMatches(sortedMatches);
 
-        if (currentTournament?.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
+        if ((currentTournament?.format === 'individual_groups_knockout' || currentTournament?.format === 'mixed_american') && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
