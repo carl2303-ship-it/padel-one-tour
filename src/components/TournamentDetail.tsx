@@ -5418,6 +5418,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               }}
               isIndividual={isIndividualFormat()}
               individualPlayers={filteredIndividualPlayers}
+              tournamentFormat={currentTournament?.format}
             />
             )
           )}

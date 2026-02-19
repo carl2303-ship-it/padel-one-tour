@@ -15,9 +15,11 @@ type BracketViewProps = {
   onMatchClick: (matchId: string) => void;
   isIndividual?: boolean;
   individualPlayers?: Player[];
+  tournamentFormat?: string;
 };
 
-export default function BracketView({ matches, onMatchClick, isIndividual = false, individualPlayers = [] }: BracketViewProps) {
+export default function BracketView({ matches, onMatchClick, isIndividual = false, individualPlayers = [], tournamentFormat }: BracketViewProps) {
+  const isMixedFormat = tournamentFormat === 'mixed_american' || tournamentFormat === 'mixed_gender';
   
   const getMatchWinner = (match: MatchWithTeams) => {
     if (match.status !== 'completed') return null;
@@ -71,6 +73,15 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
   }
 
   const getRoundName = (round: string) => {
+    // Mixed format labels
+    if (isMixedFormat) {
+      switch(round) {
+        case 'semifinal':
+        case 'semi_final': return 'Meias-Finais Mistas';
+        case 'final': return 'Final Mista';
+        case '3rd_place': return '3º/4º Lugar';
+      }
+    }
     switch(round) {
       case 'crossed_r1_j1': return 'Playoff R1 - Jogo 1';
       case 'crossed_r1_j2': return 'Playoff R1 - Jogo 2';
@@ -86,9 +97,9 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       case 'crossed_r2_5th_place': return '5º/6º Lugar';
       case 'crossed_r3_final': return 'Final';
       case 'crossed_r3_3rd_place': return '3º/4º Lugar';
-      case 'mixed_semifinal1': return 'Meia-Final 1';
-      case 'mixed_semifinal2': return 'Meia-Final 2';
-      case 'mixed_final': return 'Final';
+      case 'mixed_semifinal1': return 'Meia-Final Mista 1';
+      case 'mixed_semifinal2': return 'Meia-Final Mista 2';
+      case 'mixed_final': return 'Final Mista';
       case 'mixed_3rd_place': return '3º/4º Lugar';
       case 'crossed_playoff_categories': return 'Playoffs Cruzados (Categorias)';
       case 'crossed_playoff': return 'Playoffs Cruzados';
@@ -336,6 +347,18 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
               const isFirst = roundIndex === 0;
               const isLast = roundIndex === existingRounds.length - 1;
 
+              // Helper to get mixed format subtitle for each match in a round
+              const getMixedMatchSubtitle = (round: string, matchIdx: number): string | null => {
+                if (!isMixedFormat) return null;
+                if (round === 'semifinal' || round === 'semi_final') {
+                  if (matchIdx === 0) return '1°F + 4°M  vs  2°F + 3°M';
+                  if (matchIdx === 1) return '3°F + 2°M  vs  4°F + 1°M';
+                }
+                if (round === 'final') return 'Vencedores das Meias-Finais';
+                if (round === '3rd_place') return 'Perdedores das Meias-Finais';
+                return null;
+              };
+
               return (
                 <div key={round} className="flex flex-col justify-around" style={{ minWidth: '280px' }}>
                   <div className="text-center font-bold text-gray-700 mb-4 text-sm uppercase tracking-wide">
@@ -348,9 +371,16 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
                       const isWinner1 = winner === 'team1';
                       const isWinner2 = winner === 'team2';
                       const isFinal = round === 'final';
+                      const mixedSubtitle = getMixedMatchSubtitle(round, matchIndex);
 
                       return (
                         <div key={match.id} className="relative">
+                          {mixedSubtitle && (
+                            <div className="text-center text-xs text-indigo-600 font-semibold mb-1">
+                              {mixedSubtitle}
+                            </div>
+                          )}
+
                           {!isFirst && (
                             <div
                               className="absolute right-full top-1/2 w-8 h-px bg-gray-300"
