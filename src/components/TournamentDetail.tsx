@@ -174,12 +174,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           if (newRecord.round?.startsWith('crossed_')) {
             // Avançar R1→R2 ou R2→R3
             setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
+          } else if (newRecord.round === 'semifinal') {
+            // Avançar meias-finais → final e 3°/4° lugar
+            setTimeout(() => autoAdvanceSemifinals(updated), 500);
           } else if (newRecord.round?.startsWith('group_')) {
-            setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
-            if (currentTournament?.format === 'individual_groups_knockout' || currentTournament?.format === 'mixed_american') {
-              const groupMatches = updated.filter(m => m.round.startsWith('group_'));
-              const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
-              if (allGroupsDone) {
+            const groupMatches = updated.filter(m => m.round.startsWith('group_'));
+            const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
+            
+            if (allGroupsDone) {
+              if (currentTournament?.format === 'mixed_american') {
+                console.log('[REALTIME] All groups done (mixed_american) - refetching to auto-populate knockouts');
+                setTimeout(() => fetchTournamentData(), 500);
+              } else if (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender') {
+                setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
+              } else if (currentTournament?.format === 'individual_groups_knockout') {
                 setTimeout(async () => {
                   console.log('[REALTIME] All groups done, populating knockout brackets');
                   await populatePlacementMatches(tournament.id);
@@ -1050,76 +1058,178 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         setCategories(categoriesResult.data);
       }
 
-      // Auto-fill crossed playoffs R1 se grupos estão completos mas R1 está vazio
-      // Funciona para qualquer formato individual com rounds crossed_r1_j1
+      // Auto-populate knockout quando todos os grupos estão completos
       if (matchesResult.data && playersResult.data && categoriesResult.data) {
         const allMatchesLocal = matchesResult.data as unknown as MatchWithTeams[];
         const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('group_'));
-        const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
         const allGroupsDoneLocal = groupMatchesLocal.length > 0 && groupMatchesLocal.every(m => m.status === 'completed');
+        const hasCrossedRounds = matchesResult.data.some((m: any) => m.round === 'crossed_r1_j1');
+        const hasSemifinalRounds = matchesResult.data.some((m: any) => m.round === 'semifinal');
         
-        console.log('[FETCH-CHECK] Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'R1 exists:', !!r1j1Local, 'R1 populated:', r1j1Local?.player1_individual_id);
+        console.log('[FETCH-CHECK] Format:', currentTournament?.format, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
         
-        if (allGroupsDoneLocal && r1j1Local && !r1j1Local.player1_individual_id) {
-          console.log('[FETCH-FILL] All groups done but R1 empty - filling crossed playoffs R1...');
-          
+        if (allGroupsDoneLocal) {
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
           const localPlayers = playersResult.data as Array<{ id: string; name: string; category_id: string }>;
           const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
           
-          if (sortedCats.length >= 2 && sortedCats.length <= 3) {
-            const getCatRankings = (categoryId: string) => {
-              const catPlayers = localPlayers.filter(p => p.category_id === categoryId);
-              const catMatches = matchesResult.data!.filter((m: any) => 
-                m.category_id === categoryId && m.round?.startsWith('group_') && m.status === 'completed'
-              );
-              const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
-              catPlayers.forEach(p => playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0 }));
-              catMatches.forEach((match: any) => {
-                const t1G = (match.team1_score_set1||0)+(match.team1_score_set2||0)+(match.team1_score_set3||0);
-                const t2G = (match.team2_score_set1||0)+(match.team2_score_set2||0)+(match.team2_score_set3||0);
-                const t1Won = t1G > t2G;
-                [match.player1_individual_id, match.player2_individual_id].filter(Boolean).forEach((pid: string) => {
-                  const s = playerStats.get(pid); if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (t1Won) s.wins++; }
-                });
-                [match.player3_individual_id, match.player4_individual_id].filter(Boolean).forEach((pid: string) => {
-                  const s = playerStats.get(pid); if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (!t1Won) s.wins++; }
-                });
+          // Função para calcular rankings de uma categoria
+          const getCatRankings = (categoryId: string) => {
+            const catPlayers = localPlayers.filter(p => p.category_id === categoryId);
+            const catMatches = matchesResult.data!.filter((m: any) => 
+              m.category_id === categoryId && m.round?.startsWith('group_') && m.status === 'completed'
+            );
+            const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
+            catPlayers.forEach(p => playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0 }));
+            catMatches.forEach((match: any) => {
+              const t1G = (match.team1_score_set1||0)+(match.team1_score_set2||0)+(match.team1_score_set3||0);
+              const t2G = (match.team2_score_set1||0)+(match.team2_score_set2||0)+(match.team2_score_set3||0);
+              const t1Won = t1G > t2G;
+              [match.player1_individual_id, match.player2_individual_id].filter(Boolean).forEach((pid: string) => {
+                const s = playerStats.get(pid); if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (t1Won) s.wins++; }
               });
-              return Array.from(playerStats.values()).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : (b.gamesWon-b.gamesLost)-(a.gamesWon-a.gamesLost));
-            };
+              [match.player3_individual_id, match.player4_individual_id].filter(Boolean).forEach((pid: string) => {
+                const s = playerStats.get(pid); if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (!t1Won) s.wins++; }
+              });
+            });
+            return Array.from(playerStats.values()).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : (b.gamesWon-b.gamesLost)-(a.gamesWon-a.gamesLost));
+          };
 
-            try {
-              if (sortedCats.length === 3) {
-                const [catA, catB, catC] = sortedCats;
-                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
-                if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
-                  console.log(`[FETCH-FILL] 3-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankC[3].id, player3_individual_id: rankA[1].id, player4_individual_id: rankC[2].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[1].id, player3_individual_id: rankA[3].id, player4_individual_id: rankB[0].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankB[2].id, player2_individual_id: rankC[1].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[0].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-                  console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
-                  await fetchTournamentData(); return;
-                }
-              } else {
-                const [catA, catB] = sortedCats;
-                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
-                if (rankA.length >= 4 && rankB.length >= 4) {
-                  console.log(`[FETCH-FILL] 2-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[1].id, player2_individual_id: rankB[2].id, player3_individual_id: rankB[1].id, player4_individual_id: rankA[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-                  console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
-                  await fetchTournamentData(); return;
+          try {
+            if (currentTournament?.format === 'mixed_american' && hasCrossedRounds) {
+              // MIXED AMERICAN com rounds crossed errados: corrigir estrutura
+              // Apagar os 8 matches crossed e criar 4 corretos (2 SF + 3rd + Final)
+              console.log('[FETCH-FILL] Mixed American com crossed rounds incorretos - corrigindo estrutura...');
+              
+              if (sortedCats.length >= 2) {
+                const rankF = getCatRankings(sortedCats[0].id); // 1ª categoria (F)
+                const rankM = getCatRankings(sortedCats[1].id); // 2ª categoria (M)
+                console.log(`[FETCH-FILL] Rankings: ${sortedCats[0].name}=${rankF.map(p=>p.name)}, ${sortedCats[1].name}=${rankM.map(p=>p.name)}`);
+                
+                if (rankF.length >= 4 && rankM.length >= 4) {
+                  // Apagar matches crossed
+                  const { error: delError } = await supabase.from('matches')
+                    .delete()
+                    .eq('tournament_id', tournament.id)
+                    .like('round', 'crossed_%');
+                  if (delError) { console.error('[FETCH-FILL] Error deleting crossed matches:', delError); }
+                  else { console.log('[FETCH-FILL] Deleted crossed matches'); }
+                  
+                  // Calcular horário para knockout
+                  const lastGroupMatch = groupMatchesLocal.sort((a, b) => 
+                    new Date(b.scheduled_time || 0).getTime() - new Date(a.scheduled_time || 0).getTime()
+                  )[0];
+                  const matchDuration = currentTournament.match_duration_minutes || 30;
+                  let knockoutTime = lastGroupMatch?.scheduled_time 
+                    ? new Date(new Date(lastGroupMatch.scheduled_time).getTime() + matchDuration * 60000)
+                    : new Date();
+                  const nextMatchNum = Math.max(...matchesResult.data!.map((m: any) => m.match_number || 0)) + 1;
+                  
+                  // SF1: (1°F + 4°M) vs (2°F + 3°M)
+                  // SF2: (3°F + 2°M) vs (4°F + 1°M)
+                  const knockoutMatches = [
+                    {
+                      tournament_id: tournament.id, category_id: null,
+                      round: 'semifinal', match_number: nextMatchNum,
+                      player1_individual_id: rankF[0].id, player2_individual_id: rankM[3].id, // 1°F + 4°M
+                      player3_individual_id: rankF[1].id, player4_individual_id: rankM[2].id, // 2°F + 3°M
+                      scheduled_time: knockoutTime.toISOString(), court: '1', status: 'scheduled'
+                    },
+                    {
+                      tournament_id: tournament.id, category_id: null,
+                      round: 'semifinal', match_number: nextMatchNum + 1,
+                      player1_individual_id: rankF[2].id, player2_individual_id: rankM[1].id, // 3°F + 2°M
+                      player3_individual_id: rankF[3].id, player4_individual_id: rankM[0].id, // 4°F + 1°M
+                      scheduled_time: knockoutTime.toISOString(), court: '2', status: 'scheduled'
+                    },
+                    {
+                      tournament_id: tournament.id, category_id: null,
+                      round: '3rd_place', match_number: nextMatchNum + 2,
+                      player1_individual_id: null, player2_individual_id: null,
+                      player3_individual_id: null, player4_individual_id: null,
+                      scheduled_time: new Date(knockoutTime.getTime() + matchDuration * 60000).toISOString(), court: '1', status: 'scheduled'
+                    },
+                    {
+                      tournament_id: tournament.id, category_id: null,
+                      round: 'final', match_number: nextMatchNum + 3,
+                      player1_individual_id: null, player2_individual_id: null,
+                      player3_individual_id: null, player4_individual_id: null,
+                      scheduled_time: new Date(knockoutTime.getTime() + matchDuration * 60000).toISOString(), court: '2', status: 'scheduled'
+                    }
+                  ];
+                  
+                  const { error: insertError } = await supabase.from('matches').insert(knockoutMatches);
+                  if (insertError) { console.error('[FETCH-FILL] Error inserting knockout matches:', insertError); }
+                  else { 
+                    console.log('[FETCH-FILL] Created 4 knockout matches (2 SF + 3rd + Final) with players populated!');
+                    await fetchTournamentData(); return;
+                  }
                 } else {
-                  console.log('[FETCH-FILL] Not enough ranked players: A=', rankA.length, 'B=', rankB.length);
+                  console.log('[FETCH-FILL] Not enough ranked players: F=', rankF.length, 'M=', rankM.length);
                 }
               }
-            } catch (err) {
-              console.error('[FETCH-FILL] Error:', err);
+              
+            } else if (currentTournament?.format === 'mixed_american' && hasSemifinalRounds) {
+              // MIXED AMERICAN com rounds corretos: popular se vazio
+              const sfMatches = matchesResult.data!.filter((m: any) => m.round === 'semifinal');
+              const sfEmpty = sfMatches.every((m: any) => !m.player1_individual_id);
+              
+              if (sfEmpty && sortedCats.length >= 2) {
+                const rankF = getCatRankings(sortedCats[0].id);
+                const rankM = getCatRankings(sortedCats[1].id);
+                console.log(`[FETCH-FILL] Populating MA semifinals: ${sortedCats[0].name}=${rankF.map(p=>p.name)}, ${sortedCats[1].name}=${rankM.map(p=>p.name)}`);
+                
+                if (rankF.length >= 4 && rankM.length >= 4) {
+                  const sfSorted = [...sfMatches].sort((a: any, b: any) => a.match_number - b.match_number);
+                  // SF1: (1°F + 4°M) vs (2°F + 3°M)
+                  await supabase.from('matches').update({
+                    player1_individual_id: rankF[0].id, player2_individual_id: rankM[3].id,
+                    player3_individual_id: rankF[1].id, player4_individual_id: rankM[2].id
+                  }).eq('id', sfSorted[0].id);
+                  // SF2: (3°F + 2°M) vs (4°F + 1°M)
+                  await supabase.from('matches').update({
+                    player1_individual_id: rankF[2].id, player2_individual_id: rankM[1].id,
+                    player3_individual_id: rankF[3].id, player4_individual_id: rankM[0].id
+                  }).eq('id', sfSorted[1].id);
+                  
+                  console.log('[FETCH-FILL] MA Semifinals populated! Refreshing...');
+                  await fetchTournamentData(); return;
+                }
+              }
+              
+            } else if ((currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender') && hasCrossedRounds) {
+              // CROSSED PLAYOFFS / MIXED GENDER: preencher R1 se vazio
+              const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
+              if (r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+                console.log('[FETCH-FILL] Filling crossed playoffs R1...');
+                
+                if (sortedCats.length === 3) {
+                  const [catA, catB, catC] = sortedCats;
+                  const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
+                  if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
+                    console.log(`[FETCH-FILL] 3-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankC[3].id, player3_individual_id: rankA[1].id, player4_individual_id: rankC[2].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[1].id, player3_individual_id: rankA[3].id, player4_individual_id: rankB[0].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankB[2].id, player2_individual_id: rankC[1].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[0].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                    console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
+                    await fetchTournamentData(); return;
+                  }
+                } else {
+                  const [catA, catB] = sortedCats;
+                  const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
+                  if (rankA.length >= 4 && rankB.length >= 4) {
+                    console.log(`[FETCH-FILL] 2-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[1].id, player2_individual_id: rankB[2].id, player3_individual_id: rankB[1].id, player4_individual_id: rankA[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                    console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
+                    await fetchTournamentData(); return;
+                  }
+                }
+              }
             }
-          } else {
-            console.log('[FETCH-FILL] Need 2-3 categories, got', sortedCats.length);
+          } catch (err) {
+            console.error('[FETCH-FILL] Error:', err);
           }
         }
       }
@@ -2358,6 +2468,76 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     });
     
     return { wins, gamesWon, gamesLost };
+  };
+
+  // Função para avançar meias-finais → final e 3°/4° lugar
+  const autoAdvanceSemifinals = async (currentMatches: MatchWithTeams[]) => {
+    console.log('[AUTO_ADVANCE_SF] Checking semifinals...');
+    
+    const sfMatches = currentMatches
+      .filter(m => m.round === 'semifinal')
+      .sort((a, b) => a.match_number - b.match_number);
+    const finalMatch = currentMatches.find(m => m.round === 'final');
+    const thirdPlaceMatch = currentMatches.find(m => m.round === '3rd_place');
+    
+    if (sfMatches.length < 2 || !finalMatch || !thirdPlaceMatch) {
+      console.log('[AUTO_ADVANCE_SF] Missing matches: SF=', sfMatches.length, 'Final=', !!finalMatch, '3rd=', !!thirdPlaceMatch);
+      return;
+    }
+    
+    // Verificar se ambas as meias-finais estão completas
+    if (sfMatches[0].status !== 'completed' || sfMatches[1].status !== 'completed') {
+      console.log('[AUTO_ADVANCE_SF] Not both semifinals completed yet');
+      return;
+    }
+    
+    // Se a final já tem jogadores, não preencher novamente
+    if (finalMatch.player1_individual_id) {
+      console.log('[AUTO_ADVANCE_SF] Final already populated');
+      return;
+    }
+    
+    const getWinnerLoser = (match: MatchWithTeams) => {
+      const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+      const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+      if (t1Games > t2Games) {
+        return {
+          winner: { p1: match.player1_individual_id, p2: match.player2_individual_id },
+          loser: { p1: match.player3_individual_id, p2: match.player4_individual_id }
+        };
+      } else {
+        return {
+          winner: { p1: match.player3_individual_id, p2: match.player4_individual_id },
+          loser: { p1: match.player1_individual_id, p2: match.player2_individual_id }
+        };
+      }
+    };
+    
+    try {
+      const sf1Result = getWinnerLoser(sfMatches[0]);
+      const sf2Result = getWinnerLoser(sfMatches[1]);
+      
+      // Final: Vencedor SF1 vs Vencedor SF2
+      await supabase.from('matches').update({
+        player1_individual_id: sf1Result.winner.p1,
+        player2_individual_id: sf1Result.winner.p2,
+        player3_individual_id: sf2Result.winner.p1,
+        player4_individual_id: sf2Result.winner.p2,
+      }).eq('id', finalMatch.id);
+      
+      // 3°/4° lugar: Perdedor SF1 vs Perdedor SF2
+      await supabase.from('matches').update({
+        player1_individual_id: sf1Result.loser.p1,
+        player2_individual_id: sf1Result.loser.p2,
+        player3_individual_id: sf2Result.loser.p1,
+        player4_individual_id: sf2Result.loser.p2,
+      }).eq('id', thirdPlaceMatch.id);
+      
+      console.log('[AUTO_ADVANCE_SF] Final and 3rd place populated! Refreshing...');
+      await fetchTournamentData();
+    } catch (err) {
+      console.error('[AUTO_ADVANCE_SF] Error:', err);
+    }
   };
 
   // Função para avançar automaticamente os playoffs cruzados
