@@ -20,7 +20,7 @@ type BracketViewProps = {
 export default function BracketView({ matches, onMatchClick, isIndividual = false, individualPlayers = [] }: BracketViewProps) {
   console.log('[BRACKET] Received', matches.length, 'matches');
   console.log('[BRACKET] All rounds:', Array.from(new Set(matches.map(m => m.round))));
-  console.log('[BRACKET] Non-group matches:', matches.filter(m => !m.round?.startsWith('group_')).map(m => ({ round: m.round, id: m.id })));
+  console.log('[BRACKET] Non-group matches:', matches.filter(m => !m.round?.startsWith('group_')).map(m => ({ round: m.round, id: m.id, matchNum: m.match_number })));
   
   const getMatchWinner = (match: MatchWithTeams) => {
     if (match.status !== 'completed') return null;
@@ -58,6 +58,10 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
   const placementRounds = placementRoundOrder.filter(r => allRoundNames.includes(r));
   const semifinalRounds = semifinalRoundOrder.filter(r => allRoundNames.includes(r));
 
+  console.log('[BRACKET] mainRounds:', mainRounds);
+  console.log('[BRACKET] placementRounds:', placementRounds);
+  console.log('[BRACKET] semifinalRounds:', semifinalRounds);
+
   const matchesByRound = new Map<string, MatchWithTeams[]>();
   [...mainRounds, ...placementRounds, ...semifinalRounds].forEach(round => {
     const roundMatches = matches.filter(m => m.round === round).sort((a, b) => a.match_number - b.match_number);
@@ -66,11 +70,16 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
     }
   });
 
+  console.log('[BRACKET] matchesByRound keys:', Array.from(matchesByRound.keys()));
+
   const existingRounds = mainRounds;
 
   if (existingRounds.length === 0 && placementRounds.length === 0) {
+    console.log('[BRACKET] NO ROUNDS FOUND - showing empty message');
     return <div className="text-gray-500 text-center py-8">No bracket matches scheduled yet</div>;
   }
+
+  console.log('[BRACKET] existingRounds:', existingRounds, '- rendering bracket');
 
   const getRoundName = (round: string) => {
     switch(round) {

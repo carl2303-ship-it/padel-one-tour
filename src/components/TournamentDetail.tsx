@@ -1109,6 +1109,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
 
+    // Auto-fill crossed playoffs R1 se grupos estão completos mas R1 está vazio
+    if (matchesResult.data && (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender')) {
+      const allMatches = matchesResult.data as unknown as MatchWithTeams[];
+      const groupMatches = allMatches.filter(m => m.round?.startsWith('group_'));
+      const r1j1 = allMatches.find(m => m.round === 'crossed_r1_j1');
+      const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
+      
+      if (allGroupsDone && r1j1 && !r1j1.player1_individual_id) {
+        console.log('[FETCH] All groups done but R1 empty - auto-filling crossed playoffs R1...');
+        // Delay to allow state to settle
+        setTimeout(() => autoFillCrossedPlayoffsR1(allMatches), 300);
+      }
+    }
+
     setLoading(false);
     setRefreshKey(prev => prev + 1);
   };
@@ -2455,12 +2469,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     
     // Ordenar categorias
     const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
-    if (sortedCategories.length !== 3) {
-      console.log('[AUTO_FILL_R1] Need exactly 3 categories');
+    if (sortedCategories.length < 2 || sortedCategories.length > 3) {
+      console.log('[AUTO_FILL_R1] Need 2 or 3 categories, got', sortedCategories.length);
       return;
     }
-    
-    const [catA, catB, catC] = sortedCategories;
     
     // Função para calcular ranking de uma categoria
     const getCategoryRankings = (categoryId: string) => {
@@ -2517,41 +2529,82 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         });
     };
     
-    const rankA = getCategoryRankings(catA.id);
-    const rankB = getCategoryRankings(catB.id);
-    const rankC = getCategoryRankings(catC.id);
-    
-    if (rankA.length < 4 || rankB.length < 4 || rankC.length < 4) {
-      console.log('[AUTO_FILL_R1] Not enough players ranked');
-      return;
-    }
-    
-    console.log(`[AUTO_FILL_R1] Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
-    
     try {
-      // J1: (1°A + 4°C) vs (2°A + 3°C)
-      await supabase.from('matches').update({
-        player1_individual_id: rankA[0].id,
-        player2_individual_id: rankC[3].id,
-        player3_individual_id: rankA[1].id,
-        player4_individual_id: rankC[2].id,
-      }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-      
-      // J2: (3°A + 2°B) vs (4°A + 1°B)
-      await supabase.from('matches').update({
-        player1_individual_id: rankA[2].id,
-        player2_individual_id: rankB[1].id,
-        player3_individual_id: rankA[3].id,
-        player4_individual_id: rankB[0].id,
-      }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-      
-      // J3: (3°B + 2°C) vs (4°B + 1°C)
-      await supabase.from('matches').update({
-        player1_individual_id: rankB[2].id,
-        player2_individual_id: rankC[1].id,
-        player3_individual_id: rankB[3].id,
-        player4_individual_id: rankC[0].id,
-      }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+      if (sortedCategories.length === 3) {
+        // === 3 CATEGORIAS: lógica original ===
+        const [catA, catB, catC] = sortedCategories;
+        const rankA = getCategoryRankings(catA.id);
+        const rankB = getCategoryRankings(catB.id);
+        const rankC = getCategoryRankings(catC.id);
+        
+        if (rankA.length < 4 || rankB.length < 4 || rankC.length < 4) {
+          console.log('[AUTO_FILL_R1] Not enough players ranked (need 4 per category)');
+          return;
+        }
+        
+        console.log(`[AUTO_FILL_R1] Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
+        
+        // J1: (1°A + 4°C) vs (2°A + 3°C)
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[0].id,
+          player2_individual_id: rankC[3].id,
+          player3_individual_id: rankA[1].id,
+          player4_individual_id: rankC[2].id,
+        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+        
+        // J2: (3°A + 2°B) vs (4°A + 1°B)
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[2].id,
+          player2_individual_id: rankB[1].id,
+          player3_individual_id: rankA[3].id,
+          player4_individual_id: rankB[0].id,
+        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+        
+        // J3: (3°B + 2°C) vs (4°B + 1°C)
+        await supabase.from('matches').update({
+          player1_individual_id: rankB[2].id,
+          player2_individual_id: rankC[1].id,
+          player3_individual_id: rankB[3].id,
+          player4_individual_id: rankC[0].id,
+        }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+        
+      } else {
+        // === 2 CATEGORIAS: nova lógica ===
+        const [catA, catB] = sortedCategories;
+        const rankA = getCategoryRankings(catA.id);
+        const rankB = getCategoryRankings(catB.id);
+        
+        if (rankA.length < 4 || rankB.length < 4) {
+          console.log('[AUTO_FILL_R1] Not enough players ranked for 2 categories (need 4 per category)');
+          return;
+        }
+        
+        console.log(`[AUTO_FILL_R1] 2-cat Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
+        
+        // J1: (1°A + 4°B) vs (1°B + 4°A) — Tops cruzam com últimos
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[0].id,
+          player2_individual_id: rankB[3].id,
+          player3_individual_id: rankB[0].id,
+          player4_individual_id: rankA[3].id,
+        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+        
+        // J2: (2°A + 3°B) vs (2°B + 3°A) — Segundos cruzam com terceiros
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[1].id,
+          player2_individual_id: rankB[2].id,
+          player3_individual_id: rankB[1].id,
+          player4_individual_id: rankA[2].id,
+        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+        
+        // J3: (1°A + 2°B) vs (1°B + 2°A) — Tops cruzam com segundos
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[0].id,
+          player2_individual_id: rankB[1].id,
+          player3_individual_id: rankB[0].id,
+          player4_individual_id: rankA[1].id,
+        }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+      }
       
       console.log('[AUTO_FILL_R1] R1 matches filled with players!');
       await fetchTournamentData();
