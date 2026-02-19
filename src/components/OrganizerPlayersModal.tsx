@@ -287,13 +287,38 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
         }
       }
 
-      // 2. Also update player_accounts (global profile) via RPC
-      // This propagates to ALL tournaments via the trigger
+      // 2. Update player_accounts (global profile) via RPC
+      // This propagates to ALL players records and league_standings
       if (player.phone_number) {
-        await supabase.rpc('update_player_account_level', {
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
           p_phone_number: player.phone_number,
           p_player_category: category,
         });
+
+        if (rpcError) {
+          console.error('RPC update_player_account_level error:', rpcError);
+          // Fallback: try direct update to player_accounts
+          if (player.playerAccountId) {
+            await supabase
+              .from('player_accounts')
+              .update({
+                player_category: category,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', player.playerAccountId);
+          }
+        } else if (rpcResult && !rpcResult.success) {
+          console.warn('RPC update_player_account_level: player not found', rpcResult);
+        }
+      } else if (player.playerAccountId) {
+        // No phone number but has playerAccountId - direct update
+        await supabase
+          .from('player_accounts')
+          .update({
+            player_category: category,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', player.playerAccountId);
       }
 
       setPlayers(prev =>
@@ -303,13 +328,17 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       );
     } catch (error) {
       console.error('Error updating category:', error);
+      alert('Erro ao atualizar a categoria. Verifique a consola para mais detalhes.');
     }
 
     setSavingCategory(null);
   };
 
   const updatePlayerLevel = async (player: PlayerRecord) => {
-    if (!player.phone_number) return;
+    if (!player.phone_number && !player.playerAccountId) {
+      alert('Este jogador não tem telefone nem conta associada. Não é possível atualizar o nível.');
+      return;
+    }
     
     setSavingLevel(player.id);
 
@@ -317,22 +346,53 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       const level = editLevelValue ? parseFloat(editLevelValue) : null;
       const reliability = editReliabilityValue ? parseFloat(editReliabilityValue) : null;
 
-      await supabase.rpc('update_player_account_level', {
-        p_phone_number: player.phone_number,
-        p_level: level,
-        p_level_reliability_percent: reliability,
-      });
+      let updated = false;
 
-      setPlayers(prev =>
-        prev.map(p =>
-          p.id === player.id
-            ? { ...p, level: level, level_reliability_percent: reliability }
-            : p
-        )
-      );
-      setEditingLevel(null);
+      // Try RPC first (propagates to players + league_standings)
+      if (player.phone_number) {
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
+          p_phone_number: player.phone_number,
+          p_level: level,
+          p_level_reliability_percent: reliability,
+        });
+
+        if (!rpcError && rpcResult?.success) {
+          updated = true;
+        } else {
+          console.warn('RPC failed, trying direct update:', rpcError || rpcResult);
+        }
+      }
+
+      // Fallback: direct update to player_accounts
+      if (!updated && player.playerAccountId) {
+        const { error } = await supabase
+          .from('player_accounts')
+          .update({
+            level: level,
+            level_reliability_percent: reliability,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', player.playerAccountId);
+        
+        if (!error) updated = true;
+        else console.error('Direct update failed:', error);
+      }
+
+      if (updated) {
+        setPlayers(prev =>
+          prev.map(p =>
+            p.id === player.id
+              ? { ...p, level: level, level_reliability_percent: reliability }
+              : p
+          )
+        );
+        setEditingLevel(null);
+      } else {
+        alert('Não foi possível atualizar o nível. Verifique a consola.');
+      }
     } catch (error) {
       console.error('Error updating level:', error);
+      alert('Erro ao atualizar o nível.');
     }
 
     setSavingLevel(null);
