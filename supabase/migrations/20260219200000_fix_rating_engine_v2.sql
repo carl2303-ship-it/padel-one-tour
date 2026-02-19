@@ -23,7 +23,12 @@ SET rated_matches = COALESCE(wins, 0) + COALESCE(losses, 0)
 WHERE rated_matches IS NULL OR rated_matches = 0;
 
 -- =====================================================
--- STEP 2: Atualizar a função update_player_rating 
+-- STEP 2: Apagar a versão antiga (3 parâmetros) antes de criar a nova
+-- =====================================================
+DROP FUNCTION IF EXISTS update_player_rating(UUID, NUMERIC, NUMERIC);
+
+-- =====================================================
+-- STEP 3: Criar a função update_player_rating v2 (4 parâmetros)
 --         Agora também rastreia wins, losses e rated_matches
 -- =====================================================
 CREATE OR REPLACE FUNCTION update_player_rating(
@@ -57,10 +62,10 @@ END;
 $$;
 
 -- Atualizar comentário
-COMMENT ON FUNCTION update_player_rating IS 'v2: Atualiza nível, fiabilidade, wins, losses e rated_matches (SECURITY DEFINER - bypassa RLS)';
+COMMENT ON FUNCTION update_player_rating(UUID, NUMERIC, NUMERIC, BOOLEAN) IS 'v2: Atualiza nível, fiabilidade, wins, losses e rated_matches (SECURITY DEFINER - bypassa RLS)';
 
 -- =====================================================
--- STEP 3: Garantir que GRANT EXECUTE existe
+-- STEP 4: Garantir que GRANT EXECUTE existe
 -- =====================================================
 GRANT EXECUTE ON FUNCTION update_player_rating(UUID, NUMERIC, NUMERIC, BOOLEAN) TO authenticated;
 GRANT EXECUTE ON FUNCTION mark_match_rating_processed(UUID) TO authenticated;
