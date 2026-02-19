@@ -993,15 +993,40 @@ export async function populatePlacementMatches(
     return;
   }
 
-  const { data: players, error: playersError } = await supabase
+  let { data: players, error: playersError } = await supabase
     .from('players')
     .select('id, name, group_name, category_id')
     .eq('tournament_id', tournamentId)
     .not('group_name', 'is', null);
 
-  if (playersError || !players) {
+  if (playersError) {
     console.error('[POPULATE_PLACEMENT] Error fetching players:', playersError);
     return;
+  }
+
+  // If no players with group_name found, fetch ALL players and assign them to a default group "A"
+  // This handles mixed_american and other single-group formats where group assignment was skipped
+  if (!players || players.length === 0) {
+    console.log('[POPULATE_PLACEMENT] No players with group_name, fetching ALL players and treating as single group');
+    const { data: allPlayers, error: allPlayersError } = await supabase
+      .from('players')
+      .select('id, name, group_name, category_id')
+      .eq('tournament_id', tournamentId);
+
+    if (allPlayersError || !allPlayers || allPlayers.length === 0) {
+      console.error('[POPULATE_PLACEMENT] No players found at all:', allPlayersError);
+      return;
+    }
+
+    // Auto-assign group "A" to all players in the DB so future calls work
+    const playerIds = allPlayers.map(p => p.id);
+    await supabase
+      .from('players')
+      .update({ group_name: 'A' })
+      .in('id', playerIds);
+
+    players = allPlayers.map(p => ({ ...p, group_name: 'A' }));
+    console.log(`[POPULATE_PLACEMENT] Auto-assigned group "A" to ${players.length} players`);
   }
 
   const groupMatches = allMatches.filter(m => m.round.startsWith('group_') && m.status === 'completed');

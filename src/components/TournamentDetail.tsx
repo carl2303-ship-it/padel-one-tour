@@ -1021,6 +1021,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           if (allGroupsDone && hasUnpopulatedKnockout) {
             console.log('[FETCH] Auto-populating knockout brackets - all groups done but knockout unpopulated');
+
+            // For mixed_american, ensure all players have group_name before populating
+            if (currentTournament?.format === 'mixed_american') {
+              const playersWithoutGroup = playersResult.data.filter((p: any) => !p.group_name);
+              if (playersWithoutGroup.length > 0) {
+                console.log('[FETCH] Auto-assigning group "A" to', playersWithoutGroup.length, 'players missing group_name');
+                await supabase
+                  .from('players')
+                  .update({ group_name: 'A' })
+                  .in('id', playersWithoutGroup.map((p: any) => p.id));
+              }
+            }
+
             populatePlacementMatches(tournament.id).then(() => {
               fetchTournamentData();
             });
@@ -3168,6 +3181,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         
         console.log(`[SCHEDULE] MIXED AMERICAN: Generated ${matchesToInsert.length} group matches`);
+
+        // Auto-assign group "A" to all players for mixed_american (single group)
+        const allPlayerIds = individualPlayers.map(p => p.id);
+        if (allPlayerIds.length > 0) {
+          const { error: groupError } = await supabase
+            .from('players')
+            .update({ group_name: 'A' })
+            .in('id', allPlayerIds);
+          if (groupError) {
+            console.error('[SCHEDULE] MIXED AMERICAN: Error assigning group_name:', groupError);
+          } else {
+            console.log(`[SCHEDULE] MIXED AMERICAN: Auto-assigned group "A" to ${allPlayerIds.length} players`);
+          }
+        }
 
         const lastMatchTime = new Date(currentTime);
         let knockoutTime = new Date(lastMatchTime.getTime() + matchDuration * 60000);
