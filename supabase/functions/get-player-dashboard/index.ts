@@ -49,15 +49,25 @@ Deno.serve(async (req: Request) => {
 
     const phone = (playerAccount as any).phone_number;
     const name = playerAccount.name || '';
+    const playerAccountId = playerAccount.id;
 
-    // Get player IDs (from players table)
-    const [playersByPhone, playersByName] = await Promise.all([
-      phone ? supabaseAdmin.from('players').select('id, tournament_id').eq('phone_number', phone) : { data: [] },
-      name ? supabaseAdmin.from('players').select('id, tournament_id').ilike('name', name) : { data: [] },
+    // OPTIMIZED: Get player IDs using player_account_id (direct FK) with fallback to phone/name
+    const [playersByAccountId, playersByPhone, playersByName] = await Promise.all([
+      playerAccountId
+        ? supabaseAdmin.from('players').select('id, tournament_id').eq('player_account_id', playerAccountId)
+        : { data: [] },
+      // Fallback: phone match (for players not yet linked)
+      phone
+        ? supabaseAdmin.from('players').select('id, tournament_id').eq('phone_number', phone).is('player_account_id', null)
+        : { data: [] },
+      // Fallback: name match (for players without phone or account link)
+      name
+        ? supabaseAdmin.from('players').select('id, tournament_id').ilike('name', name).is('player_account_id', null)
+        : { data: [] },
     ]);
 
     const allPlayersMap = new Map<string, { id: string; tournament_id: string | null }>();
-    [...(playersByPhone.data || []), ...(playersByName.data || [])].forEach((p: any) => {
+    [...(playersByAccountId.data || []), ...(playersByPhone.data || []), ...(playersByName.data || [])].forEach((p: any) => {
       allPlayersMap.set(p.id, p);
     });
     const playerIds = Array.from(allPlayersMap.values()).map((p) => p.id);
@@ -70,43 +80,78 @@ Deno.serve(async (req: Request) => {
       teamIds = (myTeams || []).map((t: any) => t.id);
     }
 
-    // Fetch league standings (by player_account_id, entity_name, or entity_id)
-    const conditions: string[] = [`player_account_id.eq.${playerAccount.id}`];
-    if (name?.trim()) {
-      conditions.push(`entity_name.ilike.%${name.trim()}%`);
+    // Fetch league standings (priority: player_account_id > entity_id > entity_name)
+    const conditions: string[] = [];
+    
+    // First priority: use player_account_id (most reliable)
+    if (playerAccount.id) {
+      conditions.push(`player_account_id.eq.${playerAccount.id}`);
     }
+    
+    // Second priority: use entity_id (player IDs from tournaments)
     if (playerIds.length > 0) {
       conditions.push(`entity_id.in.(${playerIds.join(',')})`);
     }
+    
+    // Third priority: use entity_name as fallback (only if no player_account_id or entity_id)
+    if (name?.trim() && (!playerAccount.id || conditions.length === 0)) {
+      conditions.push(`entity_name.ilike.%${name.trim()}%`);
+    }
+    
+    // Team IDs (for team-based leagues)
     if (teamIds.length > 0) {
       conditions.push(`entity_id.in.(${teamIds.join(',')})`);
     }
 
     console.log('[EdgeFn] League query conditions:', conditions, 'playerAccountId:', playerAccount.id, 'name:', name, 'playerIds:', playerIds, 'teamIds:', teamIds);
 
-    const { data: standings, error: standingsError } = await supabaseAdmin
-      .from('league_standings')
-      .select('id, league_id, total_points, tournaments_played, entity_name, leagues!inner(id, name)')
-      .or(conditions.join(','))
-      .order('total_points', { ascending: false });
+    let standings: any[] = [];
+    let standingsError: any = null;
+    
+    if (conditions.length > 0) {
+      const result = await supabaseAdmin
+        .from('league_standings')
+        .select('id, league_id, total_points, tournaments_played, entity_name, player_account_id, leagues!inner(id, name)')
+        .or(conditions.join(','))
+        .order('total_points', { ascending: false });
+      
+      standings = result.data || [];
+      standingsError = result.error;
+    }
 
     console.log('[EdgeFn] League standings result:', standings?.length ?? 0, 'error:', standingsError);
 
+    // OPTIMIZED: Batch fetch all league standings counts instead of N+1 queries
     const leagueStandings: any[] = [];
     if (standings && standings.length > 0) {
+      const uniqueLeagueIds = [...new Set((standings as any[]).map((s) => s.leagues?.id).filter(Boolean))];
+      
+      // Single batch query to get all standings for all leagues
+      const { data: allLeagueStandings } = uniqueLeagueIds.length > 0
+        ? await supabaseAdmin
+            .from('league_standings')
+            .select('id, league_id, total_points')
+            .in('league_id', uniqueLeagueIds)
+            .order('total_points', { ascending: false })
+        : { data: [] };
+
+      // Group standings by league
+      const standingsByLeague = new Map<string, any[]>();
+      (allLeagueStandings || []).forEach((st: any) => {
+        const list = standingsByLeague.get(st.league_id) || [];
+        list.push(st);
+        standingsByLeague.set(st.league_id, list);
+      });
+
       for (const s of standings as any[]) {
         const leagueId = s.leagues?.id;
-        const { data: allStandings } = await supabaseAdmin
-          .from('league_standings')
-          .select('id, total_points')
-          .eq('league_id', leagueId)
-          .order('total_points', { ascending: false });
-        const position = allStandings ? allStandings.findIndex((st: any) => st.id === s.id) + 1 : 0;
+        const leagueAllStandings = standingsByLeague.get(leagueId) || [];
+        const position = leagueAllStandings.findIndex((st: any) => st.id === s.id) + 1;
         leagueStandings.push({
           league_id: leagueId,
           league_name: s.leagues?.name || '',
           position,
-          total_participants: allStandings?.length || 0,
+          total_participants: leagueAllStandings.length,
           points: s.total_points,
           tournaments_played: s.tournaments_played,
         });

@@ -196,29 +196,28 @@ export default function PlayerDashboard() {
   const fetchTournaments = async () => {
     const { data: playerAccount } = await supabase
       .from('player_accounts')
-      .select('phone_number, name')
+      .select('id, phone_number, name')
       .eq('user_id', user?.id)
       .maybeSingle();
 
     let enrolledIds = new Set<string>();
 
     if (playerAccount) {
-      const { data: playersByPhone } = playerAccount.phone_number
-        ? await supabase
-            .from('players')
-            .select('id, tournament_id')
-            .eq('phone_number', playerAccount.phone_number)
-        : { data: [] };
-
-      const { data: playersByName } = playerAccount.name
-        ? await supabase
-            .from('players')
-            .select('id, tournament_id')
-            .ilike('name', playerAccount.name)
-        : { data: [] };
+      // OPTIMIZED: Use player_account_id (direct FK) with fallbacks
+      const [playersByAccountId, playersByPhone, playersByName] = await Promise.all([
+        playerAccount.id
+          ? supabase.from('players').select('id, tournament_id').eq('player_account_id', playerAccount.id)
+          : { data: [] },
+        playerAccount.phone_number
+          ? supabase.from('players').select('id, tournament_id').eq('phone_number', playerAccount.phone_number).is('player_account_id', null)
+          : { data: [] },
+        playerAccount.name
+          ? supabase.from('players').select('id, tournament_id').ilike('name', playerAccount.name).is('player_account_id', null)
+          : { data: [] },
+      ]);
 
       const allPlayersMap = new Map<string, { id: string; tournament_id: string | null }>();
-      [...(playersByPhone || []), ...(playersByName || [])].forEach(p => {
+      [...(playersByAccountId.data || []), ...(playersByPhone.data || []), ...(playersByName.data || [])].forEach(p => {
         allPlayersMap.set(p.id, p);
       });
       const allPlayers = Array.from(allPlayersMap.values());

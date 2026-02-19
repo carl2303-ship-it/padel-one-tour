@@ -904,13 +904,20 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
     // For individual round robin, fetch individual players instead of teams
     if (isIndividualRoundRobin) {
-      console.log('[STANDINGS-INDIVIDUAL] Fetching individual players for tournament:', tournamentId);
+      console.log('[STANDINGS-INDIVIDUAL] Fetching individual players for tournament:', tournamentId, 'categoryId:', categoryId);
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('id, name, group_name, category_id, final_position')
         .eq('tournament_id', tournamentId);
 
-      console.log('[STANDINGS-INDIVIDUAL] Players data:', playersData, 'Error:', playersError);
+      console.log('[STANDINGS-INDIVIDUAL] Players data:', playersData?.length, 'Error:', playersError);
+
+      // Filter players by category if a category is selected
+      const filteredPlayersData = categoryId
+        ? (playersData || []).filter(p => p.category_id === categoryId)
+        : (playersData || []);
+
+      console.log('[STANDINGS-INDIVIDUAL] Filtered players for category:', filteredPlayersData.length);
 
       let matchesQuery = supabase
         .from('matches')
@@ -926,18 +933,20 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       console.log('[STANDINGS-INDIVIDUAL] Matches:', matches?.length, 'Error:', matchesError);
       console.log('[STANDINGS-INDIVIDUAL] First match:', matches?.[0]);
 
-      if (!playersData || !matches) {
-        console.log('[STANDINGS-INDIVIDUAL] Missing data - players:', !!playersData, 'matches:', !!matches);
-        setLoading(false);
-        return;
+      if (!filteredPlayersData || filteredPlayersData.length === 0 || !matches) {
+        console.log('[STANDINGS-INDIVIDUAL] Missing data - players:', filteredPlayersData?.length, 'matches:', !!matches);
+        if (!matches) {
+          setLoading(false);
+          return;
+        }
       }
 
-      // Calculate individual player stats
+      // Calculate individual player stats - ONLY for filtered players (by category)
       const playerStatsMap = new Map<string, IndividualPlayerStats>();
 
-      console.log('[STANDINGS-INDIVIDUAL] All players:', playersData.map(p => ({ id: p.id, name: p.name })));
+      console.log('[STANDINGS-INDIVIDUAL] Players for stats:', filteredPlayersData.map(p => ({ id: p.id, name: p.name, cat: p.category_id })));
 
-      playersData.forEach(player => {
+      filteredPlayersData.forEach(player => {
         playerStatsMap.set(player.id, {
           id: player.id,
           name: player.name,

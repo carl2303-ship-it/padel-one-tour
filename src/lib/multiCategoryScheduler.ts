@@ -10,6 +10,7 @@ interface CategoryScheduleRequest {
   rounds?: number;
   isIndividualFormat?: boolean;
   knockoutStage?: 'final' | 'semifinals' | 'quarterfinals' | 'round_of_16';
+  courtNames?: string[];
 }
 
 function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string } {
@@ -62,9 +63,38 @@ export function scheduleMultipleCategories(
   dailyEndTime: string = '21:00',
   matchDurationMinutes: number = 90,
   existingMatches: ScheduledMatch[] = [],
-  dailySchedules: DailySchedule[] = []
+  dailySchedules: DailySchedule[] = [],
+  allCourtNames: string[] = []
 ): Map<string, ScheduledMatch[]> {
-  console.log('[MULTI-CAT V4] Starting with dailySchedules:', JSON.stringify(dailySchedules));
+  console.log('[MULTI-CAT V5] Starting with category-specific courts');
+  console.log('[MULTI-CAT V5] All court names:', allCourtNames);
+  
+  // Build a map of category -> allowed court numbers and names
+  const categoryCourtMap = new Map<string, { courtNumbers: number[]; courtNames: string[] }>();
+  
+  categories.forEach(cat => {
+    if (cat.courtNames && cat.courtNames.length > 0) {
+      // Category has specific courts assigned
+      const courtNumbers: number[] = [];
+      const courtNames: string[] = [];
+      
+      cat.courtNames.forEach(courtName => {
+        const courtIndex = allCourtNames.indexOf(courtName);
+        if (courtIndex >= 0) {
+          courtNumbers.push(courtIndex + 1); // Convert to 1-based court number
+          courtNames.push(courtName);
+        }
+      });
+      
+      categoryCourtMap.set(cat.categoryId, { courtNumbers, courtNames });
+      console.log(`[MULTI-CAT V5] Category ${cat.categoryId}: using courts ${courtNames.join(', ')} (${courtNumbers.join(', ')})`);
+    } else {
+      // Category uses all courts
+      const allNumbers = Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+      categoryCourtMap.set(cat.categoryId, { courtNumbers: allNumbers, courtNames: allCourtNames });
+      console.log(`[MULTI-CAT V5] Category ${cat.categoryId}: using all ${numberOfCourts} courts`);
+    }
+  });
 
   const occupiedSlots = new Set<string>();
   const busyPlayers = new Map<string, Set<string>>();
@@ -183,14 +213,14 @@ export function scheduleMultipleCategories(
     let matchesScheduledThisSlot = 0;
     const playersPlayingThisSlot = new Set<string>();
 
-    // Try to fill ALL courts with matches from ANY category
+    // Try to fill courts - each category only uses its assigned courts
     for (let court = 1; court <= numberOfCourts; court++) {
       const slotKey = `${timeStr}_${court}`;
       if (occupiedSlots.has(slotKey)) {
         continue;
       }
 
-      // Find first available match from ANY category where NO player is already playing this slot
+      // Find which category can use this court
       let matchToSchedule: typeof groupMatches[0] | undefined;
 
       // Rotate through categories based on slot to maintain some alternation
@@ -198,6 +228,12 @@ export function scheduleMultipleCategories(
       for (let catOffset = 0; catOffset < uniqueCategories.length; catOffset++) {
         const catIdx = (startCategoryIdx + catOffset) % uniqueCategories.length;
         const categoryId = uniqueCategories[catIdx];
+        
+        // Check if this category can use this court number
+        const categoryInfo = categoryCourtMap.get(categoryId);
+        if (!categoryInfo || !categoryInfo.courtNumbers.includes(court)) {
+          continue; // This category doesn't use this court
+        }
 
         for (const match of groupMatches) {
           if (match.categoryId !== categoryId) continue;
@@ -219,10 +255,17 @@ export function scheduleMultipleCategories(
       if (matchToSchedule) {
         const matchDuration = matchToSchedule.duration || matchDurationMinutes;
         const { categoryId, duration, ...matchData } = matchToSchedule;
+        
+        // Get the court name for this court number
+        const categoryInfo = categoryCourtMap.get(categoryId);
+        const courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+          ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+          : court.toString();
+        
         const scheduledMatch = {
           ...matchData,
           scheduled_time: timeStr,
-          court: court.toString()
+          court: courtName
         };
 
         const categoryScheduled = scheduledMatches.get(categoryId)!;
@@ -308,12 +351,20 @@ export function scheduleMultipleCategories(
         const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
         if (scheduledMatchIds.has(matchId)) continue;
 
-        // Find first available court at this time
+        // Get allowed courts for this category
+        const categoryInfo = categoryCourtMap.get(koMatch.categoryId);
+        const allowedCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+
+        // Find first available court at this time (from category's allowed courts)
         let assignedCourt = 0;
-        for (let court = 1; court <= numberOfCourts; court++) {
+        let courtName = '';
+        for (const court of allowedCourts) {
           const slotKey = `${timeStr}_${court}`;
           if (!occupiedSlots.has(slotKey)) {
             assignedCourt = court;
+            courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+              ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+              : court.toString();
             occupiedSlots.add(slotKey);
             break;
           }
@@ -329,7 +380,7 @@ export function scheduleMultipleCategories(
         const scheduledMatch = {
           ...matchData,
           scheduled_time: timeStr,
-          court: assignedCourt.toString()
+          court: courtName || assignedCourt.toString()
         };
 
         const categoryScheduled = scheduledMatches.get(categoryId)!;
@@ -1038,7 +1089,6 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
     maxRounds = Math.max(maxRounds, rounds.length);
   });
 
-  // Generate group stage matches
   for (let roundIdx = 0; roundIdx < maxRounds; roundIdx++) {
     sortedGroups.forEach(groupName => {
       const rounds = roundsByGroup.get(groupName)!;
@@ -1058,47 +1108,6 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
     });
   }
 
-  console.log('[MULTI-CAT V2] Generated', matches.length, 'group matches');
-
-  // Generate knockout matches (semifinals, final, 3rd place) with TBD teams
-  // Semifinals
-  matches.push({
-    round: 'semifinal',
-    match_number: matchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: '',
-    court: ''
-  });
-  matches.push({
-    round: 'semifinal',
-    match_number: matchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: '',
-    court: ''
-  });
-
-  // Final
-  matches.push({
-    round: 'final',
-    match_number: matchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: '',
-    court: ''
-  });
-
-  // 3rd place
-  matches.push({
-    round: '3rd_place',
-    match_number: matchNumber++,
-    team1_id: null,
-    team2_id: null,
-    scheduled_time: '',
-    court: ''
-  });
-
-  console.log('[MULTI-CAT V2] Total matches (group + knockout): ', matches.length);
+  console.log('[MULTI-CAT V2] Generated', matches.length, 'group matches organized by rounds');
   return matches;
 }

@@ -19,7 +19,7 @@ import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
 import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
-import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler';
+// import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler'; // Available for future multi-category scheduling
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
 import SuperTeamLineupModal from './SuperTeamLineupModal';

@@ -14,19 +14,49 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [categories, setCategories] = useState<TournamentCategory[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState<TournamentCategory | null>(null);
+  const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [newCategory, setNewCategory] = useState({
     name: '',
-    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
+    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
     qualified_per_group: 2,
-    game_format: '1set' as '1set' | '3sets'
+    court_names: [] as string[]
   });
 
   useEffect(() => {
     loadCategories();
+    fetchClubCourts();
   }, [tournamentId]);
+
+  const fetchClubCourts = async () => {
+    // Get tournament to find user_id
+    const { data: tournament } = await supabase
+      .from('tournaments')
+      .select('user_id')
+      .eq('id', tournamentId)
+      .single();
+
+    if (!tournament?.user_id) return;
+
+    const { data, error } = await supabase
+      .from('club_courts')
+      .select('id, name, type')
+      .eq('user_id', tournament.user_id)
+      .eq('is_active', true)
+      .order('sort_order')
+      .order('name');
+
+    if (error) {
+      console.error('Error fetching courts:', error);
+      return;
+    }
+
+    if (data) {
+      setClubCourts(data);
+    }
+  };
 
   const loadCategories = async () => {
     const { data, error } = await supabase
@@ -45,40 +75,26 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
   const handleAddCategory = async () => {
     if (!newCategory.name.trim()) {
-      alert(t.category.errorNameRequired);
+      alert('Please enter a category name');
       return;
     }
 
     setLoading(true);
 
     try {
-      const isGroupsFormat = newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout' || newCategory.format === 'super_teams';
-      
-      // Tentar inserir com game_format primeiro
-      const insertData: any = {
-        tournament_id: tournamentId,
-        name: newCategory.name,
-        format: newCategory.format,
-        number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
-        max_teams: newCategory.max_teams,
-        knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
-        qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
-        game_format: newCategory.game_format
-      };
-
-      let { error } = await supabase
+      const isGroupsFormat = newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout';
+      const { error } = await supabase
         .from('tournament_categories')
-        .insert(insertData);
-
-      // Se falhar por causa de game_format, tentar sem ele
-      if (error && error.message.includes('game_format')) {
-        console.warn('game_format column not found, inserting without it');
-        delete insertData.game_format;
-        const retry = await supabase
-          .from('tournament_categories')
-          .insert(insertData);
-        error = retry.error;
-      }
+        .insert({
+          tournament_id: tournamentId,
+          name: newCategory.name,
+          format: newCategory.format,
+          number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
+          max_teams: newCategory.max_teams,
+          knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
+          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
+          court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null
+        });
 
       if (error) throw error;
 
@@ -89,14 +105,14 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         max_teams: 16,
         knockout_stage: 'quarterfinals',
         qualified_per_group: 2,
-        game_format: '1set'
+        court_names: []
       });
 
       await loadCategories();
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error adding category:', error);
-      alert(t.category.errorAddFailed);
+      alert('Failed to add category');
     } finally {
       setLoading(false);
     }
@@ -108,33 +124,19 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
-      const isGroupsFormat = editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout' || editingCategory.format === 'super_teams';
-      
-      const updateData: any = {
-        name: editingCategory.name,
-        format: editingCategory.format,
-        number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
-        max_teams: editingCategory.max_teams,
-        knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-        qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
-        game_format: editingCategory.game_format || '1set'
-      };
-
-      let { error } = await supabase
+      const isGroupsFormat = editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout';
+      const { error } = await supabase
         .from('tournament_categories')
-        .update(updateData)
+        .update({
+          name: editingCategory.name,
+          format: editingCategory.format,
+          number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
+          max_teams: editingCategory.max_teams,
+          knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
+          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
+          court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null
+        })
         .eq('id', editingCategory.id);
-
-      // Se falhar por causa de game_format, tentar sem ele
-      if (error && error.message.includes('game_format')) {
-        console.warn('game_format column not found, updating without it');
-        delete updateData.game_format;
-        const retry = await supabase
-          .from('tournament_categories')
-          .update(updateData)
-          .eq('id', editingCategory.id);
-        error = retry.error;
-      }
 
       if (error) throw error;
 
@@ -143,7 +145,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error updating category:', error);
-      alert(t.category.errorUpdateFailed);
+      alert('Failed to update category');
     } finally {
       setLoading(false);
     }
@@ -157,10 +159,6 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
-      await supabase.from('players').update({ category_id: null }).eq('category_id', categoryId);
-      await supabase.from('teams').update({ category_id: null }).eq('category_id', categoryId);
-      await supabase.from('matches').update({ category_id: null }).eq('category_id', categoryId);
-
       const { error } = await supabase
         .from('tournament_categories')
         .delete()
@@ -172,7 +170,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       onCategoriesUpdated();
     } catch (error) {
       console.error('Error deleting category:', error);
-      alert(t.category.errorDeleteFailed);
+      alert('Failed to delete category');
     } finally {
       setLoading(false);
     }
@@ -191,7 +189,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         <div className="p-6 space-y-6">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-800">
-              {t.category.description || 'Categories allow you to organize teams into different divisions. Each category can have its own format.'}
+              Categories allow you to organize teams into different divisions (e.g., M1, M2, F1, F2). Each category can have its own format.
             </p>
           </div>
 
@@ -220,7 +218,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   value={newCategory.format}
                   onChange={(e) => setNewCategory({
                     ...newCategory,
-                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american'
+                    format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout'
                   })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -228,14 +226,10 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   <option value="groups_knockout">{t.format.groups_knockout}</option>
                   <option value="round_robin">{t.format.round_robin}</option>
                   <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
-                  <option value="super_teams">{t.format.super_teams}</option>
-                  <option value="crossed_playoffs">Crossed Playoffs</option>
-                  <option value="mixed_gender">Mixed Gender</option>
-                  <option value="mixed_american">Americano Misto (1H+1M vs 1H+1M)</option>
                 </select>
               </div>
 
-              {(newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout' || newCategory.format === 'super_teams') && (
+              {(newCategory.format === 'groups_knockout' || newCategory.format === 'individual_groups_knockout') && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -295,21 +289,46 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t.category.gameFormat}
-                </label>
-                <select
-                  value={newCategory.game_format}
-                  onChange={(e) => setNewCategory({ ...newCategory, game_format: e.target.value as '1set' | '3sets' })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="1set">{t.category.gameFormat1Set}</option>
-                  <option value="3sets">{t.category.gameFormat3Sets}</option>
-                </select>
-              </div>
-
             </div>
+
+            {clubCourts.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Campos para esta Categoria ({newCategory.court_names.length > 0 ? newCategory.court_names.length : 'todos'} selecionado{newCategory.court_names.length !== 1 ? 's' : ''})
+                </label>
+                <div className="border border-gray-300 rounded-lg p-3 space-y-2 bg-gray-50">
+                  <div className="text-xs text-gray-600 mb-2">
+                    Se nenhum campo for selecionado, todos os campos do torneio serão usados
+                  </div>
+                  {clubCourts.map((court) => {
+                    const isSelected = newCategory.court_names.includes(court.name);
+                    return (
+                      <label
+                        key={court.id}
+                        className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                          isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            setNewCategory(prev => ({
+                              ...prev,
+                              court_names: isSelected
+                                ? prev.court_names.filter(n => n !== court.name)
+                                : [...prev.court_names, court.name]
+                            }));
+                          }}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">{court.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <button
               onClick={handleAddCategory}
@@ -353,7 +372,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               value={editingCategory.format}
                               onChange={(e) => setEditingCategory({
                                 ...editingCategory,
-                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american'
+                                format: e.target.value as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout'
                               })}
                               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
@@ -361,14 +380,10 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               <option value="groups_knockout">{t.format.groups_knockout}</option>
                               <option value="round_robin">{t.format.round_robin}</option>
                               <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
-                              <option value="super_teams">{t.format.super_teams}</option>
-                              <option value="crossed_playoffs">Crossed Playoffs</option>
-                              <option value="mixed_gender">Mixed Gender</option>
-                              <option value="mixed_american">Americano Misto (1H+1M vs 1H+1M)</option>
                             </select>
                           </div>
 
-                          {(editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout' || editingCategory.format === 'super_teams') && (
+                          {(editingCategory.format === 'groups_knockout' || editingCategory.format === 'individual_groups_knockout') && (
                             <>
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -428,21 +443,50 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             />
                           </div>
 
-                              <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                  {t.category.gameFormat}
-                                </label>
-                                <select
-                                  value={editingCategory.game_format || '1set'}
-                                  onChange={(e) => setEditingCategory({ ...editingCategory, game_format: e.target.value as '1set' | '3sets' })}
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                >
-                                  <option value="1set">{t.category.gameFormat1Set}</option>
-                                  <option value="3sets">{t.category.gameFormat3Sets}</option>
-                                </select>
-                              </div>
-
                         </div>
+
+                        {clubCourts.length > 0 && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Campos para esta Categoria ({editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names.length : 'todos'} selecionado{editingCategory.court_names && editingCategory.court_names.length !== 1 ? 's' : ''})
+                            </label>
+                            <div className="border border-gray-300 rounded-lg p-3 space-y-2 bg-gray-50">
+                              <div className="text-xs text-gray-600 mb-2">
+                                Se nenhum campo for selecionado, todos os campos do torneio serão usados
+                              </div>
+                              {clubCourts.map((court) => {
+                                const isSelected = editingCategory.court_names?.includes(court.name) || false;
+                                return (
+                                  <label
+                                    key={court.id}
+                                    className={`flex items-center gap-3 p-2 rounded cursor-pointer transition-colors ${
+                                      isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-white'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setEditingCategory(prev => {
+                                          if (!prev) return prev;
+                                          const currentNames = prev.court_names || [];
+                                          return {
+                                            ...prev,
+                                            court_names: isSelected
+                                              ? currentNames.filter(n => n !== court.name)
+                                              : [...currentNames, court.name]
+                                          };
+                                        });
+                                      }}
+                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <span className="text-sm text-gray-700 font-medium">{court.name}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         <div className="flex gap-2">
                           <button
@@ -450,14 +494,14 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             disabled={loading}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
                           >
-                            {t.category.save}
+                            Save
                           </button>
                           <button
                             onClick={() => setEditingCategory(null)}
                             disabled={loading}
                             className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors font-medium disabled:opacity-50"
                           >
-                            {t.button.cancel}
+                            Cancel
                           </button>
                         </div>
                       </div>
@@ -468,17 +512,16 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                           <div className="text-sm text-gray-600">
                             {category.format === 'single_elimination' && t.format.single_elimination}
                             {category.format === 'round_robin' && t.format.round_robin}
-                            {category.format === 'super_teams' && t.format.super_teams}
-                            {category.format === 'crossed_playoffs' && 'Crossed Playoffs'}
-                            {category.format === 'mixed_gender' && 'Mixed Gender'}
-                            {category.format === 'mixed_american' && 'Americano Misto'}
                             {category.format === 'groups_knockout' && `${t.format.groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
                             {category.format === 'individual_groups_knockout' && `${t.format.individual_groups_knockout} (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
-                            {(category.format === 'groups_knockout' || category.format === 'individual_groups_knockout' || category.format === 'super_teams') && category.knockout_stage && (
+                            {(category.format === 'groups_knockout' || category.format === 'individual_groups_knockout') && category.knockout_stage && (
                               <> • {category.knockout_stage === 'round_of_16' ? 'R16' : category.knockout_stage === 'quarterfinals' ? 'QF' : category.knockout_stage === 'semifinals' ? 'SF' : 'F'}</>
                             )}
                             {' • '}
-                            {t.category.maxLabel} {category.max_teams} {category.format === 'round_robin' || category.format === 'individual_groups_knockout' ? t.category.maxPlayers : t.category.maxTeams}
+                            Max {category.max_teams} {category.format === 'round_robin' || category.format === 'individual_groups_knockout' ? 'players' : 'teams'}
+                            {category.court_names && category.court_names.length > 0 && (
+                              <> • {category.court_names.length} campo{category.court_names.length !== 1 ? 's' : ''}</>
+                            )}
                           </div>
                         </div>
                         <div className="flex gap-2">
