@@ -796,8 +796,14 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
             const allGroupsDone = groupMatchesAll.every(m => m.status === 'completed');
 
             if (allGroupsDone) {
-              console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');
-              await populatePlacementMatches(tournamentId);
+              // Para mixed_american/mixed_gender, NÃO usar populatePlacementMatches genérica
+              // O auto-fill correto (com cruzamento F+M) é feito no fetchTournamentData / handleMatchRealtime
+              if (tournament?.format === 'mixed_american' || tournament?.format === 'mixed_gender') {
+                console.log('[MATCH_MODAL] All group matches completed (mixed format) - knockout will be populated by fetchTournamentData');
+              } else {
+                console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');
+                await populatePlacementMatches(tournamentId);
+              }
             }
           }
         }

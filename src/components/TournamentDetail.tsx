@@ -1140,32 +1140,73 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 }
               }
               
-              // Popular meias-finais se vazias
+              // Popular meias-finais (verificar sempre para corrigir populações incorretas)
               if (hasSemifinalRounds && sortedCats.length >= 2) {
                 const sfMatches = matchesResult.data!
                   .filter((m: any) => m.round === 'semifinal')
                   .sort((a: any, b: any) => a.match_number - b.match_number);
-                const sfEmpty = sfMatches.length >= 2 && sfMatches.every((m: any) => !m.player1_individual_id);
                 
-                if (sfEmpty) {
+                if (sfMatches.length >= 2) {
                   const rankF = getCatRankings(sortedCats[0].id);
                   const rankM = getCatRankings(sortedCats[1].id);
                   console.log(`[FETCH-FILL] MA Rankings: ${sortedCats[0].name}=[${rankF.map(p=>p.name)}], ${sortedCats[1].name}=[${rankM.map(p=>p.name)}]`);
                   
                   if (rankF.length >= 4 && rankM.length >= 4) {
-                    // SF1: (1°F + 4°M) vs (2°F + 3°M)
-                    await supabase.from('matches').update({
-                      player1_individual_id: rankF[0].id, player2_individual_id: rankM[3].id,
-                      player3_individual_id: rankF[1].id, player4_individual_id: rankM[2].id
-                    }).eq('id', sfMatches[0].id);
-                    // SF2: (3°F + 2°M) vs (4°F + 1°M)
-                    await supabase.from('matches').update({
-                      player1_individual_id: rankF[2].id, player2_individual_id: rankM[1].id,
-                      player3_individual_id: rankF[3].id, player4_individual_id: rankM[0].id
-                    }).eq('id', sfMatches[1].id);
+                    // Verificar se os emparelhamentos estão corretos
+                    const sf1 = sfMatches[0];
+                    const expectedSF1 = {
+                      p1: rankF[0].id, p2: rankM[3].id,
+                      p3: rankF[1].id, p4: rankM[2].id
+                    };
+                    const expectedSF2 = {
+                      p1: rankF[2].id, p2: rankM[1].id,
+                      p3: rankF[3].id, p4: rankM[0].id
+                    };
                     
-                    console.log('[FETCH-FILL] MA Semifinals populated! Refreshing...');
-                    await fetchTournamentData(); return;
+                    const sf1Correct = sf1.player1_individual_id === expectedSF1.p1 &&
+                                       sf1.player2_individual_id === expectedSF1.p2 &&
+                                       sf1.player3_individual_id === expectedSF1.p3 &&
+                                       sf1.player4_individual_id === expectedSF1.p4;
+                    const sf2 = sfMatches[1];
+                    const sf2Correct = sf2.player1_individual_id === expectedSF2.p1 &&
+                                       sf2.player2_individual_id === expectedSF2.p2 &&
+                                       sf2.player3_individual_id === expectedSF2.p3 &&
+                                       sf2.player4_individual_id === expectedSF2.p4;
+                    
+                    if (!sf1Correct || !sf2Correct) {
+                      console.log('[FETCH-FILL] MA Semifinals incorretas ou vazias, corrigindo...');
+                      // SF1: (1°F + 4°M) vs (2°F + 3°M)
+                      await supabase.from('matches').update({
+                        player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
+                        player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
+                      }).eq('id', sfMatches[0].id);
+                      // SF2: (3°F + 2°M) vs (4°F + 1°M)
+                      await supabase.from('matches').update({
+                        player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
+                        player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
+                      }).eq('id', sfMatches[1].id);
+                      
+                      // Limpar final e 3°/4° se tinham jogadores errados
+                      const finalMatch = matchesResult.data!.find((m: any) => m.round === 'final');
+                      const thirdMatch = matchesResult.data!.find((m: any) => m.round === '3rd_place');
+                      if (finalMatch && finalMatch.status !== 'completed') {
+                        await supabase.from('matches').update({
+                          player1_individual_id: null, player2_individual_id: null,
+                          player3_individual_id: null, player4_individual_id: null
+                        }).eq('id', finalMatch.id);
+                      }
+                      if (thirdMatch && thirdMatch.status !== 'completed') {
+                        await supabase.from('matches').update({
+                          player1_individual_id: null, player2_individual_id: null,
+                          player3_individual_id: null, player4_individual_id: null
+                        }).eq('id', thirdMatch.id);
+                      }
+                      
+                      console.log('[FETCH-FILL] MA Semifinals corrigidas! Refreshing...');
+                      await fetchTournamentData(); return;
+                    } else {
+                      console.log('[FETCH-FILL] MA Semifinals já estão corretas');
+                    }
                   }
                 }
               }
