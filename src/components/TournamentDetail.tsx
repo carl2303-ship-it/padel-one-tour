@@ -1049,6 +1049,80 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
       }
+
+      // Auto-fill crossed playoffs R1 se grupos estão completos mas R1 está vazio
+      // Funciona para qualquer formato individual com rounds crossed_r1_j1
+      if (matchesResult.data && playersResult.data && categoriesResult.data) {
+        const allMatchesLocal = matchesResult.data as unknown as MatchWithTeams[];
+        const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('group_'));
+        const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
+        const allGroupsDoneLocal = groupMatchesLocal.length > 0 && groupMatchesLocal.every(m => m.status === 'completed');
+        
+        console.log('[FETCH-CHECK] Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'R1 exists:', !!r1j1Local, 'R1 populated:', r1j1Local?.player1_individual_id);
+        
+        if (allGroupsDoneLocal && r1j1Local && !r1j1Local.player1_individual_id) {
+          console.log('[FETCH-FILL] All groups done but R1 empty - filling crossed playoffs R1...');
+          
+          const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
+          const localPlayers = playersResult.data as Array<{ id: string; name: string; category_id: string }>;
+          const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
+          
+          if (sortedCats.length >= 2 && sortedCats.length <= 3) {
+            const getCatRankings = (categoryId: string) => {
+              const catPlayers = localPlayers.filter(p => p.category_id === categoryId);
+              const catMatches = matchesResult.data!.filter((m: any) => 
+                m.category_id === categoryId && m.round?.startsWith('group_') && m.status === 'completed'
+              );
+              const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
+              catPlayers.forEach(p => playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0 }));
+              catMatches.forEach((match: any) => {
+                const t1G = (match.team1_score_set1||0)+(match.team1_score_set2||0)+(match.team1_score_set3||0);
+                const t2G = (match.team2_score_set1||0)+(match.team2_score_set2||0)+(match.team2_score_set3||0);
+                const t1Won = t1G > t2G;
+                [match.player1_individual_id, match.player2_individual_id].filter(Boolean).forEach((pid: string) => {
+                  const s = playerStats.get(pid); if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (t1Won) s.wins++; }
+                });
+                [match.player3_individual_id, match.player4_individual_id].filter(Boolean).forEach((pid: string) => {
+                  const s = playerStats.get(pid); if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (!t1Won) s.wins++; }
+                });
+              });
+              return Array.from(playerStats.values()).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : (b.gamesWon-b.gamesLost)-(a.gamesWon-a.gamesLost));
+            };
+
+            try {
+              if (sortedCats.length === 3) {
+                const [catA, catB, catC] = sortedCats;
+                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
+                if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
+                  console.log(`[FETCH-FILL] 3-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
+                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankC[3].id, player3_individual_id: rankA[1].id, player4_individual_id: rankC[2].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                  await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[1].id, player3_individual_id: rankA[3].id, player4_individual_id: rankB[0].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+                  await supabase.from('matches').update({ player1_individual_id: rankB[2].id, player2_individual_id: rankC[1].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[0].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                  console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
+                  await fetchTournamentData(); return;
+                }
+              } else {
+                const [catA, catB] = sortedCats;
+                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
+                if (rankA.length >= 4 && rankB.length >= 4) {
+                  console.log(`[FETCH-FILL] 2-cat: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
+                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                  await supabase.from('matches').update({ player1_individual_id: rankA[1].id, player2_individual_id: rankB[2].id, player3_individual_id: rankB[1].id, player4_individual_id: rankA[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                  console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
+                  await fetchTournamentData(); return;
+                } else {
+                  console.log('[FETCH-FILL] Not enough ranked players: A=', rankA.length, 'B=', rankB.length);
+                }
+              }
+            } catch (err) {
+              console.error('[FETCH-FILL] Error:', err);
+            }
+          } else {
+            console.log('[FETCH-FILL] Need 2-3 categories, got', sortedCats.length);
+          }
+        }
+      }
     } else {
       setSuperTeams([]);
       setSuperTeamConfrontations([]);
@@ -1110,77 +1184,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (categoriesResult.data) {
         console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
-      }
-
-      // Auto-fill crossed playoffs R1 se grupos estão completos mas R1 está vazio
-      // Funciona para qualquer formato que tenha rounds crossed_r1_j1
-      if (matchesResult.data && playersResult.data && categoriesResult.data) {
-        const allMatches = matchesResult.data as unknown as MatchWithTeams[];
-        const groupMatches = allMatches.filter(m => m.round?.startsWith('group_'));
-        const r1j1 = allMatches.find(m => m.round === 'crossed_r1_j1');
-        const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
-        
-        if (allGroupsDone && r1j1 && !r1j1.player1_individual_id) {
-          console.log('[FETCH] All groups done but R1 empty - auto-filling crossed playoffs R1 inline...');
-          
-          const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
-          const localPlayers = playersResult.data as Array<{ id: string; name: string; category_id: string }>;
-          const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
-          
-          if (sortedCats.length >= 2 && sortedCats.length <= 3) {
-            // Calcular rankings por categoria
-            const getCatRankings = (categoryId: string) => {
-              const catPlayers = localPlayers.filter(p => p.category_id === categoryId);
-              const catMatches = matchesResult.data!.filter((m: any) => 
-                m.category_id === categoryId && m.round?.startsWith('group_') && m.status === 'completed'
-              );
-              const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
-              catPlayers.forEach(p => playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0 }));
-              catMatches.forEach((match: any) => {
-                const t1G = (match.team1_score_set1||0)+(match.team1_score_set2||0)+(match.team1_score_set3||0);
-                const t2G = (match.team2_score_set1||0)+(match.team2_score_set2||0)+(match.team2_score_set3||0);
-                const t1Won = t1G > t2G;
-                [match.player1_individual_id, match.player2_individual_id].filter(Boolean).forEach((pid: string) => {
-                  const s = playerStats.get(pid); if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (t1Won) s.wins++; }
-                });
-                [match.player3_individual_id, match.player4_individual_id].filter(Boolean).forEach((pid: string) => {
-                  const s = playerStats.get(pid); if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (!t1Won) s.wins++; }
-                });
-              });
-              return Array.from(playerStats.values()).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : (b.gamesWon-b.gamesLost)-(a.gamesWon-a.gamesLost));
-            };
-
-            try {
-              if (sortedCats.length === 3) {
-                const [catA, catB, catC] = sortedCats;
-                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
-                if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
-                  console.log(`[FETCH-FILL] 3-cat Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankC[3].id, player3_individual_id: rankA[1].id, player4_individual_id: rankC[2].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[1].id, player3_individual_id: rankA[3].id, player4_individual_id: rankB[0].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankB[2].id, player2_individual_id: rankC[1].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[0].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-                  console.log('[FETCH-FILL] R1 filled (3 categories)! Refreshing...');
-                  await fetchTournamentData();
-                  return;
-                }
-              } else {
-                const [catA, catB] = sortedCats;
-                const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
-                if (rankA.length >= 4 && rankB.length >= 4) {
-                  console.log(`[FETCH-FILL] 2-cat Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[1].id, player2_individual_id: rankB[2].id, player3_individual_id: rankB[1].id, player4_individual_id: rankA[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                  await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-                  console.log('[FETCH-FILL] R1 filled (2 categories)! Refreshing...');
-                  await fetchTournamentData();
-                  return;
-                }
-              }
-            } catch (err) {
-              console.error('[FETCH-FILL] Error filling R1:', err);
-            }
-          }
-        }
       }
     }
 
