@@ -62,8 +62,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const [loading, setLoading] = useState(true);
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
-  const isIndividualGroupsKnockout = format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender';
-  const isMixedAmerican = format === 'mixed_american';
+  const isIndividualGroupsKnockout = format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender' || format === 'mixed_american';
+  const isMixedAmerican = format === 'mixed_american'; // Kept for rendering label only
 
   useEffect(() => {
     console.log('[STANDINGS] Component mounted, fetching standings...');
@@ -1299,7 +1299,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
-  if (format !== 'groups_knockout' && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout && !isMixedAmerican) {
+  if (format !== 'groups_knockout' && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
     return (
       <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
         <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
