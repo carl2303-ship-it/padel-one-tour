@@ -182,10 +182,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
             
             if (allGroupsDone) {
-              if (currentTournament?.format === 'mixed_american') {
-                console.log('[REALTIME] All groups done (mixed_american) - refetching to auto-populate knockouts');
+              if (currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') {
+                console.log('[REALTIME] All groups done (mixed_american/mixed_gender) - refetching to auto-populate knockouts');
                 setTimeout(() => fetchTournamentData(), 500);
-              } else if (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender') {
+              } else if (currentTournament?.format === 'crossed_playoffs') {
                 setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
               } else if (currentTournament?.format === 'individual_groups_knockout') {
                 setTimeout(async () => {
@@ -1053,6 +1053,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         console.log('[FETCH-CHECK] Format:', currentTournament?.format, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
         
+        // AUTO-FIX: Se mixed_american/mixed_gender tem crossed rounds incorretos, corrigir imediatamente
+        if ((currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') && hasCrossedRounds) {
+          console.log('[FETCH-FIX] mixed_american/mixed_gender com crossed rounds incorretos - corrigindo...');
+          await supabase.from('matches').delete()
+            .eq('tournament_id', tournament.id)
+            .like('round', 'crossed_%');
+          
+          if (!hasSemifinalRounds) {
+            const maxNum = Math.max(...matchesResult.data!.map((m: any) => m.match_number || 0));
+            const matchDur = currentTournament.match_duration_minutes || 30;
+            const lastGroupMatch = [...groupMatchesLocal].sort((a, b) => 
+              new Date(b.scheduled_time || 0).getTime() - new Date(a.scheduled_time || 0).getTime())[0];
+            const koTime = lastGroupMatch?.scheduled_time 
+              ? new Date(new Date(lastGroupMatch.scheduled_time).getTime() + matchDur * 60000).toISOString()
+              : new Date().toISOString();
+            
+            await supabase.from('matches').insert([
+              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: koTime, court: '1', status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: koTime, court: '2', status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: koTime, court: '1', status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: koTime, court: '2', status: 'scheduled' },
+            ]);
+            console.log('[FETCH-FIX] Crossed rounds apagados, 4 knockout corretos criados. Refetching...');
+            await fetchTournamentData(); return;
+          }
+        }
+        
         if (allGroupsDoneLocal) {
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
           const localPlayers = playersResult.data as Array<{ id: string; name: string; category_id: string }>;
@@ -1084,7 +1111,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // ================================================================
             // MIXED AMERICAN: popular meias-finais com cruzamento F + M
             // ================================================================
-            if (currentTournament?.format === 'mixed_american') {
+            if (currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') {
               // Se tem rounds crossed errados (de torneio antigo), apagar e recriar
               if (hasCrossedRounds) {
                 console.log('[FETCH-FILL] MA: Apagando crossed rounds incorretos...');
@@ -1145,9 +1172,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
             
             // ================================================================
-            // CROSSED PLAYOFFS / MIXED GENDER: preencher R1 se vazio
+            // CROSSED PLAYOFFS: preencher R1 se vazio
             // ================================================================
-            if ((currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender') && hasCrossedRounds) {
+            if (currentTournament?.format === 'crossed_playoffs' && hasCrossedRounds) {
               const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
               if (r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
                 console.log('[FETCH-FILL] Filling crossed playoffs R1...');
@@ -1299,8 +1326,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const allPlayersWithGroups: any[] = [];
           const tournamentNumberOfGroups = (latestTournament as any).number_of_groups || 2;
           
-          // Para mixed_american, cada categoria = 1 grupo (A, B)
-          if (currentTournament.format === 'mixed_american') {
+          // Para mixed_american / mixed_gender, cada categoria = 1 grupo (A, B)
+          if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
             const sortedCatsMA = [...categories].sort((a, b) => a.name.localeCompare(b.name));
             const allPlayersWithCatGroups: any[] = [];
             sortedCatsMA.forEach((cat, catIdx) => {
@@ -1318,9 +1345,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             return;
           }
           
-          // Para playoffs cruzados e mixed_gender, cada categoria = 1 grupo com nome diferente (A, B, C...)
-          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || 
-                                     currentTournament.format === 'mixed_gender';
+          // Para playoffs cruzados, cada categoria = 1 grupo com nome diferente (A, B, C...)
+          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs';
           
           // Ordenar categorias por nome para consistência (primeira = A, segunda = B, terceira = C)
           const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
@@ -3357,14 +3383,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           status: 'scheduled'
         }));
         
-      } else if (currentTournament.format === 'mixed_american') {
+      } else if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
         // ================================================================
-        // AMERICANO MISTO: Cada categoria joga separadamente nos grupos,
+        // AMERICANO MISTO / MIXED GENDER: Cada categoria joga separadamente nos grupos,
         // depois as fases finais cruzam F + M
         // Grupos: F joga contra F (grupo A), M joga contra M (grupo B)  
         // Knockout: SF1(1°F+4°M vs 2°F+3°M), SF2(3°F+2°M vs 4°F+1°M), 3rd, Final
         // ================================================================
-        console.log('[SCHEDULE] MIXED AMERICAN: Generating separate category groups + mixed knockouts');
+        console.log('[SCHEDULE] MIXED AMERICAN/GENDER: Generating separate category groups + mixed knockouts');
         
         const sortedCats = [...categories].sort((a, b) => a.name.localeCompare(b.name));
         
@@ -3515,14 +3541,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + 3rd + Final)`);
 
       } else if (currentTournament.format === 'individual_groups_knockout' ||
-                 currentTournament.format === 'crossed_playoffs' ||
-                 currentTournament.format === 'mixed_gender') {
-        // Americano COM grupos + eliminatórias (inclui crossed_playoffs e mixed_gender)
+                 currentTournament.format === 'crossed_playoffs') {
+        // Americano COM grupos + eliminatórias (inclui crossed_playoffs)
         console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', currentTournament.format);
         
-        // Verificar se é formato de playoffs cruzados ou mixed_gender (cada categoria = 1 grupo)
-        const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || 
-                                   currentTournament.format === 'mixed_gender';
+        // Verificar se é formato de playoffs cruzados (cada categoria = 1 grupo)
+        const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs';
         
         if (isCrossedPlayoffs) {
           // PLAYOFFS CRUZADOS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
