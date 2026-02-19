@@ -739,9 +739,12 @@ export default function MatchScheduleView({
 
     return (
       <div key={match.id} className="relative">
-        <button
+        <div
           onClick={() => onMatchClick(match.id)}
-          className="w-full border-2 rounded-lg p-3 hover:shadow-lg transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onMatchClick(match.id); }}
+          className="w-full border-2 rounded-lg p-3 hover:shadow-lg transition-shadow text-left print:break-inside-avoid print:border print:border-gray-300 print:rounded print:p-2 print:mb-2 relative cursor-pointer"
           style={{ 
             borderColor: categoryColor,
             backgroundColor: bgColor
@@ -874,7 +877,7 @@ export default function MatchScheduleView({
             <span className="font-semibold px-2 py-0.5 rounded" style={{ backgroundColor: `${categoryColor}30`, color: categoryColor }}>{categoryLabel}</span>
           )}
         </div>
-      </button>
+      </div>
       </div>
     );
   };
