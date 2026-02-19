@@ -15,6 +15,9 @@ import {
   MessageCircle,
   Tag,
   Calendar,
+  Gauge,
+  Edit3,
+  Check,
 } from 'lucide-react';
 
 const PLAYER_CATEGORIES = [
@@ -41,6 +44,9 @@ interface PlayerRecord {
   email: string | null;
   phone_number: string | null;
   player_category: PlayerCategory;
+  level: number | null;
+  level_reliability_percent: number | null;
+  player_account_id: string | null;
   tournaments: { id: string; name: string; date: string }[];
   organizerPlayerId: string | null;
 }
@@ -73,6 +79,10 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
   const [expandedPlayers, setExpandedPlayers] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [savingCategory, setSavingCategory] = useState<string | null>(null);
+  const [editingLevel, setEditingLevel] = useState<string | null>(null);
+  const [editLevelValue, setEditLevelValue] = useState<string>('');
+  const [editReliabilityValue, setEditReliabilityValue] = useState<string>('');
+  const [savingLevel, setSavingLevel] = useState<string | null>(null);
 
   const fetchAllPlayers = useCallback(async () => {
     if (!user) return;
@@ -95,10 +105,10 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     setTournaments(userTournaments.map(t => ({ id: t.id, name: t.name, date: t.start_date })));
     const tournamentIds = userTournaments.map(t => t.id);
 
-    const [playersResult, teamsResult, organizerPlayersResult] = await Promise.all([
+    const [playersResult, teamsResult, organizerPlayersResult, playerAccountsResult] = await Promise.all([
       supabase
         .from('players')
-        .select('id, name, email, phone_number, tournament_id')
+        .select('id, name, email, phone_number, tournament_id, player_account_id')
         .in('tournament_id', tournamentIds)
         .order('name'),
       supabase
@@ -106,19 +116,45 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
         .select(`
           id,
           tournament_id,
-          player1:players!teams_player1_id_fkey(id, name, email, phone_number),
-          player2:players!teams_player2_id_fkey(id, name, email, phone_number)
+          player1:players!teams_player1_id_fkey(id, name, email, phone_number, player_account_id),
+          player2:players!teams_player2_id_fkey(id, name, email, phone_number, player_account_id)
         `)
         .in('tournament_id', tournamentIds),
       supabase
         .from('organizer_players')
         .select('id, name, email, phone_number, player_category')
         .eq('organizer_id', user.id),
+      // Fetch ALL player_accounts to get level and reliability data
+      supabase
+        .from('player_accounts')
+        .select('id, name, phone_number, player_category, level, level_reliability_percent'),
     ]);
 
     const playersData = playersResult.data;
     const teamsData = teamsResult.data;
     const organizerPlayersData = organizerPlayersResult.data || [];
+    const playerAccountsData = playerAccountsResult.data || [];
+
+    // Build player_accounts lookup maps (by phone and by name)
+    const accountsByPhone = new Map<string, any>();
+    const accountsByName = new Map<string, any>();
+    playerAccountsData.forEach((pa: any) => {
+      if (pa.phone_number) {
+        accountsByPhone.set(pa.phone_number.replace(/\s+/g, '').toLowerCase(), pa);
+      }
+      if (pa.name) {
+        accountsByName.set(normalizeName(pa.name), pa);
+      }
+    });
+
+    const findPlayerAccount = (phone: string | null, name: string): any => {
+      if (phone) {
+        const normalized = phone.replace(/\s+/g, '').toLowerCase();
+        const match = accountsByPhone.get(normalized);
+        if (match) return match;
+      }
+      return accountsByName.get(normalizeName(name)) || null;
+    };
 
     const organizerPlayersMap = new Map<string, OrganizerPlayer>();
     organizerPlayersData.forEach(op => {
@@ -131,31 +167,43 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       name: string,
       email: string | null,
       phone: string | null,
-      tournamentId: string
+      tournamentId: string,
+      playerAccountId?: string | null
     ) => {
       const tournament = userTournaments.find(t => t.id === tournamentId);
       if (!tournament || !name) return;
 
       const normalizedName = normalizeName(name);
       const organizerPlayer = organizerPlayersMap.get(normalizedName);
+      const playerAccount = playerAccountId 
+        ? playerAccountsData.find((pa: any) => pa.id === playerAccountId)
+        : findPlayerAccount(phone || organizerPlayer?.phone_number || null, name);
 
       const existing = playerMap.get(normalizedName);
       if (existing) {
         if (!existing.tournaments.find(t => t.id === tournamentId)) {
           existing.tournaments.push({ id: tournament.id, name: tournament.name, date: tournament.start_date });
-          // Ordenar por data (mais recente primeiro)
           existing.tournaments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         }
         if (!existing.email && email) existing.email = email;
         if (!existing.phone_number && phone) existing.phone_number = phone;
+        // Update level/reliability from player_account if we didn't have it
+        if (playerAccount && !existing.player_account_id) {
+          existing.player_account_id = playerAccount.id;
+          existing.level = playerAccount.level;
+          existing.level_reliability_percent = playerAccount.level_reliability_percent;
+        }
       } else {
         playerMap.set(normalizedName, {
           id: normalizedName,
           normalizedName,
-          displayName: name.trim(),
+          displayName: playerAccount?.name || name.trim(),
           email: organizerPlayer?.email || email,
           phone_number: organizerPlayer?.phone_number || phone,
-          player_category: organizerPlayer?.player_category || null,
+          player_category: playerAccount?.player_category || organizerPlayer?.player_category || null,
+          level: playerAccount?.level || null,
+          level_reliability_percent: playerAccount?.level_reliability_percent || null,
+          player_account_id: playerAccount?.id || null,
           tournaments: [{ id: tournament.id, name: tournament.name, date: tournament.start_date }],
           organizerPlayerId: organizerPlayer?.id || null,
         });
@@ -163,7 +211,7 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     };
 
     playersData?.forEach(p => {
-      addPlayerToMap(p.name, p.email, p.phone_number, p.tournament_id);
+      addPlayerToMap(p.name, p.email, p.phone_number, p.tournament_id, (p as any).player_account_id);
     });
 
     teamsData?.forEach((team: any) => {
@@ -172,7 +220,8 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
           team.player1.name,
           team.player1.email,
           team.player1.phone_number,
-          team.tournament_id
+          team.tournament_id,
+          team.player1.player_account_id
         );
       }
       if (team.player2) {
@@ -180,7 +229,8 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
           team.player2.name,
           team.player2.email,
           team.player2.phone_number,
-          team.tournament_id
+          team.tournament_id,
+          team.player2.player_account_id
         );
       }
     });
@@ -204,6 +254,7 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     setSavingCategory(player.id);
 
     try {
+      // 1. Update organizer_players (local contact list)
       if (player.organizerPlayerId) {
         await supabase
           .from('organizer_players')
@@ -233,9 +284,16 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                 : p
             )
           );
-          setSavingCategory(null);
-          return;
         }
+      }
+
+      // 2. Also update player_accounts (global profile) via RPC
+      // This propagates to ALL tournaments via the trigger
+      if (player.phone_number) {
+        await supabase.rpc('update_player_account_level', {
+          p_phone_number: player.phone_number,
+          p_player_category: category,
+        });
       }
 
       setPlayers(prev =>
@@ -248,6 +306,36 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     }
 
     setSavingCategory(null);
+  };
+
+  const updatePlayerLevel = async (player: PlayerRecord) => {
+    if (!player.phone_number) return;
+    
+    setSavingLevel(player.id);
+
+    try {
+      const level = editLevelValue ? parseFloat(editLevelValue) : null;
+      const reliability = editReliabilityValue ? parseFloat(editReliabilityValue) : null;
+
+      await supabase.rpc('update_player_account_level', {
+        p_phone_number: player.phone_number,
+        p_level: level,
+        p_level_reliability_percent: reliability,
+      });
+
+      setPlayers(prev =>
+        prev.map(p =>
+          p.id === player.id
+            ? { ...p, level: level, level_reliability_percent: reliability }
+            : p
+        )
+      );
+      setEditingLevel(null);
+    } catch (error) {
+      console.error('Error updating level:', error);
+    }
+
+    setSavingLevel(null);
   };
 
   const filteredPlayers = players.filter(player => {
@@ -508,6 +596,12 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       Categoria
                     </th>
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Nível
+                    </th>
+                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Fiabilidade
+                    </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                       Torneios
                     </th>
@@ -574,6 +668,94 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                           </select>
                           <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {editingLevel === player.id ? (
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="10"
+                            value={editLevelValue}
+                            onChange={(e) => setEditLevelValue(e.target.value)}
+                            className="w-16 px-2 py-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 text-center"
+                            autoFocus
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            {player.level != null ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-md text-sm font-semibold">
+                                <Gauge className="w-3.5 h-3.5" />
+                                {Number(player.level).toFixed(1)}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-sm">-</span>
+                            )}
+                            {player.phone_number && (
+                              <button
+                                onClick={() => {
+                                  setEditingLevel(player.id);
+                                  setEditLevelValue(player.level != null ? String(player.level) : '');
+                                  setEditReliabilityValue(player.level_reliability_percent != null ? String(player.level_reliability_percent) : '');
+                                }}
+                                className="p-0.5 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Editar nível"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {editingLevel === player.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              max="100"
+                              value={editReliabilityValue}
+                              onChange={(e) => setEditReliabilityValue(e.target.value)}
+                              className="w-16 px-2 py-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 text-center"
+                            />
+                            <span className="text-xs text-gray-400">%</span>
+                            <button
+                              onClick={() => updatePlayerLevel(player)}
+                              disabled={savingLevel === player.id}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                              title="Guardar"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setEditingLevel(null)}
+                              className="p-1 text-gray-400 hover:bg-gray-100 rounded transition-colors"
+                              title="Cancelar"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          player.level_reliability_percent != null ? (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <div className="w-16 bg-gray-200 rounded-full h-2" title={`${Math.round(Number(player.level_reliability_percent))}%`}>
+                                <div 
+                                  className={`h-2 rounded-full ${
+                                    Number(player.level_reliability_percent) >= 70 ? 'bg-green-500' :
+                                    Number(player.level_reliability_percent) >= 40 ? 'bg-yellow-500' : 'bg-red-400'
+                                  }`}
+                                  style={{ width: `${Math.min(100, Math.max(0, Number(player.level_reliability_percent)))}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-gray-500 font-medium">
+                                {Math.round(Number(player.level_reliability_percent))}%
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-sm">-</span>
+                          )
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="relative">

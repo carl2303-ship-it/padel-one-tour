@@ -139,7 +139,88 @@ WHERE ls.player_account_id = pa.id
   AND LOWER(TRIM(ls.entity_name)) != LOWER(TRIM(pa.name));
 
 -- ============================================================
--- STEP 5: Simplified recalculate_league_standings_for_league
+-- STEP 5: Trigger to propagate player_accounts changes
+-- to players table and league_standings
+-- When a club or the player changes name, category, etc.
+-- it automatically updates EVERYWHERE in the system
+-- ============================================================
+CREATE OR REPLACE FUNCTION propagate_player_account_changes()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Propagate NAME change to players table and league_standings
+  IF NEW.name IS DISTINCT FROM OLD.name AND NEW.name IS NOT NULL THEN
+    UPDATE players SET name = NEW.name WHERE player_account_id = NEW.id;
+    UPDATE league_standings SET entity_name = NEW.name WHERE player_account_id = NEW.id;
+  END IF;
+
+  -- Propagate PLAYER_CATEGORY change to players table
+  IF NEW.player_category IS DISTINCT FROM OLD.player_category THEN
+    UPDATE players SET player_category = NEW.player_category WHERE player_account_id = NEW.id;
+  END IF;
+
+  -- Propagate PHONE_NUMBER change to players table
+  IF NEW.phone_number IS DISTINCT FROM OLD.phone_number AND NEW.phone_number IS NOT NULL THEN
+    UPDATE players SET phone_number = NEW.phone_number WHERE player_account_id = NEW.id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_propagate_player_account_changes ON player_accounts;
+
+CREATE TRIGGER trg_propagate_player_account_changes
+  AFTER UPDATE OF name, player_category, phone_number
+  ON player_accounts
+  FOR EACH ROW
+  EXECUTE FUNCTION propagate_player_account_changes();
+
+-- ============================================================
+-- STEP 6: RPC function for clubs to update player level
+-- Allows organizers to update level, reliability, and category
+-- on player_accounts without needing direct table access
+-- ============================================================
+CREATE OR REPLACE FUNCTION update_player_account_level(
+  p_phone_number TEXT,
+  p_player_category TEXT DEFAULT NULL,
+  p_level NUMERIC DEFAULT NULL,
+  p_level_reliability_percent NUMERIC DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_updated_id UUID;
+  v_name TEXT;
+BEGIN
+  UPDATE player_accounts
+  SET 
+    player_category = COALESCE(p_player_category, player_category),
+    level = COALESCE(p_level, level),
+    level_reliability_percent = COALESCE(p_level_reliability_percent, level_reliability_percent),
+    updated_at = NOW()
+  WHERE LOWER(TRIM(REPLACE(phone_number, ' ', ''))) = LOWER(TRIM(REPLACE(p_phone_number, ' ', '')))
+  RETURNING id, name INTO v_updated_id, v_name;
+
+  IF v_updated_id IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Player account not found');
+  END IF;
+
+  RETURN json_build_object('success', true, 'id', v_updated_id, 'name', v_name);
+END;
+$$;
+
+-- Grant execute to authenticated users (organizers/clubs)
+GRANT EXECUTE ON FUNCTION update_player_account_level TO authenticated;
+
+-- ============================================================
+-- STEP 7: Simplified recalculate_league_standings_for_league
 -- Now uses player_account_id directly from players table
 -- instead of complex phone/name matching
 -- ============================================================
