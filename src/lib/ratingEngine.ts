@@ -1,9 +1,15 @@
 /**
- * Padel One Rating Engine
+ * Padel One Rating Engine v2
  * Sistema ELO adaptado para Padel em Duplas
  * 
  * Escala: 0.5 (iniciante) a 7.0 (profissional)
- * Fiabilidade: 0% (0 jogos) a 100% (50+ jogos)
+ * Fiabilidade: 0% (0 jogos) a 100% (75+ jogos rated)
+ * 
+ * v2 Fixes:
+ * - K-Factor agora usa rated_matches (contagem real de jogos processados)
+ * - wins/losses/rated_matches atualizados em player_accounts após cada jogo
+ * - Fiabilidade calculada diretamente a partir de rated_matches
+ * - K-Factor inicial reduzido de 0.15 para 0.12 (menos agressivo)
  */
 
 import { supabase } from './supabase'
@@ -17,7 +23,7 @@ export interface PlayerRating {
   user_id: string      // auth user id
   name: string
   rating: number       // level (ex: 2.5, 4.1)
-  matches: number      // total matches played (wins + losses)
+  matches: number      // total rated matches played
 }
 
 export interface MatchScore {
@@ -31,12 +37,12 @@ export interface RatingResult {
   skipped?: boolean
   message?: string
   team1?: {
-    p1: PlayerRating & { delta: number }
-    p2: PlayerRating & { delta: number }
+    p1: PlayerRating & { delta: number; won: boolean | null }
+    p2: PlayerRating & { delta: number; won: boolean | null }
   }
   team2?: {
-    p3: PlayerRating & { delta: number }
-    p4: PlayerRating & { delta: number }
+    p3: PlayerRating & { delta: number; won: boolean | null }
+    p4: PlayerRating & { delta: number; won: boolean | null }
   }
 }
 
@@ -60,36 +66,47 @@ export function calculateNewRatings(
   const avg1 = (p1.rating + p2.rating) / 2
   const avg2 = (p3.rating + p4.rating) / 2
 
-  // 2. Verificação de Disparidade (Regra do 1.0)
-  if (Math.abs(avg1 - avg2) > 1.0) {
+  // 2. Verificação de Disparidade (Regra do 1.5)
+  //    Se a diferença de médias for >1.5, o jogo não conta para o rating
+  if (Math.abs(avg1 - avg2) > 1.5) {
     return {
       skipped: true,
-      message: 'Disparidade demasiado alta (>' + Math.abs(avg1 - avg2).toFixed(2) + '), nível inalterado',
+      message: `Disparidade demasiado alta (${Math.abs(avg1 - avg2).toFixed(2)} > 1.5), nível inalterado`,
     }
   }
 
   // 3. Probabilidade de Vitória (Expected Outcome)
+  //    Formula Elo: 1 / (1 + 10^((avg2 - avg1) / D))
+  //    D=2 para escala 0.5-7.0
   const expected1 = 1 / (1 + Math.pow(10, (avg2 - avg1) / 2))
   const actual1 = score.sets1 > score.sets2 ? 1 : (score.sets1 < score.sets2 ? 0 : 0.5)
 
   // 4. Intensidade do Resultado (Multiplicador)
+  //    Jogo renhido (3 sets) → menor variação (o nível está equilibrado)
+  //    Vitória dominante (grande diferença de games) → maior variação
   let intensity = 1.0
   const gameDiff = Math.abs(score.gamesTotal1 - score.gamesTotal2)
 
   if (score.sets1 + score.sets2 === 3) {
-    intensity = 0.6
+    intensity = 0.7  // Jogo renhido de 3 sets (era 0.6)
   } else if (gameDiff > 8) {
-    intensity = 1.3
+    intensity = 1.2  // Vitória dominante (era 1.3, reduzido)
   }
 
-  // 5. K-Factor
+  // 5. K-Factor: depende do número de jogos RATED do jogador
+  //    Quanto mais jogos, menor o K → mais estável o rating
+  //    < 10 jogos: calibração rápida (jogador novo)
+  //    10-29 jogos: ajuste moderado
+  //    30-49 jogos: ajuste fino
+  //    50+ jogos: estabilidade máxima
   const getKFactor = (matches: number): number => {
-    if (matches < 10) return 0.15
-    if (matches < 50) return 0.08
-    return 0.04
+    if (matches < 10) return 0.12   // Era 0.15 - reduzido 20%
+    if (matches < 30) return 0.08
+    if (matches < 50) return 0.05
+    return 0.03
   }
 
-  // 6. Cálculo do Delta
+  // 6. Cálculo do Delta (variação de rating)
   const calculateDelta = (player: PlayerRating, actual: number, expected: number, intens: number): number => {
     const K = getKFactor(player.matches)
     const change = K * (actual - expected) * intens
@@ -104,14 +121,17 @@ export function calculateNewRatings(
   // 7. Clamp para manter dentro da escala 0.5 - 7.0
   const clamp = (val: number) => Math.max(0.5, Math.min(7.0, parseFloat(val.toFixed(2))))
 
+  // 8. Determinar quem ganhou/perdeu (para tracking de wins/losses)
+  const team1Won = actual1 === 1 ? true : actual1 === 0 ? false : null // null = draw
+
   return {
     team1: {
-      p1: { ...p1, rating: clamp(p1.rating + delta1), delta: delta1, matches: p1.matches + 1 },
-      p2: { ...p2, rating: clamp(p2.rating + delta2), delta: delta2, matches: p2.matches + 1 },
+      p1: { ...p1, rating: clamp(p1.rating + delta1), delta: delta1, matches: p1.matches + 1, won: team1Won },
+      p2: { ...p2, rating: clamp(p2.rating + delta2), delta: delta2, matches: p2.matches + 1, won: team1Won },
     },
     team2: {
-      p3: { ...p3, rating: clamp(p3.rating + delta3), delta: delta3, matches: p3.matches + 1 },
-      p4: { ...p4, rating: clamp(p4.rating + delta4), delta: delta4, matches: p4.matches + 1 },
+      p3: { ...p3, rating: clamp(p3.rating + delta3), delta: delta3, matches: p3.matches + 1, won: team1Won === null ? null : !team1Won },
+      p4: { ...p4, rating: clamp(p4.rating + delta4), delta: delta4, matches: p4.matches + 1, won: team1Won === null ? null : !team1Won },
     },
   }
 }
@@ -120,6 +140,18 @@ export function calculateNewRatings(
 // Fiabilidade (Reliability)
 // ============================================
 
+/**
+ * Calcula a percentagem de fiabilidade do nível com base no número de jogos RATED.
+ * Curva logarítmica: cresce rapidamente no início, estabiliza após 75 jogos.
+ * 
+ * 0 jogos → 0%
+ * 5 jogos → 37%
+ * 10 jogos → 55%
+ * 20 jogos → 70%
+ * 30 jogos → 79%
+ * 50 jogos → 91%
+ * 75+ jogos → 100%
+ */
 export function calculateReliability(totalMatches: number): number {
   if (totalMatches <= 0) return 0
   if (totalMatches >= 75) return 100
@@ -128,15 +160,12 @@ export function calculateReliability(totalMatches: number): number {
 }
 
 /**
- * Função inversa: dado um valor de fiabilidade, calcula quantos jogos correspondem
- * Usado quando o utilizador define manualmente a fiabilidade e queremos saber quantos jogos isso representa
+ * Função inversa: dado um valor de fiabilidade, calcula quantos jogos correspondem.
+ * Usado quando o utilizador define manualmente a fiabilidade.
  */
 export function calculateMatchesFromReliability(reliability: number): number {
   if (reliability <= 0) return 0
   if (reliability >= 100) return 75
-  // Inverter: reliability = 100 * (ln(matches + 1) / ln(76))
-  // matches + 1 = e^(reliability/100 * ln(76))
-  // matches = e^(reliability/100 * ln(76)) - 1
   const matches = Math.round(Math.exp((reliability / 100) * Math.log(76)) - 1)
   return Math.max(0, Math.min(75, matches))
 }
@@ -150,10 +179,10 @@ export interface CachedPlayer {
   user_id: string
   name: string
   rating: number
-  matchCount: number
+  matchCount: number  // jogos RATED processados (acumulado)
 }
 
-export type PlayerCache = Map<string, CachedPlayer>
+export type PlayerCache = Map<string, CachedPlayer>  // key = player_accounts.id
 
 // ============================================
 // Supabase Integration
@@ -161,7 +190,14 @@ export type PlayerCache = Map<string, CachedPlayer>
 
 /**
  * Processa o rating de um jogo completado.
- * Usa SECURITY DEFINER functions para bypessar RLS e atualizar qualquer player_account.
+ * 
+ * Fluxo:
+ * 1. Busca dados do jogo (scores)
+ * 2. Identifica os 4 jogadores
+ * 3. Mapeia para player_accounts (onde está o rating)
+ * 4. Calcula novos ratings (ELO)
+ * 5. Atualiza level + rated_matches + wins/losses + reliability na BD
+ * 6. Marca jogo como processado
  */
 export async function processMatchRating(matchId: string, cache?: PlayerCache): Promise<RatingResult | null> {
   // 1) Buscar o jogo com os IDs das equipas
@@ -248,34 +284,38 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     return null
   }
 
-  // 5) Mapear para player_accounts
+  // 5) Mapear para player_accounts (onde está o rating real)
   const accountsMap = new Map<string, any>()
+  const selectFields = 'id, user_id, name, level, rated_matches, wins, losses, level_reliability_percent'
 
   for (const p of playersData) {
     let account: any = null
 
+    // Prioridade 1: user_id
     if (p.user_id) {
       const { data } = await supabase
         .from('player_accounts')
-        .select('id, user_id, name, level, wins, losses, level_reliability_percent')
+        .select(selectFields)
         .eq('user_id', p.user_id)
         .maybeSingle()
       if (data) account = data
     }
 
+    // Prioridade 2: phone_number
     if (!account && p.phone_number) {
       const { data } = await supabase
         .from('player_accounts')
-        .select('id, user_id, name, level, wins, losses, level_reliability_percent')
+        .select(selectFields)
         .eq('phone_number', p.phone_number)
         .maybeSingle()
       if (data) account = data
     }
 
+    // Prioridade 3: name
     if (!account && p.name) {
       const { data } = await supabase
         .from('player_accounts')
-        .select('id, user_id, name, level, wins, losses, level_reliability_percent')
+        .select(selectFields)
         .ilike('name', p.name)
         .maybeSingle()
       if (data) account = data
@@ -296,6 +336,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     const acct = accountsMap.get(playerId)
     if (!acct) return null
 
+    // Se temos cache (batch mode), usar dados acumulados
     const cached = cache?.get(acct.id)
     if (cached) {
       return {
@@ -307,12 +348,14 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       }
     }
 
+    // Primeira vez: usar valores da BD
+    // rated_matches é a fonte de verdade (fallback para wins+losses por compatibilidade)
     return {
       id: acct.id,
       user_id: acct.user_id || '',
       name: acct.name || '',
       rating: acct.level ?? 3.0,
-      matches: (acct.wins ?? 0) + (acct.losses ?? 0),
+      matches: acct.rated_matches ?? ((acct.wins ?? 0) + (acct.losses ?? 0)),
     }
   }
 
@@ -334,33 +377,16 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     return result
   }
 
-  // 8) Atualizar cache e Supabase via SECURITY DEFINER functions (bypassa RLS)
+  // 8) Atualizar BD: level + rated_matches + wins/losses + reliability
   if (result.team1 && result.team2) {
     const allUpdatedPlayers = [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4]
 
     for (const rp of allUpdatedPlayers) {
-      // Ler wins + losses e level_reliability_percent atual da BD
-      const { data: currentAccount } = await supabase
-        .from('player_accounts')
-        .select('wins, losses, level_reliability_percent')
-        .eq('id', rp.id)
-        .single()
+      // Calcular fiabilidade com base no número de jogos rated
+      // rp.matches já inclui este jogo (+1 feito no calculateNewRatings)
+      const newReliability = calculateReliability(rp.matches)
 
-      let newReliability: number
-      if (currentAccount?.level_reliability_percent != null && currentAccount.level_reliability_percent > 0) {
-        // Se level_reliability_percent foi definido manualmente:
-        // 1. Descobrir quantos jogos correspondem a esse valor de fiabilidade
-        const matchesFromManualReliability = calculateMatchesFromReliability(currentAccount.level_reliability_percent)
-        // 2. Incrementar 1 jogo (este jogo que está a ser processado)
-        const newTotalMatches = matchesFromManualReliability + 1
-        // 3. Recalcular fiabilidade com o novo total de jogos
-        newReliability = calculateReliability(newTotalMatches)
-      } else {
-        // Se não foi definido manualmente, calcular baseado em wins + losses + 1 (este jogo)
-        const totalMatchesFromDB = (currentAccount?.wins ?? 0) + (currentAccount?.losses ?? 0) + 1
-        newReliability = calculateReliability(totalMatchesFromDB)
-      }
-
+      // Atualizar cache (para batch mode)
       if (cache) {
         cache.set(rp.id, {
           id: rp.id,
@@ -376,6 +402,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
         p_player_account_id: rp.id,
         p_new_level: rp.rating,
         p_new_reliability: newReliability,
+        p_match_won: rp.won,  // true = win, false = loss, null = draw
       })
 
       if (error) {
@@ -383,7 +410,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       }
     }
 
-    // Marcar jogo como processado via SECURITY DEFINER function
+    // Marcar jogo como processado
     const { error: markError } = await supabase.rpc('mark_match_rating_processed', {
       p_match_id: matchId,
     })
@@ -391,22 +418,16 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       console.error('[RatingEngine] Error marking match as processed:', matchId, markError)
     }
 
-    // Ler valores finais da BD para logging
-    const finalAccounts = await Promise.all(
-      [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4].map(p =>
-        supabase.from('player_accounts').select('wins, losses').eq('id', p.id).single()
-      )
-    )
-
+    // Logging
     console.log('[RatingEngine] Updated ratings for match:', matchId)
-    const p1Matches = (finalAccounts[0]?.data?.wins ?? 0) + (finalAccounts[0]?.data?.losses ?? 0)
-    const p2Matches = (finalAccounts[1]?.data?.wins ?? 0) + (finalAccounts[1]?.data?.losses ?? 0)
-    const p3Matches = (finalAccounts[2]?.data?.wins ?? 0) + (finalAccounts[2]?.data?.losses ?? 0)
-    const p4Matches = (finalAccounts[3]?.data?.wins ?? 0) + (finalAccounts[3]?.data?.losses ?? 0)
-    console.log(`  ${result.team1.p1.name}: ${p1.rating.toFixed(2)} → ${result.team1.p1.rating.toFixed(2)} (Δ${result.team1.p1.delta > 0 ? '+' : ''}${result.team1.p1.delta.toFixed(4)}) | jogos: ${p1Matches} | fiab: ${calculateReliability(p1Matches)}%`)
-    console.log(`  ${result.team1.p2.name}: ${p2.rating.toFixed(2)} → ${result.team1.p2.rating.toFixed(2)} (Δ${result.team1.p2.delta > 0 ? '+' : ''}${result.team1.p2.delta.toFixed(4)}) | jogos: ${p2Matches} | fiab: ${calculateReliability(p2Matches)}%`)
-    console.log(`  ${result.team2.p3.name}: ${p3.rating.toFixed(2)} → ${result.team2.p3.rating.toFixed(2)} (Δ${result.team2.p3.delta > 0 ? '+' : ''}${result.team2.p3.delta.toFixed(4)}) | jogos: ${p3Matches} | fiab: ${calculateReliability(p3Matches)}%`)
-    console.log(`  ${result.team2.p4.name}: ${p4.rating.toFixed(2)} → ${result.team2.p4.rating.toFixed(2)} (Δ${result.team2.p4.delta > 0 ? '+' : ''}${result.team2.p4.delta.toFixed(4)}) | jogos: ${p4Matches} | fiab: ${calculateReliability(p4Matches)}%`)
+    const logPlayer = (label: string, before: PlayerRating, after: PlayerRating & { delta: number }) => {
+      const K = after.matches < 10 ? 0.12 : after.matches < 30 ? 0.08 : after.matches < 50 ? 0.05 : 0.03
+      console.log(`  ${after.name}: ${before.rating.toFixed(2)} → ${after.rating.toFixed(2)} (Δ${after.delta >= 0 ? '+' : ''}${after.delta.toFixed(4)}) | K=${K} | jogos rated: ${after.matches} | fiab: ${calculateReliability(after.matches)}%`)
+    }
+    logPlayer('P1', p1, result.team1.p1)
+    logPlayer('P2', p2, result.team1.p2)
+    logPlayer('P3', p3, result.team2.p3)
+    logPlayer('P4', p4, result.team2.p4)
   }
 
   return result
@@ -414,6 +435,9 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
 /**
  * Processa todos os jogos completados e não processados.
+ * Processa cronologicamente para que cada jogo use o rating atualizado do anterior.
+ * 
+ * IMPORTANTE: Usa PlayerCache para que ratings acumulem correctamente entre jogos.
  */
 export async function processAllUnratedMatches(
   since?: string,
