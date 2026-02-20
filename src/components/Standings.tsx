@@ -207,19 +207,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         // Store grouped stats for rendering
         setGroupedTeams(groupedStatsMap as any);
 
-        // Fetch ALL knockout matches (non-group stage)
-        // Para formatos mistos, os knockout matches têm category_id NULL → buscar sem filtro de categoria
-        let knockoutQuery = supabase
+        // ═══════════════════════════════════════════════════════════════
+        // BUSCAR TODOS OS MATCHES DO TORNEIO (uma query simples, sem filtros complexos)
+        // ═══════════════════════════════════════════════════════════════
+        const { data: allTournamentMatches } = await supabase
           .from('matches')
           .select('*')
-          .eq('tournament_id', tournamentId)
-          .not('round', 'like', 'group_%');
-        
-        if (!isMixedAmerican) {
-          knockoutQuery = knockoutQuery.eq('category_id', categoryId);
-        }
-        
-        const { data: allKnockoutMatches } = await knockoutQuery;
+          .eq('tournament_id', tournamentId);
+
+        // Separar knockout matches (tudo que NÃO começa com 'group_')
+        const knockoutMatches = (allTournamentMatches || []).filter(m => 
+          m.round && !m.round.startsWith('group_')
+        );
 
         // Create a global stats map for all players from group stage
         const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
@@ -234,58 +233,52 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           });
         });
 
-        // Para formatos mistos: buscar stats de TODAS as categorias para a classificação final
+        // Para formatos mistos: buscar stats de TODAS as categorias
         if (isMixedAmerican) {
-          // Buscar jogadores da outra categoria e seus stats
           const { data: allPlayersData } = await supabase
             .from('players')
             .select('id, name, group_name, category_id, final_position')
             .eq('tournament_id', tournamentId);
           
           if (allPlayersData) {
-            const otherCatPlayers = allPlayersData.filter(p => p.category_id !== categoryId);
-            const { data: otherCatMatches } = await supabase
-              .from('matches')
-              .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
-              .eq('tournament_id', tournamentId)
-              .neq('category_id', categoryId)
-              .eq('status', 'completed');
+            // Buscar group matches da outra categoria
+            const otherCatGroupMatches = (allTournamentMatches || []).filter(m => 
+              m.round?.startsWith('group_') && m.status === 'completed' && m.category_id && m.category_id !== categoryId
+            );
             
-            if (otherCatMatches) {
-              otherCatPlayers.forEach(player => {
-                if (!globalPlayerStats.has(player.id)) {
-                  globalPlayerStats.set(player.id, { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 });
+            const otherCatPlayers = allPlayersData.filter(p => p.category_id !== categoryId);
+            otherCatPlayers.forEach(player => {
+              if (!globalPlayerStats.has(player.id)) {
+                globalPlayerStats.set(player.id, { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 });
+              }
+            });
+            
+            otherCatGroupMatches.forEach(match => {
+              const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+              const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+              const team1Won = team1Games > team2Games;
+              const isDraw = team1Games === team2Games;
+              
+              [match.player1_individual_id, match.player2_individual_id].forEach((pid: string) => {
+                if (pid && globalPlayerStats.has(pid)) {
+                  const s = globalPlayerStats.get(pid)!;
+                  s.gamesWon += team1Games; s.gamesLost += team2Games;
+                  if (isDraw) s.draws++; else if (team1Won) s.wins++;
                 }
               });
-              
-              otherCatMatches.filter(m => m.round?.startsWith('group_')).forEach(match => {
-                const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-                const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-                const team1Won = team1Games > team2Games;
-                const isDraw = team1Games === team2Games;
-                
-                [(match as any).player1_individual_id, (match as any).player2_individual_id].forEach((pid: string) => {
-                  if (pid && globalPlayerStats.has(pid)) {
-                    const s = globalPlayerStats.get(pid)!;
-                    s.gamesWon += team1Games; s.gamesLost += team2Games;
-                    if (isDraw) s.draws++; else if (team1Won) s.wins++; else s.losses = (s as any).losses ? (s as any).losses + 1 : 1;
-                  }
-                });
-                [(match as any).player3_individual_id, (match as any).player4_individual_id].forEach((pid: string) => {
-                  if (pid && globalPlayerStats.has(pid)) {
-                    const s = globalPlayerStats.get(pid)!;
-                    s.gamesWon += team2Games; s.gamesLost += team1Games;
-                    if (isDraw) s.draws++; else if (!team1Won) s.wins++; else s.losses = (s as any).losses ? (s as any).losses + 1 : 1;
-                  }
-                });
+              [match.player3_individual_id, match.player4_individual_id].forEach((pid: string) => {
+                if (pid && globalPlayerStats.has(pid)) {
+                  const s = globalPlayerStats.get(pid)!;
+                  s.gamesWon += team2Games; s.gamesLost += team1Games;
+                  if (isDraw) s.draws++; else if (!team1Won) s.wins++;
+                }
               });
-            }
+            });
           }
         }
 
+        // PlayerMap: nomes de TODOS os jogadores
         const playerMap = new Map(filteredPlayers.map(p => [p.id, p.name]));
-        
-        // Para formatos mistos: incluir nomes de jogadores de TODAS as categorias no playerMap
         if (isMixedAmerican) {
           const { data: allPlayersForMap } = await supabase
             .from('players')
@@ -294,212 +287,121 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           allPlayersForMap?.forEach(p => { if (!playerMap.has(p.id)) playerMap.set(p.id, p.name); });
         }
 
-        // Check if any players have final_position set in database
-        const playersWithDbPosition = filteredPlayers.filter(p => p.final_position);
-
-        // Build final rankings - prefer database positions when available
+        // ═══════════════════════════════════════════════════════════════
+        // CLASSIFICAÇÃO FINAL — LÓGICA SIMPLES E CLARA
+        // 1°, 2° = Vencedores da Final
+        // 3°, 4° = Vencidos da Final  
+        // 5°, 6° = Vencedores da Pequena Final (3°/4° lugar)
+        // 7°, 8° = Vencidos da Pequena Final
+        // ═══════════════════════════════════════════════════════════════
         const individualRankings: IndividualFinalRanking[] = [];
+        
+        const sortByGroupStats = (playerIds: string[]): string[] => {
+          return [...playerIds].sort((a, b) => {
+            const sa = globalPlayerStats.get(a) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+            const sb = globalPlayerStats.get(b) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+            if (sb.wins !== sa.wins) return sb.wins - sa.wins;
+            const diffA = sa.gamesWon - sa.gamesLost;
+            const diffB = sb.gamesWon - sb.gamesLost;
+            if (diffB !== diffA) return diffB - diffA;
+            return sb.gamesWon - sa.gamesWon;
+          });
+        };
 
-        if (playersWithDbPosition.length > 0) {
-          playersWithDbPosition
-            .sort((a, b) => (a.final_position || 999) - (b.final_position || 999))
-            .forEach(player => {
-              const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+        const getMatchWinnerLoser = (match: any) => {
+          const t1 = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+          const t2 = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+          const team1 = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+          const team2 = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+          return {
+            winners: t1 > t2 ? team1 : team2,
+            losers: t1 > t2 ? team2 : team1,
+          };
+        };
+
+        // Encontrar matches completados
+        const finalMatch = knockoutMatches.find(m => 
+          (m.round === 'final' || m.round === 'mixed_final') && m.status === 'completed'
+        );
+        const thirdPlaceMatch = knockoutMatches.find(m => 
+          (m.round === '3rd_place' || m.round === 'mixed_3rd_place') && m.status === 'completed'
+        );
+
+        console.log('[STANDINGS] Knockout: total=' + knockoutMatches.length + 
+          ' rounds=' + knockoutMatches.map(m => m.round + ':' + m.status).join(', '));
+
+        const rankedPlayerIds = new Set<string>();
+
+        // 1°, 2° — VENCEDORES DA FINAL
+        if (finalMatch) {
+          const { winners, losers } = getMatchWinnerLoser(finalMatch);
+          console.log('[STANDINGS] Final winners:', winners.map((id: string) => playerMap.get(id)), 
+                       'losers:', losers.map((id: string) => playerMap.get(id)));
+          
+          sortByGroupStats(winners).forEach((pid: string, idx: number) => {
+            individualRankings.push({
+              position: idx + 1,  // FIXO: 1°, 2°
+              player: { id: pid, name: playerMap.get(pid) || pid },
+              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+              status: 'confirmed'
+            });
+            rankedPlayerIds.add(pid);
+          });
+
+          // 3°, 4° — VENCIDOS DA FINAL
+          sortByGroupStats(losers).forEach((pid: string, idx: number) => {
+            individualRankings.push({
+              position: 3 + idx,  // FIXO: 3°, 4°
+              player: { id: pid, name: playerMap.get(pid) || pid },
+              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+              status: 'confirmed'
+            });
+            rankedPlayerIds.add(pid);
+          });
+        }
+
+        // 5°, 6° — VENCEDORES DA PEQUENA FINAL (3°/4° lugar)
+        if (thirdPlaceMatch) {
+          const { winners, losers } = getMatchWinnerLoser(thirdPlaceMatch);
+          
+          sortByGroupStats(winners.filter((id: string) => !rankedPlayerIds.has(id)))
+            .forEach((pid: string, idx: number) => {
               individualRankings.push({
-                position: player.final_position!,
-                player: { id: player.id, name: player.name },
-                groupStats: stats,
+                position: 5 + idx,  // FIXO: 5°, 6°
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
                 status: 'confirmed'
               });
+              rankedPlayerIds.add(pid);
             });
 
-          const rankedIds = new Set(playersWithDbPosition.map(p => p.id));
-          const unrankedPlayers = filteredPlayers
-            .filter(p => !rankedIds.has(p.id))
-            .sort((a, b) => {
-              const statsA = globalPlayerStats.get(a.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              const statsB = globalPlayerStats.get(b.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
-              const ptsA = statsA.wins * 2 + (statsA.draws || 0);
-              const ptsB = statsB.wins * 2 + (statsB.draws || 0);
-              if (ptsB !== ptsA) return ptsB - ptsA;
-              const diffA = statsA.gamesWon - statsA.gamesLost;
-              const diffB = statsB.gamesWon - statsB.gamesLost;
-              return diffB - diffA;
+          // 7°, 8° — VENCIDOS DA PEQUENA FINAL
+          sortByGroupStats(losers.filter((id: string) => !rankedPlayerIds.has(id)))
+            .forEach((pid: string, idx: number) => {
+              individualRankings.push({
+                position: 7 + idx,  // FIXO: 7°, 8°
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                status: 'confirmed'
+              });
+              rankedPlayerIds.add(pid);
             });
+        }
 
-          const maxPos = Math.max(...individualRankings.map(r => r.position));
-          unrankedPlayers.forEach((player, idx) => {
-            const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+        // Restantes (se houver jogadores não classificados pelo knockout)
+        const remaining = Array.from(globalPlayerStats.keys()).filter(id => !rankedPlayerIds.has(id));
+        if (remaining.length > 0) {
+          const nextPos = individualRankings.length > 0
+            ? Math.max(...individualRankings.map(r => r.position)) + 1
+            : 1;
+          sortByGroupStats(remaining).forEach((pid, idx) => {
             individualRankings.push({
-              position: maxPos + 1 + idx,
-              player: { id: player.id, name: player.name },
-              groupStats: stats,
+              position: nextPos + idx,
+              player: { id: pid, name: playerMap.get(pid) || pid },
+              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
               status: 'pending'
             });
           });
-        } else {
-          const sortPlayersByGroupPerformance = (playerIds: string[]): string[] => {
-            return [...playerIds].sort((a, b) => {
-              const statsA = globalPlayerStats.get(a) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              const statsB = globalPlayerStats.get(b) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
-              const ptsA = statsA.wins * 2 + (statsA.draws || 0);
-              const ptsB = statsB.wins * 2 + (statsB.draws || 0);
-              if (ptsB !== ptsA) return ptsB - ptsA;
-              const diffA = statsA.gamesWon - statsA.gamesLost;
-              const diffB = statsB.gamesWon - statsB.gamesLost;
-              if (diffB !== diffA) return diffB - diffA;
-              return statsB.gamesWon - statsA.gamesWon;
-            });
-          };
-
-          // IMPORTANTE: Preferir matches COMPLETADOS (pode haver duplicados de fixes anteriores)
-          const allFinals = allKnockoutMatches?.filter(m => m.round === 'final' || m.round === 'mixed_final') || [];
-          const finalMatch = allFinals.find(m => m.status === 'completed') || allFinals[0];
-          
-          const allThirdPlace = allKnockoutMatches?.filter(m => m.round === '3rd_place' || m.round === 'mixed_3rd_place') || [];
-          const thirdPlaceMatch = allThirdPlace.find(m => m.status === 'completed') || allThirdPlace[0];
-          
-          const sfMatches = allKnockoutMatches?.filter(m => m.round === 'semifinal' || m.round === 'semi_final') || [];
-          const rankedPlayerIds = new Set<string>();
-
-          console.log('[STANDINGS] Knockout matches found:', {
-            finals: allFinals.length,
-            finalStatus: finalMatch?.status,
-            finalPlayers: finalMatch ? [(finalMatch as any).player1_individual_id, (finalMatch as any).player2_individual_id, (finalMatch as any).player3_individual_id, (finalMatch as any).player4_individual_id] : [],
-            thirdPlace: allThirdPlace.length,
-            thirdPlaceStatus: thirdPlaceMatch?.status,
-            semifinals: sfMatches.length
-          });
-
-          // 1°, 2° — Vencedores da Final
-          if (finalMatch?.status === 'completed') {
-            const t1Games = (finalMatch.team1_score_set1 || 0) + (finalMatch.team1_score_set2 || 0) + (finalMatch.team1_score_set3 || 0);
-            const t2Games = (finalMatch.team2_score_set1 || 0) + (finalMatch.team2_score_set2 || 0) + (finalMatch.team2_score_set3 || 0);
-
-            const team1Ids = [(finalMatch as any).player1_individual_id, (finalMatch as any).player2_individual_id].filter(Boolean) as string[];
-            const team2Ids = [(finalMatch as any).player3_individual_id, (finalMatch as any).player4_individual_id].filter(Boolean) as string[];
-
-            const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
-            const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
-
-            console.log('[STANDINGS] Final: winners=', winnerIds.map(id => playerMap.get(id)), 'losers=', loserIds.map(id => playerMap.get(id)));
-
-            // 1°, 2° — vencedores
-            const sortedWinners = sortPlayersByGroupPerformance(winnerIds);
-            sortedWinners.forEach((playerId, idx) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: idx + 1,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(playerId);
-            });
-
-            // 3°, 4° — finalistas perdedores
-            const sortedLosers = sortPlayersByGroupPerformance(loserIds);
-            sortedLosers.forEach((playerId, idx) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: sortedWinners.length + idx + 1,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(playerId);
-            });
-          }
-
-          // 5°, 6° — Vencedores do jogo 3°/4° lugar
-          if (thirdPlaceMatch?.status === 'completed') {
-            const t1Games = (thirdPlaceMatch.team1_score_set1 || 0) + (thirdPlaceMatch.team1_score_set2 || 0) + (thirdPlaceMatch.team1_score_set3 || 0);
-            const t2Games = (thirdPlaceMatch.team2_score_set1 || 0) + (thirdPlaceMatch.team2_score_set2 || 0) + (thirdPlaceMatch.team2_score_set3 || 0);
-
-            const team1Ids = [(thirdPlaceMatch as any).player1_individual_id, (thirdPlaceMatch as any).player2_individual_id].filter(Boolean) as string[];
-            const team2Ids = [(thirdPlaceMatch as any).player3_individual_id, (thirdPlaceMatch as any).player4_individual_id].filter(Boolean) as string[];
-
-            const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
-            const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
-
-            // FIXO: Posição 5 para 3°/4° lugar (posições 1-4 são dos finalistas)
-            let nextPos = Math.max(individualRankings.length + 1, 5);
-            const sortedWinners = sortPlayersByGroupPerformance(winnerIds.filter(id => !rankedPlayerIds.has(id)));
-            sortedWinners.forEach((playerId) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: nextPos++,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(playerId);
-            });
-
-            // 7°, 8° — perdedores do 3°/4°
-            const sortedLosers = sortPlayersByGroupPerformance(loserIds.filter(id => !rankedPlayerIds.has(id)));
-            sortedLosers.forEach((playerId) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: nextPos++,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(playerId);
-            });
-          } else if (sfMatches.length > 0) {
-            // Se não há 3rd place match completo, usar perdedores das meias-finais
-            const sfLosers: string[] = [];
-            sfMatches.forEach(sf => {
-              if (sf.status === 'completed') {
-                const t1G = (sf.team1_score_set1 || 0) + (sf.team1_score_set2 || 0) + (sf.team1_score_set3 || 0);
-                const t2G = (sf.team2_score_set1 || 0) + (sf.team2_score_set2 || 0) + (sf.team2_score_set3 || 0);
-                const losers = t1G > t2G
-                  ? [(sf as any).player3_individual_id, (sf as any).player4_individual_id]
-                  : [(sf as any).player1_individual_id, (sf as any).player2_individual_id];
-                sfLosers.push(...losers.filter(Boolean));
-              }
-            });
-            
-            let nextPos = Math.max(individualRankings.length + 1, 5);
-            const sortedSFLosers = sortPlayersByGroupPerformance(sfLosers.filter(id => !rankedPlayerIds.has(id)));
-            sortedSFLosers.forEach((playerId) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: nextPos++,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(playerId);
-            });
-          }
-
-          // Restantes jogadores por performance de grupo
-          const remainingPlayers = Array.from(globalPlayerStats.keys())
-            .filter(id => !rankedPlayerIds.has(id));
-
-          if (remainingPlayers.length > 0) {
-            const sortedRemaining = sortPlayersByGroupPerformance(remainingPlayers);
-            const nextPosition = individualRankings.length > 0
-              ? Math.max(...individualRankings.map(r => r.position)) + 1
-              : 1;
-
-            console.log('[STANDINGS] Remaining players:', sortedRemaining.length, 'starting at position:', nextPosition);
-
-            sortedRemaining.forEach((playerId, index) => {
-              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: nextPosition + index,
-                player: { id: playerId, name: playerMap.get(playerId) || playerId },
-                groupStats: stats,
-                status: 'pending'
-              });
-            });
-          }
         }
 
         individualRankings.sort((a, b) => a.position - b.position);
