@@ -535,6 +535,121 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           });
         });
 
+        // ═══════════════════════════════════════════════════════════════
+        // Para formatos MISTOS: calcular ranking a partir dos KNOCKOUT RESULTS
+        // NÃO usar final_position da DB (pode estar errado)
+        // ═══════════════════════════════════════════════════════════════
+        if (isMixedAmerican) {
+          const sortByGroupStats = (playerIds: string[]): string[] => {
+            return [...playerIds].sort((a, b) => {
+              const sa = globalPlayerStats.get(a) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              const sb = globalPlayerStats.get(b) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
+              if (sb.wins !== sa.wins) return sb.wins - sa.wins;
+              const diffA = sa.gamesWon - sa.gamesLost;
+              const diffB = sb.gamesWon - sb.gamesLost;
+              if (diffB !== diffA) return diffB - diffA;
+              return sb.gamesWon - sa.gamesWon;
+            });
+          };
+
+          const getMatchWL = (match: any) => {
+            const t1 = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+            const t2 = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+            const team1 = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+            const team2 = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+            return { winners: t1 > t2 ? team1 : team2, losers: t1 > t2 ? team2 : team1 };
+          };
+
+          const playerMap = new Map(playersData.map(p => [p.id, p.name]));
+          const finalMatch = matches.find(m => (m.round === 'final' || m.round === 'mixed_final') && m.status === 'completed');
+          const thirdPlaceMatch = matches.find(m => (m.round === '3rd_place' || m.round === 'mixed_3rd_place') && m.status === 'completed');
+
+          console.log('[STANDINGS] Mixed knockout: final=' + (finalMatch ? 'completed' : 'not found') + 
+                       ', 3rd_place=' + (thirdPlaceMatch ? 'completed' : 'not found'));
+
+          const individualRankings: IndividualFinalRanking[] = [];
+          const rankedIds = new Set<string>();
+
+          if (finalMatch) {
+            const { winners, losers } = getMatchWL(finalMatch);
+            console.log('[STANDINGS] Final: winners=', winners.map((id: string) => playerMap.get(id)), 
+                         'losers=', losers.map((id: string) => playerMap.get(id)));
+            
+            // 1°, 2° — Vencedores da Final
+            sortByGroupStats(winners).forEach((pid: string, idx: number) => {
+              individualRankings.push({
+                position: idx + 1,
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                status: 'confirmed'
+              });
+              rankedIds.add(pid);
+            });
+
+            // 3°, 4° — Vencidos da Final
+            sortByGroupStats(losers).forEach((pid: string, idx: number) => {
+              individualRankings.push({
+                position: 3 + idx,
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                status: 'confirmed'
+              });
+              rankedIds.add(pid);
+            });
+          }
+
+          if (thirdPlaceMatch) {
+            const { winners, losers } = getMatchWL(thirdPlaceMatch);
+            
+            // 5°, 6° — Vencedores da Pequena Final
+            sortByGroupStats(winners.filter((id: string) => !rankedIds.has(id)))
+              .forEach((pid: string, idx: number) => {
+                individualRankings.push({
+                  position: 5 + idx,
+                  player: { id: pid, name: playerMap.get(pid) || pid },
+                  groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                  status: 'confirmed'
+                });
+                rankedIds.add(pid);
+              });
+
+            // 7°, 8° — Vencidos da Pequena Final
+            sortByGroupStats(losers.filter((id: string) => !rankedIds.has(id)))
+              .forEach((pid: string, idx: number) => {
+                individualRankings.push({
+                  position: 7 + idx,
+                  player: { id: pid, name: playerMap.get(pid) || pid },
+                  groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                  status: 'confirmed'
+                });
+                rankedIds.add(pid);
+              });
+          }
+
+          // Restantes
+          const remaining = Array.from(globalPlayerStats.keys()).filter(id => !rankedIds.has(id));
+          if (remaining.length > 0) {
+            const nextPos = individualRankings.length > 0 ? Math.max(...individualRankings.map(r => r.position)) + 1 : 1;
+            sortByGroupStats(remaining).forEach((pid, idx) => {
+              individualRankings.push({
+                position: nextPos + idx,
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                status: 'pending'
+              });
+            });
+          }
+
+          individualRankings.sort((a, b) => a.position - b.position);
+          console.log('[STANDINGS] Mixed final rankings:', individualRankings.map(r => r.position + '° ' + r.player.name));
+          setIndividualFinalRankings(individualRankings);
+          setKnockoutRankings([]);
+          setGroupedTeams(groupedStatsMap as any);
+          setLoading(false);
+          return;
+        }
+
+        // Para formatos NÃO mistos: usar final_position da DB se disponível
         const playersWithDbPosition = playersData.filter(p => p.final_position);
         if (playersWithDbPosition.length > 0) {
           const individualRankings: IndividualFinalRanking[] = [];
