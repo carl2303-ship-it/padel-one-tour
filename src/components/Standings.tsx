@@ -354,10 +354,24 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           };
 
-          const finalMatch = allKnockoutMatches?.find(m => m.round === 'final' || m.round === 'mixed_final');
-          const thirdPlaceMatch = allKnockoutMatches?.find(m => m.round === '3rd_place' || m.round === 'mixed_3rd_place');
+          // IMPORTANTE: Preferir matches COMPLETADOS (pode haver duplicados de fixes anteriores)
+          const allFinals = allKnockoutMatches?.filter(m => m.round === 'final' || m.round === 'mixed_final') || [];
+          const finalMatch = allFinals.find(m => m.status === 'completed') || allFinals[0];
+          
+          const allThirdPlace = allKnockoutMatches?.filter(m => m.round === '3rd_place' || m.round === 'mixed_3rd_place') || [];
+          const thirdPlaceMatch = allThirdPlace.find(m => m.status === 'completed') || allThirdPlace[0];
+          
           const sfMatches = allKnockoutMatches?.filter(m => m.round === 'semifinal' || m.round === 'semi_final') || [];
           const rankedPlayerIds = new Set<string>();
+
+          console.log('[STANDINGS] Knockout matches found:', {
+            finals: allFinals.length,
+            finalStatus: finalMatch?.status,
+            finalPlayers: finalMatch ? [(finalMatch as any).player1_individual_id, (finalMatch as any).player2_individual_id, (finalMatch as any).player3_individual_id, (finalMatch as any).player4_individual_id] : [],
+            thirdPlace: allThirdPlace.length,
+            thirdPlaceStatus: thirdPlaceMatch?.status,
+            semifinals: sfMatches.length
+          });
 
           // 1°, 2° — Vencedores da Final
           if (finalMatch?.status === 'completed') {
@@ -370,13 +384,15 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
             const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
 
+            console.log('[STANDINGS] Final: winners=', winnerIds.map(id => playerMap.get(id)), 'losers=', loserIds.map(id => playerMap.get(id)));
+
             // 1°, 2° — vencedores
             const sortedWinners = sortPlayersByGroupPerformance(winnerIds);
             sortedWinners.forEach((playerId, idx) => {
               const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
               individualRankings.push({
                 position: idx + 1,
-                player: { id: playerId, name: playerMap.get(playerId) || globalPlayerStats.has(playerId) ? (playerMap.get(playerId) || playerId) : playerId },
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
                 groupStats: stats,
                 status: 'confirmed'
               });
@@ -397,7 +413,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           }
 
-          // 5°, 6° — Vencedores do jogo 3°/4° lugar (ou meias-finais perdedores se não há 3rd_place)
+          // 5°, 6° — Vencedores do jogo 3°/4° lugar
           if (thirdPlaceMatch?.status === 'completed') {
             const t1Games = (thirdPlaceMatch.team1_score_set1 || 0) + (thirdPlaceMatch.team1_score_set2 || 0) + (thirdPlaceMatch.team1_score_set3 || 0);
             const t2Games = (thirdPlaceMatch.team2_score_set1 || 0) + (thirdPlaceMatch.team2_score_set2 || 0) + (thirdPlaceMatch.team2_score_set3 || 0);
@@ -408,8 +424,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
             const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
 
-            // 5°, 6° — vencedores do 3°/4°
-            let nextPos = individualRankings.length + 1;
+            // FIXO: Posição 5 para 3°/4° lugar (posições 1-4 são dos finalistas)
+            let nextPos = Math.max(individualRankings.length + 1, 5);
             const sortedWinners = sortPlayersByGroupPerformance(winnerIds.filter(id => !rankedPlayerIds.has(id)));
             sortedWinners.forEach((playerId) => {
               const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
@@ -448,7 +464,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               }
             });
             
-            let nextPos = individualRankings.length + 1;
+            let nextPos = Math.max(individualRankings.length + 1, 5);
             const sortedSFLosers = sortPlayersByGroupPerformance(sfLosers.filter(id => !rankedPlayerIds.has(id)));
             sortedSFLosers.forEach((playerId) => {
               const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
@@ -466,20 +482,24 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           const remainingPlayers = Array.from(globalPlayerStats.keys())
             .filter(id => !rankedPlayerIds.has(id));
 
-          const sortedRemaining = sortPlayersByGroupPerformance(remainingPlayers);
-          const nextPosition = individualRankings.length > 0
-            ? Math.max(...individualRankings.map(r => r.position)) + 1
-            : 1;
+          if (remainingPlayers.length > 0) {
+            const sortedRemaining = sortPlayersByGroupPerformance(remainingPlayers);
+            const nextPosition = individualRankings.length > 0
+              ? Math.max(...individualRankings.map(r => r.position)) + 1
+              : 1;
 
-          sortedRemaining.forEach((playerId, index) => {
-            const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-            individualRankings.push({
-              position: nextPosition + index,
-              player: { id: playerId, name: playerMap.get(playerId) || playerId },
-              groupStats: stats,
-              status: 'confirmed'
+            console.log('[STANDINGS] Remaining players:', sortedRemaining.length, 'starting at position:', nextPosition);
+
+            sortedRemaining.forEach((playerId, index) => {
+              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              individualRankings.push({
+                position: nextPosition + index,
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
+                groupStats: stats,
+                status: 'pending'
+              });
             });
-          });
+          }
         }
 
         individualRankings.sort((a, b) => a.position - b.position);
