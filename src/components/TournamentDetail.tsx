@@ -1086,25 +1086,47 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
           
           // Função para calcular rankings de uma categoria
+          // USA sortTeamsByTiebreaker (mesma função que Standings.tsx) para rankings idênticos
           const getCatRankings = (categoryId: string) => {
             const catPlayers = localPlayers.filter(p => p.category_id === categoryId);
             const catMatches = matchesResult.data!.filter((m: any) => 
               m.category_id === categoryId && m.round?.startsWith('group_') && m.status === 'completed'
             );
-            const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
-            catPlayers.forEach(p => playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0 }));
+            
+            // Construir TeamStats para cada jogador
+            const playerStatsMap = new Map<string, { id: string; name: string; wins: number; draws: number; gamesWon: number; gamesLost: number }>();
+            catPlayers.forEach(p => playerStatsMap.set(p.id, { id: p.id, name: p.name, wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 }));
+            
             catMatches.forEach((match: any) => {
               const t1G = (match.team1_score_set1||0)+(match.team1_score_set2||0)+(match.team1_score_set3||0);
               const t2G = (match.team2_score_set1||0)+(match.team2_score_set2||0)+(match.team2_score_set3||0);
               const t1Won = t1G > t2G;
+              const isDraw = t1G === t2G;
               [match.player1_individual_id, match.player2_individual_id].filter(Boolean).forEach((pid: string) => {
-                const s = playerStats.get(pid); if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (t1Won) s.wins++; }
+                const s = playerStatsMap.get(pid);
+                if (s) { s.gamesWon += t1G; s.gamesLost += t2G; if (isDraw) s.draws++; else if (t1Won) s.wins++; }
               });
               [match.player3_individual_id, match.player4_individual_id].filter(Boolean).forEach((pid: string) => {
-                const s = playerStats.get(pid); if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (!t1Won) s.wins++; }
+                const s = playerStatsMap.get(pid);
+                if (s) { s.gamesWon += t2G; s.gamesLost += t1G; if (isDraw) s.draws++; else if (!t1Won) s.wins++; }
               });
             });
-            return Array.from(playerStats.values()).sort((a, b) => b.wins !== a.wins ? b.wins - a.wins : (b.gamesWon-b.gamesLost)-(a.gamesWon-a.gamesLost));
+            
+            // Construir arrays no formato TeamStats e MatchData para sortTeamsByTiebreaker
+            const teamStatsArr: TeamStats[] = Array.from(playerStatsMap.values()).map(p => ({
+              id: p.id, name: p.name, group_name: '', wins: p.wins, draws: p.draws, gamesWon: p.gamesWon, gamesLost: p.gamesLost
+            }));
+            const matchDataArr: MatchData[] = catMatches.map((m: any) => ({
+              team1_id: m.player1_individual_id,
+              team2_id: m.player3_individual_id,
+              team1_score_set1: m.team1_score_set1, team2_score_set1: m.team2_score_set1,
+              team1_score_set2: m.team1_score_set2, team2_score_set2: m.team2_score_set2,
+              team1_score_set3: m.team1_score_set3, team2_score_set3: m.team2_score_set3
+            }));
+            
+            // Usar EXACTAMENTE a mesma função que o Standings (inclui confronto direto!)
+            const sorted = sortTeamsByTiebreaker(teamStatsArr, matchDataArr);
+            return sorted.map(s => ({ id: s.id, name: s.name, wins: s.wins, gamesWon: s.gamesWon, gamesLost: s.gamesLost }));
           };
 
           try {
