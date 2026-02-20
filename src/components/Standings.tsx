@@ -208,12 +208,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         setGroupedTeams(groupedStatsMap as any);
 
         // Fetch ALL knockout matches (non-group stage)
-        const { data: allKnockoutMatches } = await supabase
+        // Para formatos mistos, os knockout matches têm category_id NULL → buscar sem filtro de categoria
+        let knockoutQuery = supabase
           .from('matches')
           .select('*')
           .eq('tournament_id', tournamentId)
-          .eq('category_id', categoryId)
           .not('round', 'like', 'group_%');
+        
+        if (!isMixedAmerican) {
+          knockoutQuery = knockoutQuery.eq('category_id', categoryId);
+        }
+        
+        const { data: allKnockoutMatches } = await knockoutQuery;
 
         // Create a global stats map for all players from group stage
         const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
@@ -228,8 +234,65 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           });
         });
 
+        // Para formatos mistos: buscar stats de TODAS as categorias para a classificação final
+        if (isMixedAmerican) {
+          // Buscar jogadores da outra categoria e seus stats
+          const { data: allPlayersData } = await supabase
+            .from('players')
+            .select('id, name, group_name, category_id, final_position')
+            .eq('tournament_id', tournamentId);
+          
+          if (allPlayersData) {
+            const otherCatPlayers = allPlayersData.filter(p => p.category_id !== categoryId);
+            const { data: otherCatMatches } = await supabase
+              .from('matches')
+              .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
+              .eq('tournament_id', tournamentId)
+              .neq('category_id', categoryId)
+              .eq('status', 'completed');
+            
+            if (otherCatMatches) {
+              otherCatPlayers.forEach(player => {
+                if (!globalPlayerStats.has(player.id)) {
+                  globalPlayerStats.set(player.id, { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 });
+                }
+              });
+              
+              otherCatMatches.filter(m => m.round?.startsWith('group_')).forEach(match => {
+                const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+                const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+                const team1Won = team1Games > team2Games;
+                const isDraw = team1Games === team2Games;
+                
+                [(match as any).player1_individual_id, (match as any).player2_individual_id].forEach((pid: string) => {
+                  if (pid && globalPlayerStats.has(pid)) {
+                    const s = globalPlayerStats.get(pid)!;
+                    s.gamesWon += team1Games; s.gamesLost += team2Games;
+                    if (isDraw) s.draws++; else if (team1Won) s.wins++; else s.losses = (s as any).losses ? (s as any).losses + 1 : 1;
+                  }
+                });
+                [(match as any).player3_individual_id, (match as any).player4_individual_id].forEach((pid: string) => {
+                  if (pid && globalPlayerStats.has(pid)) {
+                    const s = globalPlayerStats.get(pid)!;
+                    s.gamesWon += team2Games; s.gamesLost += team1Games;
+                    if (isDraw) s.draws++; else if (!team1Won) s.wins++; else s.losses = (s as any).losses ? (s as any).losses + 1 : 1;
+                  }
+                });
+              });
+            }
+          }
+        }
+
         const playerMap = new Map(filteredPlayers.map(p => [p.id, p.name]));
-        const playerFinalPositions = new Map(filteredPlayers.map(p => [p.id, p.final_position]));
+        
+        // Para formatos mistos: incluir nomes de jogadores de TODAS as categorias no playerMap
+        if (isMixedAmerican) {
+          const { data: allPlayersForMap } = await supabase
+            .from('players')
+            .select('id, name')
+            .eq('tournament_id', tournamentId);
+          allPlayersForMap?.forEach(p => { if (!playerMap.has(p.id)) playerMap.set(p.id, p.name); });
+        }
 
         // Check if any players have final_position set in database
         const playersWithDbPosition = filteredPlayers.filter(p => p.final_position);
@@ -291,9 +354,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           };
 
-          const finalMatch = allKnockoutMatches?.find(m => m.round === 'final');
+          const finalMatch = allKnockoutMatches?.find(m => m.round === 'final' || m.round === 'mixed_final');
+          const thirdPlaceMatch = allKnockoutMatches?.find(m => m.round === '3rd_place' || m.round === 'mixed_3rd_place');
+          const sfMatches = allKnockoutMatches?.filter(m => m.round === 'semifinal' || m.round === 'semi_final') || [];
           const rankedPlayerIds = new Set<string>();
 
+          // 1°, 2° — Vencedores da Final
           if (finalMatch?.status === 'completed') {
             const t1Games = (finalMatch.team1_score_set1 || 0) + (finalMatch.team1_score_set2 || 0) + (finalMatch.team1_score_set3 || 0);
             const t2Games = (finalMatch.team2_score_set1 || 0) + (finalMatch.team2_score_set2 || 0) + (finalMatch.team2_score_set3 || 0);
@@ -304,24 +370,26 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
             const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
 
+            // 1°, 2° — vencedores
             const sortedWinners = sortPlayersByGroupPerformance(winnerIds);
             sortedWinners.forEach((playerId, idx) => {
               const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
               individualRankings.push({
                 position: idx + 1,
-                player: { id: playerId, name: playerMap.get(playerId) || '' },
+                player: { id: playerId, name: playerMap.get(playerId) || globalPlayerStats.has(playerId) ? (playerMap.get(playerId) || playerId) : playerId },
                 groupStats: stats,
                 status: 'confirmed'
               });
               rankedPlayerIds.add(playerId);
             });
 
+            // 3°, 4° — finalistas perdedores
             const sortedLosers = sortPlayersByGroupPerformance(loserIds);
             sortedLosers.forEach((playerId, idx) => {
               const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
               individualRankings.push({
                 position: sortedWinners.length + idx + 1,
-                player: { id: playerId, name: playerMap.get(playerId) || '' },
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
                 groupStats: stats,
                 status: 'confirmed'
               });
@@ -329,6 +397,72 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           }
 
+          // 5°, 6° — Vencedores do jogo 3°/4° lugar (ou meias-finais perdedores se não há 3rd_place)
+          if (thirdPlaceMatch?.status === 'completed') {
+            const t1Games = (thirdPlaceMatch.team1_score_set1 || 0) + (thirdPlaceMatch.team1_score_set2 || 0) + (thirdPlaceMatch.team1_score_set3 || 0);
+            const t2Games = (thirdPlaceMatch.team2_score_set1 || 0) + (thirdPlaceMatch.team2_score_set2 || 0) + (thirdPlaceMatch.team2_score_set3 || 0);
+
+            const team1Ids = [(thirdPlaceMatch as any).player1_individual_id, (thirdPlaceMatch as any).player2_individual_id].filter(Boolean) as string[];
+            const team2Ids = [(thirdPlaceMatch as any).player3_individual_id, (thirdPlaceMatch as any).player4_individual_id].filter(Boolean) as string[];
+
+            const winnerIds = t1Games > t2Games ? team1Ids : team2Ids;
+            const loserIds = t1Games > t2Games ? team2Ids : team1Ids;
+
+            // 5°, 6° — vencedores do 3°/4°
+            let nextPos = individualRankings.length + 1;
+            const sortedWinners = sortPlayersByGroupPerformance(winnerIds.filter(id => !rankedPlayerIds.has(id)));
+            sortedWinners.forEach((playerId) => {
+              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              individualRankings.push({
+                position: nextPos++,
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
+                groupStats: stats,
+                status: 'confirmed'
+              });
+              rankedPlayerIds.add(playerId);
+            });
+
+            // 7°, 8° — perdedores do 3°/4°
+            const sortedLosers = sortPlayersByGroupPerformance(loserIds.filter(id => !rankedPlayerIds.has(id)));
+            sortedLosers.forEach((playerId) => {
+              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              individualRankings.push({
+                position: nextPos++,
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
+                groupStats: stats,
+                status: 'confirmed'
+              });
+              rankedPlayerIds.add(playerId);
+            });
+          } else if (sfMatches.length > 0) {
+            // Se não há 3rd place match completo, usar perdedores das meias-finais
+            const sfLosers: string[] = [];
+            sfMatches.forEach(sf => {
+              if (sf.status === 'completed') {
+                const t1G = (sf.team1_score_set1 || 0) + (sf.team1_score_set2 || 0) + (sf.team1_score_set3 || 0);
+                const t2G = (sf.team2_score_set1 || 0) + (sf.team2_score_set2 || 0) + (sf.team2_score_set3 || 0);
+                const losers = t1G > t2G
+                  ? [(sf as any).player3_individual_id, (sf as any).player4_individual_id]
+                  : [(sf as any).player1_individual_id, (sf as any).player2_individual_id];
+                sfLosers.push(...losers.filter(Boolean));
+              }
+            });
+            
+            let nextPos = individualRankings.length + 1;
+            const sortedSFLosers = sortPlayersByGroupPerformance(sfLosers.filter(id => !rankedPlayerIds.has(id)));
+            sortedSFLosers.forEach((playerId) => {
+              const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
+              individualRankings.push({
+                position: nextPos++,
+                player: { id: playerId, name: playerMap.get(playerId) || playerId },
+                groupStats: stats,
+                status: 'confirmed'
+              });
+              rankedPlayerIds.add(playerId);
+            });
+          }
+
+          // Restantes jogadores por performance de grupo
           const remainingPlayers = Array.from(globalPlayerStats.keys())
             .filter(id => !rankedPlayerIds.has(id));
 
@@ -341,7 +475,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             const stats = globalPlayerStats.get(playerId) || { wins: 0, gamesWon: 0, gamesLost: 0 };
             individualRankings.push({
               position: nextPosition + index,
-              player: { id: playerId, name: playerMap.get(playerId) || '' },
+              player: { id: playerId, name: playerMap.get(playerId) || playerId },
               groupStats: stats,
               status: 'confirmed'
             });
