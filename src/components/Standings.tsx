@@ -188,17 +188,9 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             gamesWon: p.gamesWon,
             gamesLost: p.gamesLost
           }));
-          const matchDataForSort: MatchData[] = groupMatches.map(m => ({
-            team1_id: (m as any).player1_individual_id,
-            team2_id: (m as any).player3_individual_id,
-            team1_score_set1: m.team1_score_set1,
-            team2_score_set1: m.team2_score_set1,
-            team1_score_set2: m.team1_score_set2,
-            team2_score_set2: m.team2_score_set2,
-            team1_score_set3: m.team1_score_set3,
-            team2_score_set3: m.team2_score_set3
-          }));
-          const sortedTeamStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, playerOrder);
+          // INDIVIDUAL AMERICANO: NÃO existe confronto direto (parceiros mudam a cada ronda)
+          // Critérios de desempate: 1° Vitórias > 2° Pontos > 3° Diferença de jogos > 4° Jogos ganhos > 5° Data inscrição
+          const sortedTeamStats = sortTeamsByTiebreaker(teamStatsForSort, [], playerOrder);
           const sortedPlayerStats = sortedTeamStats.map(ts => playerStats.find(p => p.id === ts.id)!);
 
           groupedStatsMap.set(groupName, sortedPlayerStats);

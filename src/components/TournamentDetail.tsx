@@ -1112,20 +1112,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               });
             });
             
-            // Construir arrays no formato TeamStats e MatchData para sortTeamsByTiebreaker
+            // Construir arrays no formato TeamStats para sortTeamsByTiebreaker
             const teamStatsArr: TeamStats[] = Array.from(playerStatsMap.values()).map(p => ({
               id: p.id, name: p.name, group_name: '', wins: p.wins, draws: p.draws, gamesWon: p.gamesWon, gamesLost: p.gamesLost
             }));
-            const matchDataArr: MatchData[] = catMatches.map((m: any) => ({
-              team1_id: m.player1_individual_id,
-              team2_id: m.player3_individual_id,
-              team1_score_set1: m.team1_score_set1, team2_score_set1: m.team2_score_set1,
-              team1_score_set2: m.team1_score_set2, team2_score_set2: m.team2_score_set2,
-              team1_score_set3: m.team1_score_set3, team2_score_set3: m.team2_score_set3
-            }));
             
-            // Usar EXACTAMENTE a mesma função que o Standings (inclui confronto direto!)
-            const sorted = sortTeamsByTiebreaker(teamStatsArr, matchDataArr);
+            // INDIVIDUAL AMERICANO: NÃO existe confronto direto (parceiros mudam a cada ronda)
+            // Critérios de desempate: 1° Vitórias > 2° Pontos > 3° Diferença de jogos > 4° Jogos ganhos > 5° Data inscrição
+            const sorted = sortTeamsByTiebreaker(teamStatsArr, []);
+            console.log(`[getCatRankings] Category ${categoryId}: ${sorted.map((s,i) => `${i+1}°${s.name}(W:${s.wins},GD:${s.gamesWon-s.gamesLost},GW:${s.gamesWon})`).join(', ')}`);
             return sorted.map(s => ({ id: s.id, name: s.name, wins: s.wins, gamesWon: s.gamesWon, gamesLost: s.gamesLost }));
           };
 
