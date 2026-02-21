@@ -634,6 +634,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
           individualRankings.sort((a, b) => a.position - b.position);
           console.log('[STANDINGS] Mixed final rankings:', individualRankings.map(r => r.position + '° ' + r.player.name));
+          
+          // Guardar final_position na base de dados para que o histórico do jogador mostre a classificação correta
+          console.log('[STANDINGS] Saving final_position to database for', individualRankings.length, 'players');
+          const updatePromises = individualRankings.map(ranking => 
+            supabase
+              .from('players')
+              .update({ final_position: ranking.position })
+              .eq('id', ranking.player.id)
+          );
+          await Promise.all(updatePromises);
+          console.log('[STANDINGS] Updated final_position for all players');
+          
           setIndividualFinalRankings(individualRankings);
           setKnockoutRankings([]);
           setGroupedTeams(groupedStatsMap as any);
