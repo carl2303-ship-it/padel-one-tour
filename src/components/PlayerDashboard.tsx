@@ -176,6 +176,13 @@ export default function PlayerDashboard() {
     if (data?.pastTournamentDetails && Object.keys(data.pastTournamentDetails).length > 0) {
       setPastTournamentDetails(data.pastTournamentDetails);
     }
+    // Merge stats e recentMatches da Edge Function (bypassa RLS)
+    if (data?.stats) {
+      setStats(prev => ({ ...prev, ...data.stats }));
+    }
+    if (data?.recentMatches?.length) {
+      setRecentMatches(data.recentMatches);
+    }
   };
 
   const fetchPlayerInfo = async () => {
@@ -392,7 +399,7 @@ export default function PlayerDashboard() {
         player2_individual_id,
         player3_individual_id,
         player4_individual_id,
-        tournaments!inner(name),
+        tournaments(name),
         team1:teams!matches_team1_id_fkey(id, name),
         team2:teams!matches_team2_id_fkey(id, name),
         p1:players!matches_player1_individual_id_fkey(id, name),
@@ -456,7 +463,7 @@ export default function PlayerDashboard() {
         return {
           id: m.id,
           tournament_id: m.tournament_id,
-          tournament_name: m.tournaments.name,
+          tournament_name: m.tournaments?.name || '',
           court: m.court,
           start_time: m.scheduled_time,
           team1_name: team1Name,
