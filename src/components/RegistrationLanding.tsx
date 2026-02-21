@@ -1345,20 +1345,20 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   required
                   value={formData.player1Name}
                   onChange={(e) => setFormData({ ...formData, player1Name: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={!!loggedInPlayer}
+                  className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${(!!loggedInPlayer || !!existingAccount) ? 'bg-gray-50' : ''}`}
+                  disabled={!!loggedInPlayer || !!existingAccount}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email {!(loggedInPlayer || existingAccount) && '*'}</label>
                 <input
                   type="email"
-                  required
+                  required={!(loggedInPlayer || existingAccount)}
                   value={formData.player1Email}
                   onChange={(e) => setFormData({ ...formData, player1Email: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${(!!loggedInPlayer || !!existingAccount) ? 'bg-gray-50' : ''}`}
                   placeholder="email@exemplo.com"
-                  disabled={!!loggedInPlayer}
+                  disabled={!!loggedInPlayer || !!existingAccount}
                 />
               </div>
               <div>
@@ -1368,11 +1368,20 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   required
                   value={formData.player1Phone}
                   onChange={(e) => setFormData({ ...formData, player1Phone: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${(!!loggedInPlayer || !!existingAccount) ? 'bg-gray-50' : ''}`}
                   placeholder="+351 912 345 678"
                   disabled={!!loggedInPlayer || !!existingAccount}
                 />
               </div>
+
+              {(existingAccount || loggedInPlayer) && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  <p className="text-sm text-green-800">
+                    Jogador encontrado no sistema — os dados não podem ser alterados
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
