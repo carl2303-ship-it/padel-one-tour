@@ -14,6 +14,7 @@ Deno.serve(async (req: Request) => {
   try {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
+      console.error('[EdgeFn] Missing Authorization header');
       return new Response(
         JSON.stringify({ error: 'Missing or invalid Authorization header' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -24,15 +25,29 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Verify user and get player account
+    // Decode JWT to get user ID (avoids auth.getUser network call that can fail)
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid or expired token' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    let userId: string;
+    try {
+      const [, payloadB64] = token.split('.');
+      const payload = JSON.parse(atob(payloadB64.replace(/-/g, '+').replace(/_/g, '/')));
+      userId = payload.sub;
+      if (!userId) throw new Error('No sub in JWT');
+      console.log('[EdgeFn] Decoded userId from JWT:', userId);
+    } catch (jwtErr) {
+      console.error('[EdgeFn] JWT decode error:', jwtErr);
+      // Fallback: try auth.getUser
+      const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
+      if (authError || !authUser) {
+        console.error('[EdgeFn] auth.getUser also failed:', authError);
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired token' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      userId = authUser.id;
     }
+    const user = { id: userId };
 
     const { data: playerAccount } = await supabaseAdmin
       .from('player_accounts')

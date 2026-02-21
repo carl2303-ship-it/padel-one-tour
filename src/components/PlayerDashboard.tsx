@@ -151,12 +151,30 @@ export default function PlayerDashboard() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) return;
 
-    const { data, error } = await supabase.functions.invoke('get-player-dashboard', {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    if (error) {
-      console.error('get-player-dashboard error:', error);
+    let data: any = null;
+    try {
+      const response = await fetch(`${supabaseUrl}/functions/v1/get-player-dashboard`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': supabaseAnonKey,
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('get-player-dashboard error:', response.status, errorText);
+        return;
+      }
+
+      data = await response.json();
+    } catch (err) {
+      console.error('get-player-dashboard fetch error:', err);
       return;
     }
 
@@ -326,6 +344,7 @@ export default function PlayerDashboard() {
   };
 
   const fetchMatches = async () => {
+    try {
     const { data: playerAccount } = await supabase
       .from('player_accounts')
       .select('phone_number, name')
@@ -497,6 +516,9 @@ export default function PlayerDashboard() {
         losses,
         winRate: totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0
       }));
+    }
+    } catch (err) {
+      console.error('fetchMatches error (will use Edge Function data instead):', err);
     }
   };
 
