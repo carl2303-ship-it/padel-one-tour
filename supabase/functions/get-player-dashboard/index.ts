@@ -122,7 +122,7 @@ Deno.serve(async (req: Request) => {
             team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3,
             status, round, team1_id, team2_id,
             player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id,
-            tournaments!inner(name),
+            tournaments(name),
             team1:teams!matches_team1_id_fkey(id, name),
             team2:teams!matches_team2_id_fkey(id, name),
             p1:players!matches_player1_individual_id_fkey(id, name),
