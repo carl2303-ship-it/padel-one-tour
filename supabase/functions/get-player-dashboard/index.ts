@@ -40,11 +40,11 @@ Deno.serve(async (req: Request) => {
       const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
       if (authError || !authUser) {
         console.error('[EdgeFn] auth.getUser also failed:', authError);
-        return new Response(
-          JSON.stringify({ error: 'Invalid or expired token' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+      return new Response(
+        JSON.stringify({ error: 'Invalid or expired token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
       userId = authUser.id;
     }
     const user = { id: userId };
@@ -299,14 +299,14 @@ Deno.serve(async (req: Request) => {
 
     let standings: any[] = [];
     let standingsError: any = null;
-    
+
     if (conditions.length > 0) {
       const result = await supabaseAdmin
-        .from('league_standings')
+      .from('league_standings')
         .select('id, league_id, total_points, tournaments_played, entity_name, player_account_id, leagues!inner(id, name)')
-        .or(conditions.join(','))
-        .order('total_points', { ascending: false });
-      
+      .or(conditions.join(','))
+      .order('total_points', { ascending: false });
+
       standings = result.data || [];
       standingsError = result.error;
     }
@@ -379,9 +379,9 @@ Deno.serve(async (req: Request) => {
         const [{ data: tournament }, { data: matches }, { data: teams }, { data: players }] = await Promise.all([
           supabaseAdmin.from('tournaments').select('name, format').eq('id', t.id).maybeSingle(),
           supabaseAdmin
-            .from('matches')
-            .select('id, team1_id, team2_id, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, status, round')
-            .eq('tournament_id', t.id)
+          .from('matches')
+          .select('id, team1_id, team2_id, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, status, round')
+          .eq('tournament_id', t.id)
             .eq('status', 'completed'),
           supabaseAdmin.from('teams').select('id, name, group_name, final_position, player1_id, player2_id').eq('tournament_id', t.id),
           supabaseAdmin.from('players').select('id, name, group_name, final_position').eq('tournament_id', t.id),
@@ -391,6 +391,47 @@ Deno.serve(async (req: Request) => {
         const playerNamesMap = new Map<string, string>();
         if (players) {
           players.forEach((p: any) => playerNamesMap.set(p.id, p.name));
+        }
+
+        // FIX: Equipas podem referenciar jogadores de OUTROS torneios (ex: ligas com jornadas)
+        if (teams && teams.length > 0) {
+          const missingTeamPlayerIds: string[] = [];
+          teams.forEach((t_: any) => {
+            if (t_.player1_id && !playerNamesMap.has(t_.player1_id)) missingTeamPlayerIds.push(t_.player1_id);
+            if (t_.player2_id && !playerNamesMap.has(t_.player2_id)) missingTeamPlayerIds.push(t_.player2_id);
+          });
+          if (missingTeamPlayerIds.length > 0) {
+            const { data: crossPlayers } = await supabaseAdmin
+              .from('players')
+              .select('id, name, player_account_id')
+              .in('id', missingTeamPlayerIds);
+            if (crossPlayers && crossPlayers.length > 0) {
+              // Tentar obter nome centralizado do player_accounts
+              const paIds = crossPlayers.filter(p => p.player_account_id).map(p => p.player_account_id);
+              const paMap = new Map<string, string>();
+              if (paIds.length > 0) {
+                const { data: paData } = await supabaseAdmin
+                  .from('player_accounts')
+                  .select('id, name')
+                  .in('id', paIds);
+                if (paData) paData.forEach((pa: any) => paMap.set(pa.id, pa.name));
+              }
+              crossPlayers.forEach((p: any) => {
+                const paName = p.player_account_id ? paMap.get(p.player_account_id) : undefined;
+                playerNamesMap.set(p.id, paName || p.name);
+              });
+            }
+            // Fallback: parse do nome da equipa
+            teams.forEach((t_: any) => {
+              if ((t_.player1_id && !playerNamesMap.has(t_.player1_id)) || (t_.player2_id && !playerNamesMap.has(t_.player2_id))) {
+                const parts = (t_.name || '').split(/\s*[-\/\\&]\s*/);
+                if (parts.length >= 2) {
+                  if (t_.player1_id && !playerNamesMap.has(t_.player1_id) && parts[0]?.trim()) playerNamesMap.set(t_.player1_id, parts[0].trim());
+                  if (t_.player2_id && !playerNamesMap.has(t_.player2_id) && parts[1]?.trim()) playerNamesMap.set(t_.player2_id, parts[1].trim());
+                }
+              }
+            });
+          }
         }
 
         const isIndividual = (players?.length || 0) > 0 && (teams?.length || 0) === 0;
