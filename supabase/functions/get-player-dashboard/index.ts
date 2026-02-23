@@ -200,6 +200,17 @@ Deno.serve(async (req: Request) => {
             p2Name = m.team1?.player2_id ? teamPlayerNamesMap.get(m.team1.player2_id) : undefined;
             p3Name = m.team2?.player1_id ? teamPlayerNamesMap.get(m.team2.player1_id) : undefined;
             p4Name = m.team2?.player2_id ? teamPlayerNamesMap.get(m.team2.player2_id) : undefined;
+            // Fallback: parse do nome da equipa "Player1 / Player2" (torneios antigos sem player IDs)
+            if (!p1Name || !p2Name) {
+              const parts = (m.team1?.name || '').split(/\s*[\/\\]\s*/);
+              if (!p1Name && parts[0]?.trim()) p1Name = parts[0].trim();
+              if (!p2Name && parts[1]?.trim()) p2Name = parts[1].trim();
+            }
+            if (!p3Name || !p4Name) {
+              const parts = (m.team2?.name || '').split(/\s*[\/\\]\s*/);
+              if (!p3Name && parts[0]?.trim()) p3Name = parts[0].trim();
+              if (!p4Name && parts[1]?.trim()) p4Name = parts[1].trim();
+            }
           }
 
           const team1Sets = [
@@ -487,7 +498,16 @@ Deno.serve(async (req: Request) => {
 
         } else if (teams) {
           teams.forEach((t_: any) => {
-            standingsMap.set(t_.id, { id: t_.id, name: t_.name, group_name: t_.group_name || 'Geral', final_position: t_.final_position, wins: 0, draws: 0, losses: 0, points_for: 0, points_against: 0, points: 0, player1_name: t_.player1_id ? playerNamesMap.get(t_.player1_id) : undefined, player2_name: t_.player2_id ? playerNamesMap.get(t_.player2_id) : undefined });
+            // Resolver nomes: 1) playerNamesMap (por ID), 2) parse do nome da equipa "Player1 / Player2"
+            let p1Name = t_.player1_id ? playerNamesMap.get(t_.player1_id) : undefined;
+            let p2Name = t_.player2_id ? playerNamesMap.get(t_.player2_id) : undefined;
+            // Fallback: parse do nome da equipa (para torneios antigos sem player1_id/player2_id)
+            if (!p1Name || !p2Name) {
+              const parts = (t_.name || '').split(/\s*[\/\\]\s*/);
+              if (!p1Name && parts[0]?.trim()) p1Name = parts[0].trim();
+              if (!p2Name && parts[1]?.trim()) p2Name = parts[1].trim();
+            }
+            standingsMap.set(t_.id, { id: t_.id, name: t_.name, group_name: t_.group_name || 'Geral', final_position: t_.final_position, wins: 0, draws: 0, losses: 0, points_for: 0, points_against: 0, points: 0, player1_name: p1Name, player2_name: p2Name });
           });
           (matches || []).forEach((m: any) => {
             if (!m.team1_id || !m.team2_id) return;
@@ -579,6 +599,17 @@ Deno.serve(async (req: Request) => {
               p2Name = m.team1?.player2_id ? playerNamesMap.get(m.team1.player2_id) : undefined;
               p3Name = m.team2?.player1_id ? playerNamesMap.get(m.team2.player1_id) : undefined;
               p4Name = m.team2?.player2_id ? playerNamesMap.get(m.team2.player2_id) : undefined;
+              // Fallback: parse do nome da equipa "Player1 / Player2"
+              if (!p1Name || !p2Name) {
+                const parts = (m.team1?.name || '').split(/\s*[\/\\]\s*/);
+                if (!p1Name && parts[0]?.trim()) p1Name = parts[0].trim();
+                if (!p2Name && parts[1]?.trim()) p2Name = parts[1].trim();
+              }
+              if (!p3Name || !p4Name) {
+                const parts = (m.team2?.name || '').split(/\s*[\/\\]\s*/);
+                if (!p3Name && parts[0]?.trim()) p3Name = parts[0].trim();
+                if (!p4Name && parts[1]?.trim()) p4Name = parts[1].trim();
+              }
             }
 
             const t1Sets = [(m.team1_score_set1 || 0) > (m.team2_score_set1 || 0) ? 1 : 0, (m.team1_score_set2 || 0) > (m.team2_score_set2 || 0) ? 1 : 0, (m.team1_score_set3 || 0) > (m.team2_score_set3 || 0) ? 1 : 0].reduce((a, b) => a + b, 0);
