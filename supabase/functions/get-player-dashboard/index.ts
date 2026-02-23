@@ -123,8 +123,8 @@ Deno.serve(async (req: Request) => {
             status, round, team1_id, team2_id,
             player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id,
             tournaments(name),
-            team1:teams!matches_team1_id_fkey(id, name),
-            team2:teams!matches_team2_id_fkey(id, name),
+            team1:teams!matches_team1_id_fkey(id, name, player1_id, player2_id),
+            team2:teams!matches_team2_id_fkey(id, name, player1_id, player2_id),
             p1:players!matches_player1_individual_id_fkey(id, name),
             p2:players!matches_player2_individual_id_fkey(id, name),
             p3:players!matches_player3_individual_id_fkey(id, name),
@@ -133,6 +133,49 @@ Deno.serve(async (req: Request) => {
           .or(matchConditions.join(','))
           .order('scheduled_time', { ascending: false })
           .limit(500);
+
+        // Resolver nomes dos jogadores das equipas (player1_id/player2_id → nome)
+        // Usar player_accounts como fonte central (phone = ID único)
+        const teamPlayerIds = new Set<string>();
+        (allMatches || []).forEach((m: any) => {
+          if (m.team1?.player1_id) teamPlayerIds.add(m.team1.player1_id);
+          if (m.team1?.player2_id) teamPlayerIds.add(m.team1.player2_id);
+          if (m.team2?.player1_id) teamPlayerIds.add(m.team2.player1_id);
+          if (m.team2?.player2_id) teamPlayerIds.add(m.team2.player2_id);
+        });
+
+        // Batch query: players → player_accounts para nomes centralizados
+        const teamPlayerNamesMap = new Map<string, string>();
+        if (teamPlayerIds.size > 0) {
+          const { data: teamPlayers } = await supabaseAdmin
+            .from('players')
+            .select('id, name, player_account_id')
+            .in('id', Array.from(teamPlayerIds));
+          
+          if (teamPlayers) {
+            // Usar player_accounts para nomes mais fiáveis
+            const accountIds = teamPlayers
+              .filter((p: any) => p.player_account_id)
+              .map((p: any) => p.player_account_id);
+            
+            let accountNamesMap = new Map<string, string>();
+            if (accountIds.length > 0) {
+              const { data: accounts } = await supabaseAdmin
+                .from('player_accounts')
+                .select('id, name')
+                .in('id', accountIds);
+              if (accounts) {
+                accounts.forEach((a: any) => accountNamesMap.set(a.id, a.name));
+              }
+            }
+            
+            teamPlayers.forEach((p: any) => {
+              // Prioridade: nome do player_accounts > nome do players
+              const accountName = p.player_account_id ? accountNamesMap.get(p.player_account_id) : null;
+              teamPlayerNamesMap.set(p.id, accountName || p.name);
+            });
+          }
+        }
 
         let wins = 0;
         let losses = 0;
@@ -145,6 +188,20 @@ Deno.serve(async (req: Request) => {
           const team2Name = isIndividual
             ? `${m.p3?.name || 'TBD'}${m.p4 ? ' / ' + m.p4.name : ''}`
             : m.team2?.name || 'TBD';
+          
+          // Resolver nomes individuais: p1-p4 para individual, team player IDs para equipas
+          let p1Name: string | undefined, p2Name: string | undefined;
+          let p3Name: string | undefined, p4Name: string | undefined;
+          if (isIndividual) {
+            p1Name = m.p1?.name; p2Name = m.p2?.name;
+            p3Name = m.p3?.name; p4Name = m.p4?.name;
+          } else {
+            p1Name = m.team1?.player1_id ? teamPlayerNamesMap.get(m.team1.player1_id) : undefined;
+            p2Name = m.team1?.player2_id ? teamPlayerNamesMap.get(m.team1.player2_id) : undefined;
+            p3Name = m.team2?.player1_id ? teamPlayerNamesMap.get(m.team2.player1_id) : undefined;
+            p4Name = m.team2?.player2_id ? teamPlayerNamesMap.get(m.team2.player2_id) : undefined;
+          }
+
           const team1Sets = [
             (m.team1_score_set1 || 0) > (m.team2_score_set1 || 0) ? 1 : 0,
             (m.team1_score_set2 || 0) > (m.team2_score_set2 || 0) ? 1 : 0,
@@ -178,6 +235,10 @@ Deno.serve(async (req: Request) => {
             start_time: m.scheduled_time || '',
             team1_name: team1Name,
             team2_name: team2Name,
+            player1_name: p1Name,
+            player2_name: p2Name,
+            player3_name: p3Name,
+            player4_name: p4Name,
             score1: team1Sets,
             score2: team2Sets,
             status: m.status,
@@ -472,7 +533,7 @@ Deno.serve(async (req: Request) => {
             .from('matches')
             .select(`
               id, court, scheduled_time, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, status, round, team1_id, team2_id,
-              team1:teams!matches_team1_id_fkey(id, name), team2:teams!matches_team2_id_fkey(id, name),
+              team1:teams!matches_team1_id_fkey(id, name, player1_id, player2_id), team2:teams!matches_team2_id_fkey(id, name, player1_id, player2_id),
               p1:players!matches_player1_individual_id_fkey(id, name), p2:players!matches_player2_individual_id_fkey(id, name),
               p3:players!matches_player3_individual_id_fkey(id, name), p4:players!matches_player4_individual_id_fkey(id, name)
             `)
@@ -480,10 +541,46 @@ Deno.serve(async (req: Request) => {
             .or(allCond)
             .order('scheduled_time', { ascending: true });
 
+          // Resolver nomes dos jogadores das equipas deste torneio
+          // Usar o playerNamesMap já construído acima (linha 319-322) + fallback directo
+          const localTeamPlayerIds = new Set<string>();
+          (playerMatches || []).forEach((m: any) => {
+            if (m.team1?.player1_id) localTeamPlayerIds.add(m.team1.player1_id);
+            if (m.team1?.player2_id) localTeamPlayerIds.add(m.team1.player2_id);
+            if (m.team2?.player1_id) localTeamPlayerIds.add(m.team2.player1_id);
+            if (m.team2?.player2_id) localTeamPlayerIds.add(m.team2.player2_id);
+          });
+          // playerNamesMap já tem os nomes (construído no início do bloco do torneio)
+          // Mas pode faltar nomes — buscar os que faltam
+          const missingLocalIds = Array.from(localTeamPlayerIds).filter(id => !playerNamesMap.has(id));
+          if (missingLocalIds.length > 0) {
+            const { data: extraPlayers } = await supabaseAdmin
+              .from('players')
+              .select('id, name')
+              .in('id', missingLocalIds);
+            if (extraPlayers) {
+              extraPlayers.forEach((p: any) => playerNamesMap.set(p.id, p.name));
+            }
+          }
+
           myMatches = (playerMatches || []).map((m: any) => {
             const isInd = m.p1 || m.p2 || m.p3 || m.p4;
             const team1Name = isInd ? `${m.p1?.name || 'TBD'}${m.p2 ? ' / ' + m.p2.name : ''}` : m.team1?.name || 'TBD';
             const team2Name = isInd ? `${m.p3?.name || 'TBD'}${m.p4 ? ' / ' + m.p4.name : ''}` : m.team2?.name || 'TBD';
+            
+            // Resolver nomes individuais
+            let p1Name: string | undefined, p2Name: string | undefined;
+            let p3Name: string | undefined, p4Name: string | undefined;
+            if (isInd) {
+              p1Name = m.p1?.name; p2Name = m.p2?.name;
+              p3Name = m.p3?.name; p4Name = m.p4?.name;
+            } else {
+              p1Name = m.team1?.player1_id ? playerNamesMap.get(m.team1.player1_id) : undefined;
+              p2Name = m.team1?.player2_id ? playerNamesMap.get(m.team1.player2_id) : undefined;
+              p3Name = m.team2?.player1_id ? playerNamesMap.get(m.team2.player1_id) : undefined;
+              p4Name = m.team2?.player2_id ? playerNamesMap.get(m.team2.player2_id) : undefined;
+            }
+
             const t1Sets = [(m.team1_score_set1 || 0) > (m.team2_score_set1 || 0) ? 1 : 0, (m.team1_score_set2 || 0) > (m.team2_score_set2 || 0) ? 1 : 0, (m.team1_score_set3 || 0) > (m.team2_score_set3 || 0) ? 1 : 0].reduce((a, b) => a + b, 0);
             const t2Sets = [(m.team2_score_set1 || 0) > (m.team1_score_set1 || 0) ? 1 : 0, (m.team2_score_set2 || 0) > (m.team1_score_set2 || 0) ? 1 : 0, (m.team2_score_set3 || 0) > (m.team1_score_set3 || 0) ? 1 : 0].reduce((a, b) => a + b, 0);
             let is_winner: boolean | undefined;
@@ -494,7 +591,7 @@ Deno.serve(async (req: Request) => {
             const set1 = m.team1_score_set1 != null && m.team2_score_set1 != null ? `${m.team1_score_set1}-${m.team2_score_set1}` : undefined;
             const set2 = m.team1_score_set2 != null && m.team2_score_set2 != null && (m.team1_score_set2 > 0 || m.team2_score_set2 > 0) ? `${m.team1_score_set2}-${m.team2_score_set2}` : undefined;
             const set3 = m.team1_score_set3 != null && m.team2_score_set3 != null && (m.team1_score_set3 > 0 || m.team2_score_set3 > 0) ? `${m.team1_score_set3}-${m.team2_score_set3}` : undefined;
-            return { id: m.id, court: m.court || '', scheduled_time: m.scheduled_time || '', team1_name: team1Name, team2_name: team2Name, team1_score: t1Sets, team2_score: t2Sets, set1, set2, set3, status: m.status, round: m.round || '', is_winner };
+            return { id: m.id, court: m.court || '', scheduled_time: m.scheduled_time || '', team1_name: team1Name, team2_name: team2Name, player1_name: p1Name, player2_name: p2Name, player3_name: p3Name, player4_name: p4Name, team1_score: t1Sets, team2_score: t2Sets, set1, set2, set3, status: m.status, round: m.round || '', is_winner };
           });
         }
 
