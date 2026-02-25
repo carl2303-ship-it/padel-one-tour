@@ -27,6 +27,48 @@ Deno.serve(async (req: Request) => {
       const session = payload.data.object;
       const metadata = session.metadata || {};
 
+      // ====== Handle Open Game Payments ======
+      if (metadata.type === 'open_game' && metadata.gameId) {
+        const { gameId, paymentType, playerAccountId, userId } = metadata;
+
+        // Update payment record
+        await supabase
+          .from('open_game_payments')
+          .update({
+            stripe_payment_intent_id: session.payment_intent,
+            status: 'succeeded',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('stripe_session_id', session.id);
+
+        // Update player payment_status
+        if (playerAccountId) {
+          await supabase
+            .from('open_game_players')
+            .update({
+              payment_status: 'paid',
+              stripe_session_id: session.id,
+            })
+            .eq('game_id', gameId)
+            .eq('player_account_id', playerAccountId);
+        }
+
+        // If full_court payment, mark ALL players as paid
+        if (paymentType === 'full_court') {
+          await supabase
+            .from('open_game_players')
+            .update({ payment_status: 'paid' })
+            .eq('game_id', gameId);
+        }
+
+        console.log(`Open game payment completed: game=${gameId}, type=${paymentType}, player=${playerAccountId}`);
+
+        return new Response(
+          JSON.stringify({ success: true, message: 'Open game payment processed' }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const { data: existingTransaction } = await supabase
         .from('payment_transactions')
         .select('*')

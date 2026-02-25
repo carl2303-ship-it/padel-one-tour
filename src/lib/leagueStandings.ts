@@ -322,7 +322,7 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
     tournament_id: tournamentId,
     status: 'completed',
   };
-  if (categoryId) {
+  if (categoryId && categoryId !== 'no-category') {
     matchFilter.category_id = categoryId;
   }
 

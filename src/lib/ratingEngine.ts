@@ -438,10 +438,15 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
  * Processa cronologicamente para que cada jogo use o rating atualizado do anterior.
  * 
  * IMPORTANTE: Usa PlayerCache para que ratings acumulem correctamente entre jogos.
+ * 
+ * @param options.since - Filtrar jogos desde esta data
+ * @param options.tournamentId - Filtrar jogos apenas deste torneio (RECOMENDADO ao finalizar torneio)
+ * @param options.onProgress - Callback de progresso
  */
 export async function processAllUnratedMatches(
   since?: string,
-  onProgress?: (current: number, total: number, info: string) => void
+  onProgress?: (current: number, total: number, info: string) => void,
+  tournamentId?: string
 ): Promise<{ processed: number; skipped: number; errors: number; total: number }> {
   let query = supabase
     .from('matches')
@@ -449,6 +454,10 @@ export async function processAllUnratedMatches(
     .eq('status', 'completed')
     .or('rating_processed.is.null,rating_processed.eq.false')
     .order('scheduled_time', { ascending: true })
+
+  if (tournamentId) {
+    query = query.eq('tournament_id', tournamentId)
+  }
 
   if (since) {
     query = query.gte('scheduled_time', since)

@@ -68,6 +68,57 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+function normalizePhoneForRPC(phone: string | null): string | null {
+  if (!phone) return null;
+  
+  // Remove espaços e caracteres especiais
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  
+  // Se já começa com +351, retorna como está
+  if (cleaned.startsWith('+351')) {
+    return cleaned;
+  }
+  
+  // Se começa com 351 (sem +), adiciona o +
+  if (cleaned.startsWith('351')) {
+    return '+' + cleaned;
+  }
+  
+  // Se começa com +9 mas não tem +351, assume que é português e adiciona +351
+  // Exemplo: +961077447 -> +351961077447
+  if (cleaned.startsWith('+9') && cleaned.length === 10) {
+    return '+351' + cleaned.substring(1);
+  }
+  
+  // Se começa com + mas não é +351 e não é +9, pode ser outro país - retorna como está
+  if (cleaned.startsWith('+')) {
+    return cleaned;
+  }
+  
+  // Se começa com 0, remove o 0 e adiciona +351
+  if (cleaned.startsWith('0')) {
+    cleaned = cleaned.substring(1);
+  }
+  
+  // Se tem 9 dígitos e começa com 9, assume que é português e adiciona +351
+  if (cleaned.length === 9 && cleaned.startsWith('9')) {
+    return '+351' + cleaned;
+  }
+  
+  // Se tem 9 dígitos mas não começa com 9, também pode ser português (fixo)
+  if (cleaned.length === 9) {
+    return '+351' + cleaned;
+  }
+  
+  // Se tem 11 dígitos e começa com 351, adiciona o +
+  if (cleaned.length === 11 && cleaned.startsWith('351')) {
+    return '+' + cleaned;
+  }
+  
+  // Caso contrário, retorna como está (pode ser formato internacional diferente)
+  return cleaned;
+}
+
 export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlayersModalProps) {
   const { user } = useAuth();
   const [players, setPlayers] = useState<PlayerRecord[]>([]);
@@ -290,8 +341,24 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       // 2. Update player_accounts (global profile) via RPC
       // This propagates to ALL players records and league_standings
       if (player.phone_number) {
+        const normalizedPhone = normalizePhoneForRPC(player.phone_number);
+        if (!normalizedPhone) {
+          console.warn('Could not normalize phone number:', player.phone_number);
+          if (player.playerAccountId) {
+            await supabase
+              .from('player_accounts')
+              .update({
+                player_category: category,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', player.playerAccountId);
+          }
+          setSavingCategory(null);
+          return;
+        }
+        
         const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
-          p_phone_number: player.phone_number,
+          p_phone_number: normalizedPhone,
           p_player_category: category,
         });
 
@@ -350,16 +417,22 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
 
       // Try RPC first (propagates to players + league_standings)
       if (player.phone_number) {
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
-          p_phone_number: player.phone_number,
-          p_level: level,
-          p_level_reliability_percent: reliability,
-        });
-
-        if (!rpcError && rpcResult?.success) {
-          updated = true;
+        const normalizedPhone = normalizePhoneForRPC(player.phone_number);
+        if (!normalizedPhone) {
+          console.warn('Could not normalize phone number:', player.phone_number);
+          // Fall through to direct update if we have playerAccountId
         } else {
-          console.warn('RPC failed, trying direct update:', rpcError || rpcResult);
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
+            p_phone_number: normalizedPhone,
+            p_level: level,
+            p_level_reliability_percent: reliability,
+          });
+
+          if (!rpcError && rpcResult?.success) {
+            updated = true;
+          } else {
+            console.warn('RPC failed, trying direct update:', rpcError || rpcResult);
+          }
         }
       }
 
@@ -474,75 +547,113 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
     return 'bg-amber-100 text-amber-700';
   };
 
+  // Sincronizar scroll horizontal entre tabela e barra fixa
+  useEffect(() => {
+    if (!isOpen || filteredPlayers.length === 0) return;
+
+    const tableContainer = document.getElementById('table-scroll-container');
+    const horizontalScrollbar = document.getElementById('horizontal-scrollbar');
+    
+    if (!tableContainer || !horizontalScrollbar) return;
+
+    // Calcular largura da tabela
+    const table = tableContainer.querySelector('table');
+    if (table) {
+      const tableWidth = table.scrollWidth;
+      const scrollbarContent = horizontalScrollbar.querySelector('div');
+      if (scrollbarContent) {
+        scrollbarContent.style.width = `${tableWidth}px`;
+      }
+    }
+
+    // Sincronizar scroll da tabela com a barra fixa
+    const handleTableScroll = () => {
+      horizontalScrollbar.scrollLeft = tableContainer.scrollLeft;
+    };
+
+    // Sincronizar scroll da barra fixa com a tabela
+    const handleScrollbarScroll = () => {
+      tableContainer.scrollLeft = horizontalScrollbar.scrollLeft;
+    };
+
+    tableContainer.addEventListener('scroll', handleTableScroll);
+    horizontalScrollbar.addEventListener('scroll', handleScrollbarScroll);
+
+    return () => {
+      tableContainer.removeEventListener('scroll', handleTableScroll);
+      horizontalScrollbar.removeEventListener('scroll', handleScrollbarScroll);
+    };
+  }, [isOpen, filteredPlayers.length]);
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-gray-100">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Users className="w-6 h-6 text-blue-600" />
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Users className="w-4 h-4 text-blue-600" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Todos os Jogadores</h2>
-                <p className="text-sm text-gray-500">
+                <h2 className="text-base font-bold text-gray-900">Todos os Jogadores</h2>
+                <p className="text-xs text-gray-500">
                   {filteredPlayers.length} jogadores unicos
                 </p>
               </div>
             </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              <X className="w-6 h-6" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="text"
                 placeholder="Pesquisar por nome, email ou telefone..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
 
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors sm:hidden"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors sm:hidden text-sm"
             >
-              <Filter className="w-5 h-5" />
+              <Filter className="w-4 h-4" />
               Filtros
-              <ChevronDown className={`w-4 h-4 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
             </button>
 
-            <div className="hidden sm:flex gap-2">
+            <div className="hidden sm:flex gap-1.5">
               <div className="relative">
-                <Trophy className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Trophy className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <select
                   value={selectedTournament}
                   onChange={(e) => setSelectedTournament(e.target.value)}
-                  className="pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[180px]"
+                  className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[140px]"
                 >
                   <option value="all">Todos os torneios</option>
                   {tournaments.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
               </div>
 
               <div className="relative">
-                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Tag className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <select
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[150px]"
+                  className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent appearance-none bg-white min-w-[120px]"
                 >
                   <option value="all">Todas categorias</option>
                   <option value="none">Sem categoria</option>
@@ -557,33 +668,33 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                     ))}
                   </optgroup>
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
               </div>
             </div>
           </div>
 
           {showFilters && (
-            <div className="mt-3 flex flex-col gap-2 sm:hidden">
+            <div className="mt-2 flex flex-col gap-1.5 sm:hidden">
               <div className="relative">
-                <Trophy className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Trophy className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <select
                   value={selectedTournament}
                   onChange={(e) => setSelectedTournament(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                  className="w-full pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
                 >
                   <option value="all">Todos os torneios</option>
                   {tournaments.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
               </div>
               <div className="relative">
-                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Tag className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                 <select
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                  className="w-full pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
                 >
                   <option value="all">Todas categorias</option>
                   <option value="none">Sem categoria</option>
@@ -598,74 +709,120 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                     ))}
                   </optgroup>
                 </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
               </div>
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2 mt-4">
+          <div className="flex flex-wrap gap-1.5 mt-3">
             <button
               onClick={exportToCSV}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs font-medium"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-3.5 h-3.5" />
               Exportar CSV
             </button>
             <button
               onClick={copyEmails}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
             >
-              <Mail className="w-4 h-4" />
-              Copiar Emails ({filteredPlayers.filter(p => p.email).length})
+              <Mail className="w-3.5 h-3.5" />
+              Emails ({filteredPlayers.filter(p => p.email).length})
             </button>
             <button
               onClick={copyPhones}
-              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-sm font-medium"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors text-xs font-medium"
             >
-              <Phone className="w-4 h-4" />
-              Copiar Telefones ({filteredPlayers.filter(p => p.phone_number).length})
+              <Phone className="w-3.5 h-3.5" />
+              Telefones ({filteredPlayers.filter(p => p.phone_number).length})
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-64">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            </div>
-          ) : filteredPlayers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-              <Users className="w-16 h-16 text-gray-300 mb-4" />
-              <p className="text-lg font-medium">Nenhum jogador encontrado</p>
-              <p className="text-sm">Tente ajustar os filtros de pesquisa</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          <style>{`
+            .table-scroll-wrapper {
+              overflow-x: scroll !important;
+              overflow-y: visible;
+              scrollbar-width: none;
+              -ms-overflow-style: none;
+            }
+            .table-scroll-wrapper::-webkit-scrollbar {
+              display: none;
+            }
+            .table-content-wrapper {
+              overflow-y: auto;
+              overflow-x: hidden;
+              flex: 1;
+              padding-bottom: 12px;
+            }
+            .table-horizontal-scrollbar {
+              position: absolute;
+              bottom: 0;
+              left: 0;
+              right: 0;
+              height: 12px;
+              overflow-x: scroll;
+              overflow-y: hidden;
+              scrollbar-width: thin;
+              scrollbar-color: #cbd5e1 #f1f5f9;
+              background: #f1f5f9;
+              z-index: 30;
+              border-top: 1px solid #e2e8f0;
+            }
+            .table-horizontal-scrollbar::-webkit-scrollbar {
+              height: 8px;
+              display: block !important;
+            }
+            .table-horizontal-scrollbar::-webkit-scrollbar-track {
+              background: #f1f5f9;
+            }
+            .table-horizontal-scrollbar::-webkit-scrollbar-thumb {
+              background: #cbd5e1;
+              border-radius: 4px;
+            }
+            .table-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+              background: #94a3b8;
+            }
+          `}</style>
+          <div className="table-content-wrapper">
+            {loading ? (
+              <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+              </div>
+            ) : filteredPlayers.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                <Users className="w-16 h-16 text-gray-300 mb-4" />
+                <p className="text-lg font-medium">Nenhum jogador encontrado</p>
+                <p className="text-sm">Tente ajustar os filtros de pesquisa</p>
+              </div>
+            ) : (
+              <div className="table-scroll-wrapper" id="table-scroll-container">
+                <table className="text-xs" style={{ minWidth: '100%', width: 'max-content' }}>
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Nome
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Email
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Telefone
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Categoria
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Nível
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Fiabilidade
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Torneios
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <th className="px-2 py-2 text-center text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
                       Acoes
                     </th>
                   </tr>
@@ -673,46 +830,52 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                 <tbody className="divide-y divide-gray-100">
                   {filteredPlayers.map((player) => (
                     <tr key={player.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                            <span className="text-blue-600 font-semibold text-sm">
+                      <td className="px-2 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <span className="text-blue-600 font-semibold text-[10px]">
                               {player.displayName.charAt(0).toUpperCase()}
                             </span>
                           </div>
-                          <span className="font-medium text-gray-900">{player.displayName}</span>
+                          <span className="font-medium text-gray-900 text-xs truncate max-w-[120px]" title={player.displayName}>
+                            {player.displayName}
+                          </span>
                         </div>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         {player.email ? (
                           <a
                             href={`mailto:${player.email}`}
-                            className="flex items-center gap-2 text-blue-600 hover:text-blue-700"
+                            className="flex items-center gap-1 text-blue-600 hover:text-blue-700"
                           >
-                            <Mail className="w-4 h-4" />
-                            <span className="text-sm">{player.email}</span>
+                            <Mail className="w-3 h-3" />
+                            <span className="text-[10px] truncate max-w-[120px]" title={player.email}>
+                              {player.email}
+                            </span>
                           </a>
                         ) : (
-                          <span className="text-gray-400 text-sm">-</span>
+                          <span className="text-gray-400 text-[10px]">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         {player.phone_number ? (
-                          <span className="flex items-center gap-2 text-gray-700">
-                            <Phone className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm">{player.phone_number}</span>
+                          <span className="flex items-center gap-1 text-gray-700">
+                            <Phone className="w-3 h-3 text-gray-400" />
+                            <span className="text-[10px] truncate max-w-[100px]" title={player.phone_number}>
+                              {player.phone_number}
+                            </span>
                           </span>
                         ) : (
-                          <span className="text-gray-400 text-sm">-</span>
+                          <span className="text-gray-400 text-[10px]">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         <div className="relative">
                           <select
                             value={player.player_category || ''}
                             onChange={(e) => updatePlayerCategory(player, e.target.value as PlayerCategory || null)}
                             disabled={savingCategory === player.id}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-lg border-0 cursor-pointer focus:ring-2 focus:ring-blue-500 appearance-none pr-7 ${getCategoryBadgeColor(player.player_category)} ${savingCategory === player.id ? 'opacity-50' : ''}`}
+                            className={`px-1.5 py-1 text-[10px] font-medium rounded border-0 cursor-pointer focus:ring-1 focus:ring-blue-500 appearance-none pr-5 ${getCategoryBadgeColor(player.player_category)} ${savingCategory === player.id ? 'opacity-50' : ''}`}
                           >
                             <option value="">Sem cat.</option>
                             <optgroup label="Masculino">
@@ -726,10 +889,10 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                               ))}
                             </optgroup>
                           </select>
-                          <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none opacity-60" />
+                          <ChevronDown className="absolute right-0.5 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none opacity-60" />
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-2 py-2 text-center">
                         {editingLevel === player.id ? (
                           <input
                             type="number"
@@ -738,18 +901,18 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                             max="10"
                             value={editLevelValue}
                             onChange={(e) => setEditLevelValue(e.target.value)}
-                            className="w-16 px-2 py-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 text-center"
+                            className="w-12 px-1 py-0.5 text-[10px] border border-blue-300 rounded focus:ring-1 focus:ring-blue-500 text-center"
                             autoFocus
                           />
                         ) : (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-0.5">
                             {player.level != null ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-md text-sm font-semibold">
-                                <Gauge className="w-3.5 h-3.5" />
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-[10px] font-semibold">
+                                <Gauge className="w-2.5 h-2.5" />
                                 {Number(player.level).toFixed(1)}
                               </span>
                             ) : (
-                              <span className="text-gray-400 text-sm">-</span>
+                              <span className="text-gray-400 text-[10px]">-</span>
                             )}
                             {player.phone_number && (
                               <button
@@ -761,15 +924,15 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                                 className="p-0.5 text-gray-400 hover:text-blue-600 transition-colors"
                                 title="Editar nível"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
+                                <Edit3 className="w-3 h-3" />
                               </button>
                             )}
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="px-2 py-2 text-center">
                         {editingLevel === player.id ? (
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-0.5">
                             <input
                               type="number"
                               step="1"
@@ -777,47 +940,47 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                               max="100"
                               value={editReliabilityValue}
                               onChange={(e) => setEditReliabilityValue(e.target.value)}
-                              className="w-16 px-2 py-1 text-sm border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 text-center"
+                              className="w-12 px-1 py-0.5 text-[10px] border border-blue-300 rounded focus:ring-1 focus:ring-blue-500 text-center"
                             />
-                            <span className="text-xs text-gray-400">%</span>
+                            <span className="text-[9px] text-gray-400">%</span>
                             <button
                               onClick={() => updatePlayerLevel(player)}
                               disabled={savingLevel === player.id}
-                              className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
+                              className="p-0.5 text-green-600 hover:bg-green-50 rounded transition-colors"
                               title="Guardar"
                             >
-                              <Check className="w-4 h-4" />
+                              <Check className="w-3 h-3" />
                             </button>
                             <button
                               onClick={() => setEditingLevel(null)}
-                              className="p-1 text-gray-400 hover:bg-gray-100 rounded transition-colors"
+                              className="p-0.5 text-gray-400 hover:bg-gray-100 rounded transition-colors"
                               title="Cancelar"
                             >
-                              <X className="w-4 h-4" />
+                              <X className="w-3 h-3" />
                             </button>
                           </div>
                         ) : (
                           player.level_reliability_percent != null ? (
-                            <div className="flex items-center justify-center gap-1.5">
-                              <div className="w-16 bg-gray-200 rounded-full h-2" title={`${Math.round(Number(player.level_reliability_percent))}%`}>
+                            <div className="flex items-center justify-center gap-1">
+                              <div className="w-12 bg-gray-200 rounded-full h-1.5" title={`${Math.round(Number(player.level_reliability_percent))}%`}>
                                 <div 
-                                  className={`h-2 rounded-full ${
+                                  className={`h-1.5 rounded-full ${
                                     Number(player.level_reliability_percent) >= 70 ? 'bg-green-500' :
                                     Number(player.level_reliability_percent) >= 40 ? 'bg-yellow-500' : 'bg-red-400'
                                   }`}
                                   style={{ width: `${Math.min(100, Math.max(0, Number(player.level_reliability_percent)))}%` }}
                                 />
                               </div>
-                              <span className="text-xs text-gray-500 font-medium">
+                              <span className="text-[9px] text-gray-500 font-medium">
                                 {Math.round(Number(player.level_reliability_percent))}%
                               </span>
                             </div>
                           ) : (
-                            <span className="text-gray-400 text-sm">-</span>
+                            <span className="text-gray-400 text-[10px]">-</span>
                           )
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-2">
                         <div className="relative">
                           <button
                             onClick={() => {
@@ -829,22 +992,22 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                               }
                               setExpandedPlayers(newExpanded);
                             }}
-                            className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                            className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-800 font-medium"
                           >
-                            <Trophy className="w-4 h-4" />
-                            <span>{player.tournaments.length} torneio{player.tournaments.length !== 1 ? 's' : ''}</span>
+                            <Trophy className="w-3 h-3" />
+                            <span>{player.tournaments.length}</span>
                             {expandedPlayers.has(player.id) ? (
-                              <ChevronUp className="w-4 h-4" />
+                              <ChevronUp className="w-3 h-3" />
                             ) : (
-                              <ChevronDown className="w-4 h-4" />
+                              <ChevronDown className="w-3 h-3" />
                             )}
                           </button>
                           
                           {expandedPlayers.has(player.id) && (
-                            <div className="absolute z-20 left-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                              <div className="p-2 bg-gray-50 border-b border-gray-200 sticky top-0">
-                                <p className="text-xs font-semibold text-gray-600">
-                                  Torneios de {player.displayName} ({player.tournaments.length})
+                            <div className="absolute z-20 left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              <div className="p-1.5 bg-gray-50 border-b border-gray-200 sticky top-0">
+                                <p className="text-[9px] font-semibold text-gray-600">
+                                  Torneios ({player.tournaments.length})
                                 </p>
                               </div>
                               <div className="divide-y divide-gray-100">
@@ -852,16 +1015,16 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                                   const date = new Date(t.date);
                                   const formattedDate = `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
                                   return (
-                                    <div key={t.id} className="px-3 py-2 hover:bg-gray-50 flex items-center gap-3">
-                                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                                        <span className="text-xs font-bold text-blue-600">{idx + 1}</span>
+                                    <div key={t.id} className="px-2 py-1.5 hover:bg-gray-50 flex items-center gap-2">
+                                      <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                        <span className="text-[9px] font-bold text-blue-600">{idx + 1}</span>
                                       </div>
                                       <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium text-gray-900 truncate" title={t.name}>
+                                        <p className="text-[10px] font-medium text-gray-900 truncate" title={t.name}>
                                           {t.name}
                                         </p>
-                                        <p className="text-xs text-gray-500 flex items-center gap-1">
-                                          <Calendar className="w-3 h-3" />
+                                        <p className="text-[9px] text-gray-500 flex items-center gap-0.5">
+                                          <Calendar className="w-2.5 h-2.5" />
                                           {formattedDate}
                                         </p>
                                       </div>
@@ -873,24 +1036,24 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className="px-2 py-2">
+                        <div className="flex items-center justify-center gap-1">
                           {player.phone_number && (
                             <button
                               onClick={() => openWhatsApp(player.phone_number!)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                              className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
                               title="Abrir WhatsApp"
                             >
-                              <MessageCircle className="w-5 h-5" />
+                              <MessageCircle className="w-4 h-4" />
                             </button>
                           )}
                           {player.email && (
                             <a
                               href={`mailto:${player.email}`}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
                               title="Enviar email"
                             >
-                              <Mail className="w-5 h-5" />
+                              <Mail className="w-4 h-4" />
                             </a>
                           )}
                         </div>
@@ -898,30 +1061,39 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
+            )}
+          </div>
+          {!loading && filteredPlayers.length > 0 && (
+            <div 
+              className="table-horizontal-scrollbar"
+              id="horizontal-scrollbar"
+            >
+              <div style={{ height: '1px' }}></div>
             </div>
           )}
         </div>
 
-        <div className="p-4 border-t border-gray-100 bg-gray-50">
-          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600">
-            <div className="flex items-center gap-4">
+        <div className="p-3 border-t border-gray-100 bg-gray-50">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+            <div className="flex items-center gap-3">
               <span>
                 <strong>{filteredPlayers.length}</strong> jogadores
               </span>
               <span>
-                <strong>{filteredPlayers.filter(p => p.email).length}</strong> com email
+                <strong>{filteredPlayers.filter(p => p.email).length}</strong> email
               </span>
               <span>
-                <strong>{filteredPlayers.filter(p => p.phone_number).length}</strong> com telefone
+                <strong>{filteredPlayers.filter(p => p.phone_number).length}</strong> telefone
               </span>
               <span>
-                <strong>{filteredPlayers.filter(p => p.player_category).length}</strong> com categoria
+                <strong>{filteredPlayers.filter(p => p.player_category).length}</strong> categoria
               </span>
             </div>
             <button
               onClick={onClose}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
             >
               Fechar
             </button>

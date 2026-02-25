@@ -4183,7 +4183,27 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // 1. Calculate final positions
       if (isIndividualFormat()) {
         console.log('[FINALIZE] Calculating individual final positions...');
-        await calculateIndividualFinalPositions(tournament.id, selectedCategory);
+        // Se o torneio tem categorias, calcular posições para TODAS as categorias
+        if (categories.length > 0) {
+          for (const cat of categories) {
+            console.log('[FINALIZE] Calculating positions for category:', cat.name, '(', cat.id, ')');
+            await calculateIndividualFinalPositions(tournament.id, cat.id);
+          }
+          // Também calcular para jogadores sem categoria (se existirem)
+          const { data: playersWithoutCategory } = await supabase
+            .from('players')
+            .select('id')
+            .eq('tournament_id', tournament.id)
+            .is('category_id', null)
+            .limit(1);
+          if (playersWithoutCategory && playersWithoutCategory.length > 0) {
+            console.log('[FINALIZE] Calculating positions for players without category');
+            await calculateIndividualFinalPositions(tournament.id, 'no-category');
+          }
+        } else {
+          // Sem categorias - calcular para todos
+          await calculateIndividualFinalPositions(tournament.id, selectedCategory);
+        }
       } else {
         // For team tournaments, calculate team positions from match results
         console.log('[FINALIZE] Calculating team final positions from match results...');
@@ -4306,10 +4326,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       console.log('[FINALIZE] Updating league standings...');
       await updateLeagueStandings(tournament.id);
 
-      // 4. Process ratings for all unprocessed matches in this tournament
-      console.log('[FINALIZE] Processing player ratings...');
+      // 4. Process ratings ONLY for matches in THIS tournament (not all tournaments!)
+      console.log('[FINALIZE] Processing player ratings for tournament:', tournament.id);
       try {
-        const ratingResult = await processAllUnratedMatches();
+        const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
         console.log('[FINALIZE] Rating processing result:', ratingResult);
       } catch (ratingErr) {
         console.error('[FINALIZE] Error processing ratings:', ratingErr);
