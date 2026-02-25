@@ -1,16 +1,30 @@
 # Como corrigir jogadores que não veem o jogo no dashboard
 
 ## Problema
-Jogadores adicionados a um jogo não veem o jogo no seu dashboard porque o `user_id` não está preenchido ou está incorreto na tabela `open_game_players`.
+Jogadores adicionados a um jogo não veem o jogo no seu dashboard porque:
+1. O `user_id` não está preenchido ou está incorreto na tabela `open_game_players`
+2. As políticas RLS (Row Level Security) bloqueavam a atualização quando `user_id` era NULL
 
-## Solução Rápida (para o jogo específico)
+## Solução Completa
+
+### Passo 1: Aplicar as migrations
+1. Vai ao **Supabase Dashboard** > **Database** > **Migrations**
+2. Aplica estas migrations (por ordem):
+   - `20260225100001_fix_add_player_user_id.sql` - Corrige a função SQL
+   - `20260225100002_fix_game_players_user_id.sql` - Cria função de reparação
+   - `20260225100003_fix_open_game_players_rls_update.sql` - **IMPORTANTE**: Corrige RLS para permitir atualização
+
+### Passo 2: Corrigir o jogo específico
 
 1. Vai ao **Supabase Dashboard** > **SQL Editor**
 2. Executa esta query para corrigir o jogo específico:
 
 ```sql
+-- Corrigir o jogo específico
 SELECT fix_game_players_user_id('4943c90e-5fb6-4477-a945-c3edfab60219');
 ```
+
+**Nota**: Se a função retornar erro de permissão, executa com `SECURITY DEFINER` ou como superuser.
 
 Isto vai:
 - Verificar todos os jogadores confirmados neste jogo
