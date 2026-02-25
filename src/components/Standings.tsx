@@ -318,82 +318,70 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         const thirdPlaceMatch = knockoutMatches.find(m => 
           (m.round === '3rd_place' || m.round === 'mixed_3rd_place') && m.status === 'completed'
         );
+        const consolationMatch = knockoutMatches.find(m => 
+          m.round === 'consolation' && m.status === 'completed'
+        );
 
         console.log('[STANDINGS] Knockout: total=' + knockoutMatches.length + 
           ' rounds=' + knockoutMatches.map(m => m.round + ':' + m.status).join(', '));
 
         const rankedPlayerIds = new Set<string>();
+        let nextPos = 1;
+
+        // Helper to add players to ranking
+        const addToRanking = (playerIds: string[], status: 'confirmed' | 'pending' = 'confirmed') => {
+          sortByGroupStats(playerIds.filter((id: string) => !rankedPlayerIds.has(id)))
+            .forEach((pid: string) => {
+              individualRankings.push({
+                position: nextPos++,
+                player: { id: pid, name: playerMap.get(pid) || pid },
+                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                status
+              });
+              rankedPlayerIds.add(pid);
+            });
+        };
 
         // 1°, 2° — VENCEDORES DA FINAL
         if (finalMatch) {
           const { winners, losers } = getMatchWinnerLoser(finalMatch);
           console.log('[STANDINGS] Final winners:', winners.map((id: string) => playerMap.get(id)), 
                        'losers:', losers.map((id: string) => playerMap.get(id)));
-          
-          sortByGroupStats(winners).forEach((pid: string, idx: number) => {
-            individualRankings.push({
-              position: idx + 1,  // FIXO: 1°, 2°
-              player: { id: pid, name: playerMap.get(pid) || pid },
-              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-              status: 'confirmed'
-            });
-            rankedPlayerIds.add(pid);
-          });
+          addToRanking(winners);
 
-          // 3°, 4° — VENCIDOS DA FINAL
-          sortByGroupStats(losers).forEach((pid: string, idx: number) => {
-            individualRankings.push({
-              position: 3 + idx,  // FIXO: 3°, 4°
-              player: { id: pid, name: playerMap.get(pid) || pid },
-              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-              status: 'confirmed'
-            });
-            rankedPlayerIds.add(pid);
-          });
+          // 3°, 4° — VENCIDOS DA FINAL (vice-campeões)
+          addToRanking(losers);
         }
 
-        // 5°, 6° — VENCEDORES DA PEQUENA FINAL (3°/4° lugar)
+        // 5°, 6°, 7°, 8° — JOGO DE 3°/4° LUGAR (semi-finalistas)
         if (thirdPlaceMatch) {
           const { winners, losers } = getMatchWinnerLoser(thirdPlaceMatch);
-          
-          sortByGroupStats(winners.filter((id: string) => !rankedPlayerIds.has(id)))
-            .forEach((pid: string, idx: number) => {
-              individualRankings.push({
-                position: 5 + idx,  // FIXO: 5°, 6°
-                player: { id: pid, name: playerMap.get(pid) || pid },
-                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(pid);
-            });
+          addToRanking(winners);
+          addToRanking(losers);
+        }
 
-          // 7°, 8° — VENCIDOS DA PEQUENA FINAL
-          sortByGroupStats(losers.filter((id: string) => !rankedPlayerIds.has(id)))
-            .forEach((pid: string, idx: number) => {
-              individualRankings.push({
-                position: 7 + idx,  // FIXO: 7°, 8°
-                player: { id: pid, name: playerMap.get(pid) || pid },
-                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                status: 'confirmed'
-              });
-              rankedPlayerIds.add(pid);
-            });
+        // 9°, 10°, 11°, 12° — CONSOLAÇÃO (perdedores dos quartos)
+        if (consolationMatch) {
+          const { winners, losers } = getMatchWinnerLoser(consolationMatch);
+          addToRanking(winners);
+          addToRanking(losers);
+        }
+
+        // Outros jogos de classificação (5th_place, 7th_place, etc.)
+        const otherPlacementRounds = ['5th_place', '7th_place', '9th_place', '11th_place'];
+        for (const roundName of otherPlacementRounds) {
+          const placementMatch = knockoutMatches.find(m => m.round === roundName && m.status === 'completed');
+          if (placementMatch) {
+            const { winners, losers } = getMatchWinnerLoser(placementMatch);
+            addToRanking(winners);
+            addToRanking(losers);
+          }
         }
 
         // Restantes (se houver jogadores não classificados pelo knockout)
         const remaining = Array.from(globalPlayerStats.keys()).filter(id => !rankedPlayerIds.has(id));
         if (remaining.length > 0) {
-          const nextPos = individualRankings.length > 0
-            ? Math.max(...individualRankings.map(r => r.position)) + 1
-            : 1;
-          sortByGroupStats(remaining).forEach((pid, idx) => {
-            individualRankings.push({
-              position: nextPos + idx,
-              player: { id: pid, name: playerMap.get(pid) || pid },
-              groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-              status: 'pending'
-            });
-          });
+          addToRanking(remaining, 'pending');
         }
 
         individualRankings.sort((a, b) => a.position - b.position);
@@ -555,81 +543,57 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           const playerMap = new Map(playersData.map(p => [p.id, p.name]));
           const finalMatch = matches.find(m => (m.round === 'final' || m.round === 'mixed_final') && m.status === 'completed');
           const thirdPlaceMatch = matches.find(m => (m.round === '3rd_place' || m.round === 'mixed_3rd_place') && m.status === 'completed');
+          const consolationMatch = matches.find(m => m.round === 'consolation' && m.status === 'completed');
 
           console.log('[STANDINGS] Mixed knockout: final=' + (finalMatch ? 'completed' : 'not found') + 
-                       ', 3rd_place=' + (thirdPlaceMatch ? 'completed' : 'not found'));
+                       ', 3rd_place=' + (thirdPlaceMatch ? 'completed' : 'not found') +
+                       ', consolation=' + (consolationMatch ? 'completed' : 'not found'));
 
           const individualRankings: IndividualFinalRanking[] = [];
           const rankedIds = new Set<string>();
+          let mixedNextPos = 1;
 
+          // Helper to add players to ranking
+          const addToMixedRanking = (playerIds: string[], status: 'confirmed' | 'pending' = 'confirmed') => {
+            sortByGroupStats(playerIds.filter((id: string) => !rankedIds.has(id)))
+              .forEach((pid: string) => {
+                individualRankings.push({
+                  position: mixedNextPos++,
+                  player: { id: pid, name: playerMap.get(pid) || pid },
+                  groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
+                  status
+                });
+                rankedIds.add(pid);
+              });
+          };
+
+          // 1°, 2° — Vencedores da Final + 3°, 4° — Vencidos da Final
           if (finalMatch) {
             const { winners, losers } = getMatchWL(finalMatch);
             console.log('[STANDINGS] Final: winners=', winners.map((id: string) => playerMap.get(id)), 
                          'losers=', losers.map((id: string) => playerMap.get(id)));
-            
-            // 1°, 2° — Vencedores da Final
-            sortByGroupStats(winners).forEach((pid: string, idx: number) => {
-              individualRankings.push({
-                position: idx + 1,
-                player: { id: pid, name: playerMap.get(pid) || pid },
-                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                status: 'confirmed'
-              });
-              rankedIds.add(pid);
-            });
-
-            // 3°, 4° — Vencidos da Final
-            sortByGroupStats(losers).forEach((pid: string, idx: number) => {
-              individualRankings.push({
-                position: 3 + idx,
-                player: { id: pid, name: playerMap.get(pid) || pid },
-                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                status: 'confirmed'
-              });
-              rankedIds.add(pid);
-            });
+            addToMixedRanking(winners);
+            addToMixedRanking(losers);
           }
 
+          // 5°, 6°, 7°, 8° — Jogo de 3°/4° lugar
           if (thirdPlaceMatch) {
             const { winners, losers } = getMatchWL(thirdPlaceMatch);
-            
-            // 5°, 6° — Vencedores da Pequena Final
-            sortByGroupStats(winners.filter((id: string) => !rankedIds.has(id)))
-              .forEach((pid: string, idx: number) => {
-                individualRankings.push({
-                  position: 5 + idx,
-                  player: { id: pid, name: playerMap.get(pid) || pid },
-                  groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                  status: 'confirmed'
-                });
-                rankedIds.add(pid);
-              });
+            addToMixedRanking(winners);
+            addToMixedRanking(losers);
+          }
 
-            // 7°, 8° — Vencidos da Pequena Final
-            sortByGroupStats(losers.filter((id: string) => !rankedIds.has(id)))
-              .forEach((pid: string, idx: number) => {
-                individualRankings.push({
-                  position: 7 + idx,
-                  player: { id: pid, name: playerMap.get(pid) || pid },
-                  groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                  status: 'confirmed'
-                });
-                rankedIds.add(pid);
-              });
+          // 9°, 10°, 11°, 12° — Consolação
+          if (consolationMatch) {
+            const { winners, losers } = getMatchWL(consolationMatch);
+            addToMixedRanking(winners);
+            addToMixedRanking(losers);
           }
 
           // Restantes
           const remaining = Array.from(globalPlayerStats.keys()).filter(id => !rankedIds.has(id));
           if (remaining.length > 0) {
-            const nextPos = individualRankings.length > 0 ? Math.max(...individualRankings.map(r => r.position)) + 1 : 1;
-            sortByGroupStats(remaining).forEach((pid, idx) => {
-              individualRankings.push({
-                position: nextPos + idx,
-                player: { id: pid, name: playerMap.get(pid) || pid },
-                groupStats: globalPlayerStats.get(pid) || { wins: 0, gamesWon: 0, gamesLost: 0 },
-                status: 'pending'
-              });
-            });
+            addToMixedRanking(remaining, 'pending');
           }
 
           individualRankings.sort((a, b) => a.position - b.position);
@@ -704,9 +668,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         const knockoutMatches = matches.filter(m =>
           m.round?.startsWith('mixed_') ||
           m.round?.startsWith('crossed_') ||
+          m.round === 'quarterfinal' ||
+          m.round === 'quarter_final' ||
           m.round === 'semifinal' ||
           m.round === 'final' ||
           m.round === '3rd_place' ||
+          m.round === 'consolation' ||
           m.round === '5th_place' ||
           m.round === '7th_place' ||
           m.round === '9th_place' ||
@@ -822,7 +789,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               }
             });
 
-            // Sort losers by tiebreakers for 3rd and 4th (if no 3rd place match) or just add as finalists
+            // 3°, 4° — Perdedores da Final (vice-campeões, sempre classificados)
             const losersWithStats = loserIds.map(id => ({
               id,
               name: playersData.find(p => p.id === id)?.name || '',
@@ -830,21 +797,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             }));
             const sortedLosers = sortPlayers(losersWithStats);
 
-            if (!thirdPlaceMatch || thirdPlaceMatch.status !== 'completed') {
-              // No 3rd place match, so finalists losers get 3rd based on tiebreakers
-              sortedLosers.forEach((player, idx) => {
-                const playerData = playersData.find(p => p.id === player.id);
-                if (playerData) {
-                  individualRankings.push({
-                    position: sortedWinners.length + idx + 1,
-                    player: { id: playerData.id, name: playerData.name },
-                    groupStats: player.stats,
-                    status: 'confirmed'
-                  });
-                  rankedPlayerIds.add(player.id);
-                }
-              });
-            }
+            sortedLosers.forEach((player, idx) => {
+              const playerData = playersData.find(p => p.id === player.id);
+              if (playerData) {
+                individualRankings.push({
+                  position: sortedWinners.length + idx + 1,
+                  player: { id: playerData.id, name: playerData.name },
+                  groupStats: player.stats,
+                  status: 'confirmed'
+                });
+                rankedPlayerIds.add(player.id);
+              }
+            });
           }
 
           // Process 3rd place match
@@ -904,7 +868,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           }
 
-          const placementRounds = ['5th_place', '7th_place', '9th_place', '11th_place'];
+          const placementRounds = ['consolation', '5th_place', '7th_place', '9th_place', '11th_place'];
           for (const roundName of placementRounds) {
             const placementMatch = knockoutMatches.find(m => m.round === roundName);
             if (placementMatch && placementMatch.status === 'completed') {

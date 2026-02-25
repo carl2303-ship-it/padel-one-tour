@@ -836,7 +836,8 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         }
 
         const allFinalRounds = [
-          'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
+          'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', 'consolation',
+          '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
           'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place'
         ];
