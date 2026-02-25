@@ -347,6 +347,7 @@ export default function LiveTournamentView() {
     if (round === 'semifinal') return 'MEIA-FINAL';
     if (round === '3rd_place') return '3./4. LUGAR';
     if (round === 'quarterfinal') return 'QUARTOS';
+    if (round === 'consolation') return 'CONSOLAÇÃO';
     if (round.startsWith('group_')) return round.replace('group_', 'Grupo ');
     if (round === 'group_stage') return 'Fase Grupos';
     return round;

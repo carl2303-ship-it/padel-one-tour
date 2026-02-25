@@ -437,7 +437,7 @@ export function scheduleMultipleCategories(
       ['round_of_32'],
       ['round_of_16'],
       ['quarter_final', 'quarterfinal'],
-      ['semifinal', 'semi_final', '5th_place', '7th_place'],
+      ['consolation', 'semifinal', 'semi_final', '5th_place', '7th_place'],
       ['final', '3rd_place']
     ];
 
@@ -672,34 +672,15 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
 
   console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total group matches generated: ${matches.length}`);
 
-  const numberOfGroups = sortedGroups.length;
-  const qualifiedPerGroup = 2;
-  const totalQualified = numberOfGroups * qualifiedPerGroup;
+  // Calculate total qualified players (all players with groups)
+  const totalPlayers = Array.from(teamsByGroup.values()).reduce((sum, g) => sum + g.length, 0);
+  const numQFMatches = Math.floor(totalPlayers / 4);
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Generating knockout with ${totalQualified} qualified players`);
+  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total players: ${totalPlayers}, potential first-round matches: ${numQFMatches}`);
 
-  if (totalQualified >= 4) {
-    // Always create 2 semifinals for 4+ qualified players
-    const numSemifinals = 2;
-
-    for (let i = 0; i < numSemifinals; i++) {
-      matches.push({
-        round: 'semifinal',
-        match_number: matchNumber++,
-        team1_id: null,
-        team2_id: null,
-        player1_individual_id: null,
-        player2_individual_id: null,
-        player3_individual_id: null,
-        player4_individual_id: null,
-        scheduled_time: '',
-        court: ''
-      });
-    }
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added ${numSemifinals} semifinal matches`);
-
+  const addKoMatch = (round: string) => {
     matches.push({
-      round: 'final',
+      round,
       match_number: matchNumber++,
       team1_id: null,
       team2_id: null,
@@ -710,51 +691,42 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
       scheduled_time: '',
       court: ''
     });
+  };
+
+  if (numQFMatches >= 3) {
+    // 12+ players: QFs → SFs → Final
+    // e.g. 3 groups × 4 = 12 players → 3 QFs, 2 SFs, 1 consolation, 1 final, 1 3rd
+    for (let i = 0; i < numQFMatches; i++) {
+      addKoMatch('quarterfinal');
+    }
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added ${numQFMatches} quarterfinal matches`);
+
+    // Consolation match for QF losers who don't advance to SFs
+    addKoMatch('consolation');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added consolation match`);
+
+    // 2 semifinals
+    addKoMatch('semifinal');
+    addKoMatch('semifinal');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 2 semifinal matches`);
+
+    // Final + 3rd/4th
+    addKoMatch('final');
+    addKoMatch('3rd_place');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final and 3rd/4th place matches`);
+  } else if (numQFMatches >= 2) {
+    // 8 players: just SFs → Final
+    addKoMatch('semifinal');
+    addKoMatch('semifinal');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 2 semifinal matches`);
+
+    addKoMatch('final');
+    addKoMatch('3rd_place');
+    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final and 3rd/4th place matches`);
+  } else if (totalPlayers >= 4) {
+    // 4 players: just Final
+    addKoMatch('final');
     console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final match`);
-
-    matches.push({
-      round: '3rd_place',
-      match_number: matchNumber++,
-      team1_id: null,
-      team2_id: null,
-      player1_individual_id: null,
-      player2_individual_id: null,
-      player3_individual_id: null,
-      player4_individual_id: null,
-      scheduled_time: '',
-      court: ''
-    });
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 3rd/4th place match`);
-
-    if (numberOfGroups >= 2) {
-      matches.push({
-        round: '5th_place',
-        match_number: matchNumber++,
-        team1_id: null,
-        team2_id: null,
-        player1_individual_id: null,
-        player2_individual_id: null,
-        player3_individual_id: null,
-        player4_individual_id: null,
-        scheduled_time: '',
-        court: ''
-      });
-      console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 5th/6th place match`);
-
-      matches.push({
-        round: '7th_place',
-        match_number: matchNumber++,
-        team1_id: null,
-        team2_id: null,
-        player1_individual_id: null,
-        player2_individual_id: null,
-        player3_individual_id: null,
-        player4_individual_id: null,
-        scheduled_time: '',
-        court: ''
-      });
-      console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 7th/8th place match`);
-    }
   }
 
   console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total matches (group + knockout + placement): ${matches.length}`);

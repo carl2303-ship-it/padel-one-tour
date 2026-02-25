@@ -45,6 +45,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
     'quarter_final', 'quarterfinal', 'semi_final', 'semifinal', 'final'
   ];
   const placementRoundOrder = [
+    'consolation',
     '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
     '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
     'mixed_3rd_place'
@@ -112,6 +113,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       case 'semi_final':
       case 'semifinal': return 'Semi Finals';
       case 'final': return 'Final';
+      case 'consolation': return 'Consolation';
       case '3rd_place': return '3rd/4th Place';
       case '5th_place': return '5th/6th Place';
       case '7th_place': return '7th/8th Place';

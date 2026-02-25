@@ -1182,27 +1182,64 @@ export async function populatePlacementMatches(
         console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
       }
     } else {
-      // 3+ groups: shuffle qualified players into QFs
-      const allQualified: string[] = [];
-      for (const groupName of sortedGroups) {
-        const ranking = rankedByGroup.get(groupName)!;
-        // Take top players from each group (enough to fill QFs)
-        const perGroup = Math.ceil((unpopulatedQFs.length * 4) / sortedGroups.length / 2);
-        for (let r = 0; r < perGroup && r < ranking.length; r++) {
-          allQualified.push(ranking[r]);
+      // 3+ groups: proper cross-group seeding for QFs
+      // Build global seeding by interleaving positions across groups
+      // e.g. 3 groups: A1, B1, C1, A2, B2, C2, A3, B3, C3, A4, B4, C4
+      // Within same position tier, sort by stats (wins, game diff, games won)
+      const globalSeeding: string[] = [];
+      const maxPos = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+
+      for (let pos = 0; pos < maxPos; pos++) {
+        const playersAtPos: Array<{ id: string; wins: number; gamesWon: number; gamesLost: number }> = [];
+        for (const groupName of sortedGroups) {
+          const ranking = rankedByGroup.get(groupName)!;
+          if (pos < ranking.length) {
+            const playerId = ranking[pos];
+            const stats = playerStats.get(playerId);
+            playersAtPos.push({
+              id: playerId,
+              wins: stats?.wins || 0,
+              gamesWon: stats?.gamesWon || 0,
+              gamesLost: stats?.gamesLost || 0,
+            });
+          }
         }
+        // Sort within same position by wins, then game diff, then games won
+        playersAtPos.sort((a, b) => {
+          if (a.wins !== b.wins) return b.wins - a.wins;
+          const diffA = a.gamesWon - a.gamesLost;
+          const diffB = b.gamesWon - b.gamesLost;
+          if (diffA !== diffB) return diffB - diffA;
+          return b.gamesWon - a.gamesWon;
+        });
+        playersAtPos.forEach(p => globalSeeding.push(p.id));
       }
-      
-      const shuffled = [...allQualified].sort(() => Math.random() - 0.5);
-      for (let i = 0; i < unpopulatedQFs.length && (i * 4 + 3) < shuffled.length; i++) {
-        const base = i * 4;
+
+      console.log(`[POPULATE_PLACEMENT] Global seeding (${globalSeeding.length} players):`, globalSeeding.map((id, i) => `${i + 1}°`));
+
+      // Assign to QFs using bracket seeding: top+bottom vs mid seeds
+      // For 12 players (seeds 0-11), 3 QFs:
+      //   QF1: Seed0 + Seed11 vs Seed5 + Seed6
+      //   QF2: Seed1 + Seed10 vs Seed4 + Seed7
+      //   QF3: Seed2 + Seed9  vs Seed3 + Seed8
+      const n = globalSeeding.length;
+      const half = Math.floor(n / 2);
+
+      for (let i = 0; i < unpopulatedQFs.length && i < Math.floor(n / 4); i++) {
+        const p1 = globalSeeding[i];             // top seed
+        const p2 = globalSeeding[n - 1 - i];     // bottom seed (partner)
+        const p3 = globalSeeding[half - 1 - i];  // mid-high seed
+        const p4 = globalSeeding[half + i];       // mid-low seed (partner)
+
+        if (!p1 || !p2 || !p3 || !p4) break;
+
         await supabase.from('matches').update({
-          player1_individual_id: shuffled[base],
-          player2_individual_id: shuffled[base + 1],
-          player3_individual_id: shuffled[base + 2],
-          player4_individual_id: shuffled[base + 3],
+          player1_individual_id: p1,
+          player2_individual_id: p2,
+          player3_individual_id: p3,
+          player4_individual_id: p4,
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: populated with qualified players`);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: Seed${i + 1}+Seed${n - i} vs Seed${half - i}+Seed${half + 1 + i}`);
       }
     }
     
@@ -1592,53 +1629,134 @@ export async function advanceKnockoutWinner(
       .filter(m => quarterfinalRounds.includes(m.round))
       .sort((a, b) => a.match_number - b.match_number);
 
-    const matchIndex = quarterfinalMatches.findIndex(m => m.id === completedMatchId);
-
     const semifinalMatches = allMatches
       .filter(m => semifinalRounds.includes(m.round))
       .sort((a, b) => a.match_number - b.match_number);
 
-    const targetSemifinalIndex = Math.floor(matchIndex / 2);
-    const isFirstInPair = matchIndex % 2 === 0;
+    const isPowerOf2 = quarterfinalMatches.length === semifinalMatches.length * 2;
 
-    if (semifinalMatches[targetSemifinalIndex]) {
-      if (isIndividual) {
-        const updateData: any = {};
-        if (isFirstInPair) {
-          updateData.player1_individual_id = winnerIds.p1;
-          updateData.player2_individual_id = winnerIds.p2;
-        } else {
-          updateData.player3_individual_id = winnerIds.p1;
-          updateData.player4_individual_id = winnerIds.p2;
-        }
+    if (isPowerOf2) {
+      // Standard bracket: 4 QFs → 2 SFs (each pair of QFs feeds one SF)
+      const matchIndex = quarterfinalMatches.findIndex(m => m.id === completedMatchId);
+      const targetSemifinalIndex = Math.floor(matchIndex / 2);
+      const isFirstInPair = matchIndex % 2 === 0;
 
-        const { error } = await supabase
-          .from('matches')
-          .update(updateData)
-          .eq('id', semifinalMatches[targetSemifinalIndex].id);
-
-        if (error) {
-          console.error('[ADVANCE_WINNER] Error updating semifinal:', error);
-        } else {
+      if (semifinalMatches[targetSemifinalIndex]) {
+        if (isIndividual) {
+          const updateData: any = {};
+          if (isFirstInPair) {
+            updateData.player1_individual_id = winnerIds.p1;
+            updateData.player2_individual_id = winnerIds.p2;
+          } else {
+            updateData.player3_individual_id = winnerIds.p1;
+            updateData.player4_individual_id = winnerIds.p2;
+          }
+          await supabase.from('matches').update(updateData).eq('id', semifinalMatches[targetSemifinalIndex].id);
           console.log('[ADVANCE_WINNER] Updated SF', targetSemifinalIndex + 1, 'with winner from QF', matchIndex + 1);
-        }
-      } else {
-        const updateData: any = {};
-        if (isFirstInPair) {
-          updateData.team1_id = winnerIds.team;
         } else {
-          updateData.team2_id = winnerIds.team;
-        }
-
-        const { error } = await supabase
-          .from('matches')
-          .update(updateData)
-          .eq('id', semifinalMatches[targetSemifinalIndex].id);
-
-        if (error) {
-          console.error('[ADVANCE_WINNER] Error updating semifinal:', error);
-        } else {
+          const updateData: any = {};
+          if (isFirstInPair) {
+            updateData.team1_id = winnerIds.team;
+          } else {
+            updateData.team2_id = winnerIds.team;
+          }
+          await supabase.from('matches').update(updateData).eq('id', semifinalMatches[targetSemifinalIndex].id);
           console.log('[ADVANCE_WINNER] Updated SF', targetSemifinalIndex + 1, 'with winner team from QF', matchIndex + 1);
+        }
+      }
+    } else {
+      // Non-standard bracket (e.g. 3 QFs → 2 SFs): batch advancement
+      // Wait until ALL QFs are complete before advancing
+      const allQFsDone = quarterfinalMatches.every(m => m.status === 'completed');
+      if (!allQFsDone) {
+        console.log(`[ADVANCE_WINNER] Non-standard bracket: waiting for all QFs (${quarterfinalMatches.filter(m => m.status === 'completed').length}/${quarterfinalMatches.length})`);
+        return;
+      }
+
+      console.log('[ADVANCE_WINNER] All QFs complete, batch advancing to SFs + consolation');
+
+      if (isIndividual) {
+        // Collect winners and losers from all QFs
+        const qfResults: Array<{ winners: { p1: string; p2: string }; losers: { p1: string; p2: string }; winnerGameDiff: number; loserGameDiff: number }> = [];
+
+        for (const qf of quarterfinalMatches) {
+          const t1g = (qf.team1_score_set1 || 0) + (qf.team1_score_set2 || 0) + (qf.team1_score_set3 || 0);
+          const t2g = (qf.team2_score_set1 || 0) + (qf.team2_score_set2 || 0) + (qf.team2_score_set3 || 0);
+          const t1Won = t1g > t2g;
+
+          if (t1Won) {
+            qfResults.push({
+              winners: { p1: qf.player1_individual_id, p2: qf.player2_individual_id },
+              losers: { p1: qf.player3_individual_id, p2: qf.player4_individual_id },
+              winnerGameDiff: t1g - t2g,
+              loserGameDiff: t2g - t1g,
+            });
+          } else {
+            qfResults.push({
+              winners: { p1: qf.player3_individual_id, p2: qf.player4_individual_id },
+              losers: { p1: qf.player1_individual_id, p2: qf.player2_individual_id },
+              winnerGameDiff: t2g - t1g,
+              loserGameDiff: t1g - t2g,
+            });
+          }
+        }
+
+        // Sort winners by game diff (best first) for seeding
+        const sortedWinners = [...qfResults].sort((a, b) => b.winnerGameDiff - a.winnerGameDiff);
+        // Sort losers by game diff (best first) for "lucky loser" selection
+        const sortedLosers = [...qfResults].sort((a, b) => b.loserGameDiff - a.loserGameDiff);
+
+        // Build SF qualifiers: all winners + best losers to fill SFs
+        const sfPairs: Array<{ p1: string; p2: string }> = sortedWinners.map(r => r.winners);
+        const consolationPairs: Array<{ p1: string; p2: string }> = [];
+
+        // We need exactly semifinalMatches.length * 2 pairs for SFs
+        const slotsNeeded = semifinalMatches.length * 2;
+        let loserIdx = 0;
+        while (sfPairs.length < slotsNeeded && loserIdx < sortedLosers.length) {
+          sfPairs.push(sortedLosers[loserIdx].losers);
+          loserIdx++;
+        }
+
+        // Remaining losers go to consolation
+        while (loserIdx < sortedLosers.length) {
+          consolationPairs.push(sortedLosers[loserIdx].losers);
+          loserIdx++;
+        }
+
+        console.log(`[ADVANCE_WINNER] SF qualifiers: ${sfPairs.length} pairs, Consolation: ${consolationPairs.length} pairs`);
+
+        // Populate SF matches
+        for (let i = 0; i < semifinalMatches.length && i * 2 + 1 < sfPairs.length; i++) {
+          const pair1 = sfPairs[i * 2];
+          const pair2 = sfPairs[i * 2 + 1];
+          await supabase.from('matches').update({
+            player1_individual_id: pair1.p1,
+            player2_individual_id: pair1.p2,
+            player3_individual_id: pair2.p1,
+            player4_individual_id: pair2.p2,
+          }).eq('id', semifinalMatches[i].id);
+          console.log(`[ADVANCE_WINNER] SF${i + 1}: pair${i * 2 + 1} vs pair${i * 2 + 2}`);
+        }
+
+        // Populate consolation match
+        const consolationMatch = allMatches.find(m => m.round === 'consolation');
+        if (consolationMatch && consolationPairs.length >= 2) {
+          await supabase.from('matches').update({
+            player1_individual_id: consolationPairs[0].p1,
+            player2_individual_id: consolationPairs[0].p2,
+            player3_individual_id: consolationPairs[1].p1,
+            player4_individual_id: consolationPairs[1].p2,
+          }).eq('id', consolationMatch.id);
+          console.log('[ADVANCE_WINNER] Consolation match populated');
+        } else if (consolationMatch && consolationPairs.length === 1) {
+          // If only 1 losing pair left, put them all in consolation with dummy
+          await supabase.from('matches').update({
+            player1_individual_id: consolationPairs[0].p1,
+            player2_individual_id: consolationPairs[0].p2,
+            player3_individual_id: null,
+            player4_individual_id: null,
+          }).eq('id', consolationMatch.id);
         }
       }
     }

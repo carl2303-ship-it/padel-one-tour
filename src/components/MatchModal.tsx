@@ -733,7 +733,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
           .eq('id', loserId);
 
         if (currentMatch) {
-          const knockoutRoundsForTeams = ['semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16', 'final', '3rd_place'];
+          const knockoutRoundsForTeams = ['semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16', 'final', '3rd_place', 'consolation'];
           const isKnockoutRound = knockoutRoundsForTeams.includes(currentMatch.round);
 
           if (isKnockoutRound && tournament?.format === 'groups_knockout') {
@@ -810,7 +810,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
 
         const knockoutRoundsForIndividual = [
           'semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16',
-          'final', '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
+          'final', '3rd_place', 'consolation', '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
           '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal'
         ];

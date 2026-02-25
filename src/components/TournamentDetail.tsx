@@ -410,6 +410,32 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     totalQualified: number;
     extraFromPosition: number;
   } => {
+    if (isIndividual) {
+      // Individual format: each match has 4 players (2v2)
+      if (knockoutStage === 'quarterfinals') {
+        // ALL players qualify for QFs (typically 4 per group)
+        const qualifiedPerGroup = 4;
+        const totalQualified = numberOfGroups * qualifiedPerGroup;
+        console.log(`[CALCULATE_QUALIFIED] Individual QFs: ${numberOfGroups} groups × ${qualifiedPerGroup} = ${totalQualified} total`);
+        return { qualifiedPerGroup, extraBestNeeded: 0, totalQualified, extraFromPosition: qualifiedPerGroup + 1 };
+      } else if (knockoutStage === 'semifinals') {
+        // 8 players for 2 SFs
+        const totalQualified = 8;
+        const qualifiedPerGroup = Math.floor(totalQualified / numberOfGroups);
+        const extraBestNeeded = totalQualified - (qualifiedPerGroup * numberOfGroups);
+        console.log(`[CALCULATE_QUALIFIED] Individual SFs: ${qualifiedPerGroup}/group + ${extraBestNeeded} best = ${totalQualified}`);
+        return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition: qualifiedPerGroup + 1 };
+      } else {
+        // final: 4 players
+        const totalQualified = 4;
+        const qualifiedPerGroup = Math.floor(totalQualified / numberOfGroups);
+        const extraBestNeeded = totalQualified - (qualifiedPerGroup * numberOfGroups);
+        console.log(`[CALCULATE_QUALIFIED] Individual Final: ${qualifiedPerGroup}/group + ${extraBestNeeded} best = ${totalQualified}`);
+        return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition: qualifiedPerGroup + 1 };
+      }
+    }
+
+    // Team format
     const teamKnockoutSizes: Record<string, number> = {
       'final': 2,
       'semifinals': 4,
@@ -417,20 +443,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       'round16': 16,
     };
 
-    const individualKnockoutSizes: Record<string, number> = {
-      'final': 4,
-      'semifinals': 8,
-      'quarterfinals': 16,
-      'round16': 32,
-    };
-
-    const knockoutSizes = isIndividual ? individualKnockoutSizes : teamKnockoutSizes;
-    const totalQualified = knockoutSizes[knockoutStage] || (isIndividual ? 8 : 4);
+    const totalQualified = teamKnockoutSizes[knockoutStage] || 4;
     const qualifiedPerGroup = Math.floor(totalQualified / numberOfGroups);
     const extraBestNeeded = totalQualified - (qualifiedPerGroup * numberOfGroups);
     const extraFromPosition = qualifiedPerGroup + 1;
 
-    console.log(`[CALCULATE_QUALIFIED] Type: ${isIndividual ? 'Individual' : 'Teams'}, Groups: ${numberOfGroups}, Stage: ${knockoutStage}`);
+    console.log(`[CALCULATE_QUALIFIED] Teams: ${numberOfGroups} groups, Stage: ${knockoutStage}`);
     console.log(`[CALCULATE_QUALIFIED] Total needed: ${totalQualified}, Per group: ${qualifiedPerGroup}, Extra best ${extraFromPosition}th needed: ${extraBestNeeded}`);
 
     return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition };
@@ -4001,24 +4019,31 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             });
           };
 
-          if (categoryKnockoutStage === 'quarterfinals') {
-            // Calculate correct number of QFs based on qualified players
-            // With 2 groups: 4 players qualify per group = 8 total = 2 QFs
-            // With 3+ groups: more QFs needed
-            const groupCount = groupNames.length || numberOfGroups;
-            const qualifiedPerGroup = 2; // top 2 per group qualify
-            const totalQualified = groupCount * qualifiedPerGroup * 2; // players per group that go to QFs (top 4)
-            const numQFs = Math.max(2, Math.min(4, Math.floor(totalQualified / 4)));
-            console.log(`[SCHEDULE] Creating ${numQFs} quarterfinals for ${groupCount} groups`);
-            for (let i = 0; i < numQFs; i++) {
+          // Dynamically calculate knockout structure based on total qualified players
+          const groupCount = groupNames.length || numberOfGroups;
+          const totalQualifiedPlayers = groupCount * 4; // All players in each group (typically 4)
+          const numFirstRoundMatches = Math.floor(totalQualifiedPlayers / 4);
+
+          console.log(`[SCHEDULE] Knockout: ${groupCount} groups, ${totalQualifiedPlayers} players, ${numFirstRoundMatches} first-round matches, stage: ${categoryKnockoutStage}`);
+
+          if (categoryKnockoutStage === 'quarterfinals' && numFirstRoundMatches >= 3) {
+            // 12+ players: QFs + consolation + SFs + final + 3rd
+            for (let i = 0; i < numFirstRoundMatches; i++) {
               addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
             }
             advanceKoTime();
-          }
 
-          addKoMatch('semifinal', '1');
-          addKoMatch('semifinal', '2');
-          advanceKoTime();
+            // Consolation match for QF losers who don't advance
+            addKoMatch('consolation', '1');
+            addKoMatch('semifinal', ((1 % numberOfCourts) + 1).toString());
+            addKoMatch('semifinal', ((2 % numberOfCourts) + 1).toString());
+            advanceKoTime();
+          } else {
+            // 8 or fewer: just SFs + final + 3rd
+            addKoMatch('semifinal', '1');
+            addKoMatch('semifinal', '2');
+            advanceKoTime();
+          }
 
           addKoMatch('3rd_place', '1');
           addKoMatch('final', '2');
