@@ -186,6 +186,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
     return (
       <button
         key={match.id}
+        id={`match-${match.id}`}
         onClick={() => onMatchClick(match.id)}
         className="w-full bg-white border-2 border-gray-300 rounded-lg hover:shadow-lg transition-all hover:border-blue-400"
       >
@@ -275,6 +276,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
     return (
       <button
         key={match.id}
+        id={`match-${match.id}`}
         onClick={() => onMatchClick(match.id)}
         className="w-full bg-white border-2 border-gray-300 rounded-lg hover:shadow-lg transition-all hover:border-blue-400"
         style={{ minWidth: '280px' }}
@@ -376,7 +378,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
                       const mixedSubtitle = getMixedMatchSubtitle(round, matchIndex);
 
                       return (
-                        <div key={match.id} className="relative">
+                        <div key={match.id} id={`match-${match.id}`} className="relative">
                           {mixedSubtitle && (
                             <div className="text-center text-xs text-indigo-600 font-semibold mb-1">
                               {mixedSubtitle}

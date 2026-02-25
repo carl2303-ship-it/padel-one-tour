@@ -742,7 +742,7 @@ export default function MatchScheduleView({
     const bgColor = match.category_id ? `${categoryColor}15` : '#f9fafb';
 
     return (
-      <div key={match.id} className="relative">
+      <div key={match.id} id={`match-${match.id}`} className="relative">
         <div
           onClick={() => onMatchClick(match.id)}
           role="button"

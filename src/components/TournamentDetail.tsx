@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase, Tournament, Team, Player, Match, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown } from 'lucide-react';
@@ -140,6 +140,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedLineupTeam, setSelectedLineupTeam] = useState<SuperTeamRow | null>(null);
   const [showEditSuperTeam, setShowEditSuperTeam] = useState(false);
   const [selectedSuperTeam, setSelectedSuperTeam] = useState<SuperTeamRow | null>(null);
+
+  // Ref to store match ID to scroll to after modal close + data refresh
+  const scrollToMatchIdRef = useRef<string | null>(null);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -983,9 +986,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
-  const fetchTournamentData = async () => {
-    console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id);
-    setLoading(true);
+  const fetchTournamentData = async (silent = false) => {
+    console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
+    if (!silent) setLoading(true);
 
     if (currentTournament?.format === 'super_teams') {
       const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
@@ -1375,6 +1378,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     setLoading(false);
     setRefreshKey(prev => prev + 1);
+
+    // Scroll to the match that was just closed (after DOM update)
+    if (scrollToMatchIdRef.current) {
+      const matchId = scrollToMatchIdRef.current;
+      scrollToMatchIdRef.current = null;
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`match-${matchId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Brief highlight effect
+          el.classList.add('ring-2', 'ring-blue-400', 'ring-offset-2');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'ring-offset-2'), 2000);
+        }
+      });
+    }
   };
 
   const handleAssignGroups = async () => {
@@ -5692,13 +5710,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           tournamentId={tournament.id}
           matchId={selectedMatchId}
           onClose={() => {
+            // Save match ID for scroll restoration
+            if (selectedMatchId) scrollToMatchIdRef.current = selectedMatchId;
             setShowMatchModal(false);
             setSelectedMatchId(undefined);
+            // Silent refresh to keep scroll position
+            fetchTournamentData(true);
           }}
           onSuccess={() => {
+            // Save match ID for scroll restoration
+            if (selectedMatchId) scrollToMatchIdRef.current = selectedMatchId;
             setShowMatchModal(false);
             setSelectedMatchId(undefined);
-            fetchTournamentData();
+            // Silent refresh to keep scroll position
+            fetchTournamentData(true);
           }}
           isIndividualRoundRobin={isIndividualFormat()}
           individualPlayers={individualPlayers}
