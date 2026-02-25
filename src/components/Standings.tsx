@@ -385,6 +385,21 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         }
 
         individualRankings.sort((a, b) => a.position - b.position);
+
+        // Guardar posições corretas na base de dados
+        if (individualRankings.length > 0) {
+          console.log('[STANDINGS] Saving corrected final_position to database for', individualRankings.length, 'players');
+          const updatePromises = individualRankings
+            .filter(r => r.status === 'confirmed')
+            .map(ranking =>
+              supabase
+                .from('players')
+                .update({ final_position: ranking.position })
+                .eq('id', ranking.player.id)
+            );
+          await Promise.all(updatePromises);
+        }
+
         setIndividualFinalRankings(individualRankings);
         setKnockoutRankings([]);
 
@@ -617,53 +632,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           return;
         }
 
-        // Para formatos NÃO mistos: usar final_position da DB se disponível
-        const playersWithDbPosition = playersData.filter(p => p.final_position);
-        if (playersWithDbPosition.length > 0) {
-          const individualRankings: IndividualFinalRanking[] = [];
-          playersWithDbPosition
-            .sort((a, b) => (a.final_position || 999) - (b.final_position || 999))
-            .forEach(player => {
-              const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-              individualRankings.push({
-                position: player.final_position!,
-                player: { id: player.id, name: player.name },
-                groupStats: stats,
-                status: 'confirmed'
-              });
-            });
-
-          const rankedIds = new Set(playersWithDbPosition.map(p => p.id));
-          const unrankedPlayers = playersData
-            .filter(p => !rankedIds.has(p.id))
-            .sort((a, b) => {
-              const statsA = globalPlayerStats.get(a.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              const statsB = globalPlayerStats.get(b.id) || { wins: 0, draws: 0, gamesWon: 0, gamesLost: 0 };
-              if (statsB.wins !== statsA.wins) return statsB.wins - statsA.wins;
-              const diffA = statsA.gamesWon - statsA.gamesLost;
-              const diffB = statsB.gamesWon - statsB.gamesLost;
-              return diffB - diffA;
-            });
-
-          const maxPos = Math.max(...individualRankings.map(r => r.position));
-          unrankedPlayers.forEach((player, idx) => {
-            const stats = globalPlayerStats.get(player.id) || { wins: 0, gamesWon: 0, gamesLost: 0 };
-            individualRankings.push({
-              position: maxPos + 1 + idx,
-              player: { id: player.id, name: player.name },
-              groupStats: stats,
-              status: 'pending'
-            });
-          });
-
-          individualRankings.sort((a, b) => a.position - b.position);
-          console.log('[STANDINGS-INDIVIDUAL-GROUPS] Final rankings (from DB):', individualRankings.length);
-          setIndividualFinalRankings(individualRankings);
-          setKnockoutRankings([]);
-          setLoading(false);
-          return;
-        }
-
+        // SEMPRE recalcular a partir dos resultados do knockout (não usar posições da DB que podem estar desatualizadas)
         // Calculate individual final rankings from knockout matches
         const knockoutMatches = matches.filter(m =>
           m.round?.startsWith('mixed_') ||
@@ -934,6 +903,21 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         });
 
         console.log('[STANDINGS-INDIVIDUAL-GROUPS] Final rankings:', individualRankings.length);
+
+        // Guardar posições corretas na base de dados
+        if (individualRankings.length > 0) {
+          console.log('[STANDINGS] Saving corrected final_position to database for', individualRankings.length, 'players');
+          const updatePromises = individualRankings
+            .filter(r => r.status === 'confirmed')
+            .map(ranking =>
+              supabase
+                .from('players')
+                .update({ final_position: ranking.position })
+                .eq('id', ranking.player.id)
+            );
+          await Promise.all(updatePromises);
+        }
+
         setIndividualFinalRankings(individualRankings);
 
         setLoading(false);
