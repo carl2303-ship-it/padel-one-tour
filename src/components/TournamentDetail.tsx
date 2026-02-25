@@ -1037,12 +1037,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
-          const hasUnpopulatedKnockout = knockoutMatches.some((m: any) =>
+          
+          // IMPORTANT: Only check the FIRST knockout round (QFs or SFs) to avoid infinite loop.
+          // Later rounds (SF, final, 3rd_place) are expected to be empty until earlier rounds complete.
+          const hasQFs = knockoutMatches.some((m: any) => m.round === 'quarterfinal' || m.round === 'quarter_final');
+          const firstRoundMatches = hasQFs
+            ? knockoutMatches.filter((m: any) => m.round === 'quarterfinal' || m.round === 'quarter_final')
+            : knockoutMatches.filter((m: any) => m.round === 'semifinal');
+          const hasUnpopulatedFirstRound = firstRoundMatches.length > 0 && firstRoundMatches.some((m: any) =>
             !m.player1_individual_id && !m.player3_individual_id
           );
           
-          if (allGroupsDone && hasUnpopulatedKnockout) {
-            console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets (QFs + SFs)');
+          if (allGroupsDone && hasUnpopulatedFirstRound) {
+            console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets (first round only)');
             populatePlacementMatches(tournament.id).then(() => {
               fetchTournamentData();
             });
