@@ -17,7 +17,7 @@ import { processAllUnratedMatches } from '../lib/ratingEngine';
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
-import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches } from '../lib/groups';
+import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, advanceKnockoutWinner } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
 // import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler'; // Available for future multi-category scheduling
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
@@ -174,6 +174,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           if (newRecord.round?.startsWith('crossed_')) {
             // Avançar R1→R2 ou R2→R3
             setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
+          } else if (newRecord.round === 'quarterfinal' || newRecord.round === 'quarter_final') {
+            // Avançar quarterfinals → semifinals
+            console.log('[REALTIME] Quarterfinal completed, advancing winner to semifinal');
+            setTimeout(async () => {
+              await advanceKnockoutWinner(tournament.id, newRecord.id);
+              fetchTournamentData();
+            }, 500);
           } else if (newRecord.round === 'semifinal') {
             // Avançar meias-finais → final e 3°/4° lugar
             setTimeout(() => autoAdvanceSemifinals(updated), 500);
@@ -182,17 +189,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
             
             if (allGroupsDone) {
-              if (currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') {
+              // Use tournament.format (prop) instead of currentTournament (potentially stale state)
+              const fmt = tournament.format;
+              if (fmt === 'mixed_american' || fmt === 'mixed_gender') {
                 console.log('[REALTIME] All groups done (mixed_american/mixed_gender) - refetching to auto-populate knockouts');
                 setTimeout(() => fetchTournamentData(), 500);
-              } else if (currentTournament?.format === 'crossed_playoffs') {
+              } else if (fmt === 'crossed_playoffs') {
                 setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
-              } else if (currentTournament?.format === 'individual_groups_knockout') {
+              } else if (fmt === 'individual_groups_knockout') {
                 setTimeout(async () => {
                   console.log('[REALTIME] All groups done, populating knockout brackets');
                   await populatePlacementMatches(tournament.id);
                   fetchTournamentData();
                 }, 600);
+              } else {
+                // Fallback: refetch for any format with groups
+                console.log(`[REALTIME] All groups done (format: ${fmt}) - refetching`);
+                setTimeout(() => fetchTournamentData(), 500);
               }
             }
           }
@@ -1019,7 +1032,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         );
         setMatches(sortedMatches);
 
-        if (currentTournament?.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
+        // Use tournament.format (prop) to avoid stale currentTournament state
+        if (tournament.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
@@ -1028,7 +1042,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           );
           
           if (allGroupsDone && hasUnpopulatedKnockout) {
-            console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets');
+            console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets (QFs + SFs)');
             populatePlacementMatches(tournament.id).then(() => {
               fetchTournamentData();
             });
@@ -1884,60 +1898,146 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         await fetchTournamentData();
         alert(`Meias-finais mistas geradas!\n${groupA}1+${groupB}2 vs ${groupA}2+${groupB}1`);
       } else {
-        const shuffle = (array: string[]) => {
-          const shuffled = [...array];
-          for (let i = shuffled.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-          }
-          return shuffled;
-        };
-
-        const shuffledQualified = shuffle(qualifiedPlayers);
-
-        const semifinalMatches = categoryMatches.filter(m => m.round === 'semifinal');
-        if (semifinalMatches.length !== 2) {
-          alert('Expected exactly 2 semifinal matches');
-          setLoading(false);
-          return;
-        }
-
-        semifinalMatches.sort((a, b) => a.match_number - b.match_number);
-
-        const confirmed = confirm(
-          'This will randomly assign qualified players to semifinals. Continue?'
+        // Check if we have quarterfinal matches to populate first
+        const quarterfinalMatches = categoryMatches
+          .filter(m => m.round === 'quarterfinal' || m.round === 'quarter_final')
+          .sort((a, b) => a.match_number - b.match_number);
+        
+        const hasUnpopulatedQFs = quarterfinalMatches.some(m => 
+          !m.player1_individual_id && !m.player3_individual_id
         );
-        if (!confirmed) {
-          setLoading(false);
-          return;
+
+        if (quarterfinalMatches.length > 0 && hasUnpopulatedQFs) {
+          // QUARTERFINALS: populate with cross-group matchups
+          const confirmed = confirm(
+            `This will assign ${qualifiedPlayers.length} qualified players to ${quarterfinalMatches.length} quarterfinals. Continue?`
+          );
+          if (!confirmed) {
+            setLoading(false);
+            return;
+          }
+
+          if (sortedGroupNames.length === 2) {
+            const groupA = sortedGroupNames[0];
+            const groupB = sortedGroupNames[1];
+            const playersA = qualifiedByGroup.get(groupA)!;
+            const playersB = qualifiedByGroup.get(groupB)!;
+            
+            const unpopulatedQFs = quarterfinalMatches.filter(m => 
+              !m.player1_individual_id && !m.player3_individual_id
+            );
+            
+            const maxQFs = Math.min(unpopulatedQFs.length, Math.floor(Math.min(playersA.length, playersB.length) / 2));
+            
+            for (let i = 0; i < maxQFs; i++) {
+              const startRank = i * 2;
+              const a1 = playersA[startRank];
+              const a2 = playersA[startRank + 1];
+              const b1 = playersB[startRank];
+              const b2 = playersB[startRank + 1];
+              
+              if (!a1 || !a2 || !b1 || !b2) break;
+              
+              const { error } = await supabase.from('matches').update({
+                player1_individual_id: a1,
+                player2_individual_id: b2,
+                player3_individual_id: b1,
+                player4_individual_id: a2,
+              }).eq('id', unpopulatedQFs[i].id);
+              
+              if (error) throw error;
+            }
+            
+            // Delete extra empty QF matches
+            for (let i = maxQFs; i < unpopulatedQFs.length; i++) {
+              await supabase.from('matches').delete().eq('id', unpopulatedQFs[i].id);
+            }
+          } else {
+            // Multiple groups: use populatePlacementMatches for proper seeding
+            await populatePlacementMatches(tournament.id, categoryId);
+          }
+          
+          await fetchTournamentData();
+          alert('Quarterfinals generated with cross-group matchups!');
+        } else {
+          // SEMIFINALS: standard flow
+          const semifinalMatches = categoryMatches.filter(m => m.round === 'semifinal');
+          if (semifinalMatches.length !== 2) {
+            alert('Expected exactly 2 semifinal matches');
+            setLoading(false);
+            return;
+          }
+
+          semifinalMatches.sort((a, b) => a.match_number - b.match_number);
+
+          const confirmed = confirm(
+            'This will assign qualified players to semifinals with cross-group matchups. Continue?'
+          );
+          if (!confirmed) {
+            setLoading(false);
+            return;
+          }
+
+          if (sortedGroupNames.length === 2 && qualifiedByGroup.size === 2) {
+            // Cross-group matchups for 2 groups
+            const groupA = sortedGroupNames[0];
+            const groupB = sortedGroupNames[1];
+            const playersA = qualifiedByGroup.get(groupA)!;
+            const playersB = qualifiedByGroup.get(groupB)!;
+            
+            // SF1: A1+B2 vs B1+A2
+            const { error: sf1Error } = await supabase.from('matches').update({
+              player1_individual_id: playersA[0],
+              player2_individual_id: playersB[1],
+              player3_individual_id: playersB[0],
+              player4_individual_id: playersA[1],
+            }).eq('id', semifinalMatches[0].id);
+            if (sf1Error) throw sf1Error;
+
+            if (playersA.length >= 4 && playersB.length >= 4) {
+              // SF2: A3+B4 vs B3+A4
+              const { error: sf2Error } = await supabase.from('matches').update({
+                player1_individual_id: playersA[2],
+                player2_individual_id: playersB[3],
+                player3_individual_id: playersB[2],
+                player4_individual_id: playersA[3],
+              }).eq('id', semifinalMatches[1].id);
+              if (sf2Error) throw sf2Error;
+            }
+          } else {
+            // Shuffle for 3+ groups
+            const shuffle = (array: string[]) => {
+              const shuffled = [...array];
+              for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+              }
+              return shuffled;
+            };
+            const shuffledQualified = shuffle(qualifiedPlayers);
+
+            const { error: sf1Error } = await supabase.from('matches').update({
+              player1_individual_id: shuffledQualified[0],
+              player2_individual_id: shuffledQualified[1],
+              player3_individual_id: shuffledQualified[2],
+              player4_individual_id: shuffledQualified[3],
+            }).eq('id', semifinalMatches[0].id);
+            if (sf1Error) throw sf1Error;
+
+            if (shuffledQualified.length >= 8) {
+              const { error: sf2Error } = await supabase.from('matches').update({
+                player1_individual_id: shuffledQualified[4],
+                player2_individual_id: shuffledQualified[5],
+                player3_individual_id: shuffledQualified[6],
+                player4_individual_id: shuffledQualified[7],
+              }).eq('id', semifinalMatches[1].id);
+              if (sf2Error) throw sf2Error;
+            }
+          }
+
+          await fetchTournamentData();
+          alert('Semifinals generated with cross-group matchups!');
         }
-
-        const { error: sf1Error } = await supabase
-          .from('matches')
-          .update({
-            player1_individual_id: shuffledQualified[0],
-            player2_individual_id: shuffledQualified[1],
-            player3_individual_id: shuffledQualified[2],
-            player4_individual_id: shuffledQualified[3],
-          })
-          .eq('id', semifinalMatches[0].id);
-
-        if (sf1Error) throw sf1Error;
-
-        const { error: sf2Error } = await supabase
-          .from('matches')
-          .update({
-            player1_individual_id: shuffledQualified[4],
-            player2_individual_id: shuffledQualified[5],
-            player3_individual_id: shuffledQualified[6],
-            player4_individual_id: shuffledQualified[7],
-          })
-          .eq('id', semifinalMatches[1].id);
-
-        if (sf2Error) throw sf2Error;
-
-        await fetchTournamentData();
-        alert('Semifinals generated with random teams!');
       }
     } catch (error) {
       console.error('Error generating knockout:', error);
@@ -3811,7 +3911,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           const categoryKnockoutStage = categories.length > 0
             ? ((categories[0] as any).knockout_stage || 'semifinals')
-            : 'semifinals';
+            : ((currentTournament as any).knockout_stage || 'semifinals');
 
           const individualMatches = generateIndividualGroupsKnockoutSchedule(
             individualPlayers,
@@ -3828,6 +3928,24 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const groupOnlyMatches = individualMatches.filter(m =>
             m.round.startsWith('group_') || m.round === 'group_stage'
           );
+
+          // Save group assignments to DB if players got new group_name from scheduler
+          const playersWithNewGroups = individualPlayers.filter(p => p.group_name);
+          if (playersWithNewGroups.length > 0) {
+            const groupAssignments = new Map<string, string[]>();
+            playersWithNewGroups.forEach(p => {
+              if (p.group_name) {
+                if (!groupAssignments.has(p.group_name)) {
+                  groupAssignments.set(p.group_name, []);
+                }
+                groupAssignments.get(p.group_name)!.push(p.id);
+              }
+            });
+            for (const [groupName, playerIds] of groupAssignments) {
+              await supabase.from('players').update({ group_name: groupName }).in('id', playerIds);
+              console.log(`[SCHEDULE] Saved group "${groupName}" to ${playerIds.length} players in DB`);
+            }
+          }
 
           matchesToInsert = groupOnlyMatches.map(m => ({
             tournament_id: currentTournament.id,
@@ -3877,7 +3995,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           };
 
           if (categoryKnockoutStage === 'quarterfinals') {
-            for (let i = 0; i < 4; i++) {
+            // Calculate correct number of QFs based on qualified players
+            // With 2 groups: 4 players qualify per group = 8 total = 2 QFs
+            // With 3+ groups: more QFs needed
+            const groupCount = groupNames.length || numberOfGroups;
+            const qualifiedPerGroup = 2; // top 2 per group qualify
+            const totalQualified = groupCount * qualifiedPerGroup * 2; // players per group that go to QFs (top 4)
+            const numQFs = Math.max(2, Math.min(4, Math.floor(totalQualified / 4)));
+            console.log(`[SCHEDULE] Creating ${numQFs} quarterfinals for ${groupCount} groups`);
+            for (let i = 0; i < numQFs; i++) {
               addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
             }
             advanceKoTime();

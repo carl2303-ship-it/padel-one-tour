@@ -975,6 +975,20 @@ export async function populatePlacementMatches(
     return;
   }
 
+  // ====================================================================
+  // QUARTERFINALS: Check if there are quarterfinal matches to populate
+  // ====================================================================
+  const allQuarterfinalRounds = ['quarterfinal', 'quarter_final'];
+  const allQuarterfinals = allMatches
+    .filter(m => allQuarterfinalRounds.includes(m.round))
+    .sort((a, b) => a.match_number - b.match_number);
+  
+  const hasUnpopulatedQF = allQuarterfinals.some(m =>
+    !m.player1_individual_id && !m.player3_individual_id
+  );
+
+  console.log(`[POPULATE_PLACEMENT] Found ${allQuarterfinals.length} quarterfinal matches, unpopulated: ${hasUnpopulatedQF}`);
+
   const tierPrefixes = ['1st', '5th', '9th', '13th', '17th', '21st'];
   const allSemifinalRounds = [
     'semifinal', 'semi_final',
@@ -987,8 +1001,8 @@ export async function populatePlacementMatches(
 
   console.log('[POPULATE_PLACEMENT] Found', allSemis.length, 'total semifinal matches across all tiers');
 
-  if (allSemis.length === 0) {
-    console.log('[POPULATE_PLACEMENT] No semifinal matches found, checking for direct finals/placement matches');
+  if (allSemis.length === 0 && allQuarterfinals.length === 0) {
+    console.log('[POPULATE_PLACEMENT] No semifinal or quarterfinal matches found, checking for direct finals/placement matches');
     await populateDirectFinals(tournamentId, allMatches, categoryId);
     return;
   }
@@ -1107,6 +1121,116 @@ export async function populatePlacementMatches(
 
   console.log(`[POPULATE_PLACEMENT] ${sortedGroups.length} groups, max ${maxPlayersPerGroup} per group, ${totalPlayers} total`);
 
+  // ====================================================================
+  // QUARTERFINALS POPULATION: If quarterfinals exist and are unpopulated
+  // ====================================================================
+  if (allQuarterfinals.length > 0 && hasUnpopulatedQF) {
+    console.log('[POPULATE_PLACEMENT] Populating quarterfinal matches...');
+    
+    const unpopulatedQFs = allQuarterfinals
+      .filter(m => !m.player1_individual_id && !m.player3_individual_id)
+      .sort((a, b) => a.match_number - b.match_number);
+
+    if (isSingleGroup) {
+      // Single group: populate QFs with ranked players
+      const ranking = rankedByGroup.get(sortedGroups[0])!;
+      const numQFsNeeded = Math.min(unpopulatedQFs.length, Math.floor(ranking.length / 4));
+      
+      for (let i = 0; i < numQFsNeeded; i++) {
+        const base = i * 4;
+        if (base + 3 >= ranking.length) break;
+        // QF seeding: 1+8 vs 4+5, 2+7 vs 3+6, etc.
+        const topIdx = base;
+        const bottomIdx = ranking.length - 1 - base;
+        const midHigh = base + 1;
+        const midLow = ranking.length - 2 - base;
+        
+        await supabase.from('matches').update({
+          player1_individual_id: ranking[topIdx],
+          player2_individual_id: ranking[bottomIdx] || ranking[topIdx],
+          player3_individual_id: ranking[midHigh],
+          player4_individual_id: ranking[midLow] || ranking[midHigh],
+        }).eq('id', unpopulatedQFs[i].id);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${topIdx + 1}°+${(bottomIdx || topIdx) + 1}° vs ${midHigh + 1}°+${(midLow || midHigh) + 1}°`);
+      }
+    } else if (sortedGroups.length === 2) {
+      // 2 groups: cross-group quarterfinal matchups
+      const groupA = sortedGroups[0];
+      const groupB = sortedGroups[1];
+      const rankingA = rankedByGroup.get(groupA)!;
+      const rankingB = rankedByGroup.get(groupB)!;
+      
+      // Calculate how many QFs we can fill (need 4 players per QF, 2 from each group)
+      const maxQFs = Math.min(unpopulatedQFs.length, Math.floor(Math.min(rankingA.length, rankingB.length) / 2));
+      
+      for (let i = 0; i < maxQFs; i++) {
+        const startRank = i * 2;
+        const a1 = rankingA[startRank];
+        const a2 = rankingA[startRank + 1];
+        const b1 = rankingB[startRank];
+        const b2 = rankingB[startRank + 1];
+        
+        if (!a1 || !a2 || !b1 || !b2) break;
+        
+        // Cross-group: A-top + B-bottom vs B-top + A-bottom
+        await supabase.from('matches').update({
+          player1_individual_id: a1,
+          player2_individual_id: b2,
+          player3_individual_id: b1,
+          player4_individual_id: a2,
+        }).eq('id', unpopulatedQFs[i].id);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
+      }
+    } else {
+      // 3+ groups: shuffle qualified players into QFs
+      const allQualified: string[] = [];
+      for (const groupName of sortedGroups) {
+        const ranking = rankedByGroup.get(groupName)!;
+        // Take top players from each group (enough to fill QFs)
+        const perGroup = Math.ceil((unpopulatedQFs.length * 4) / sortedGroups.length / 2);
+        for (let r = 0; r < perGroup && r < ranking.length; r++) {
+          allQualified.push(ranking[r]);
+        }
+      }
+      
+      const shuffled = [...allQualified].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < unpopulatedQFs.length && (i * 4 + 3) < shuffled.length; i++) {
+        const base = i * 4;
+        await supabase.from('matches').update({
+          player1_individual_id: shuffled[base],
+          player2_individual_id: shuffled[base + 1],
+          player3_individual_id: shuffled[base + 2],
+          player4_individual_id: shuffled[base + 3],
+        }).eq('id', unpopulatedQFs[i].id);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: populated with qualified players`);
+      }
+    }
+    
+    // Delete extra unpopulated QF matches that can't be filled
+    const stillUnpopulated = allQuarterfinals.filter(m => 
+      !m.player1_individual_id && !m.player3_individual_id
+    );
+    // Re-fetch to check which are still empty after our updates
+    const { data: updatedQFs } = await supabase
+      .from('matches')
+      .select('id, player1_individual_id, player3_individual_id')
+      .eq('tournament_id', tournamentId)
+      .in('round', allQuarterfinalRounds);
+    
+    if (updatedQFs) {
+      const emptyQFs = updatedQFs.filter(m => !m.player1_individual_id && !m.player3_individual_id);
+      if (emptyQFs.length > 0) {
+        console.log(`[POPULATE_PLACEMENT] Removing ${emptyQFs.length} extra empty quarterfinal matches`);
+        for (const emptyQF of emptyQFs) {
+          await supabase.from('matches').delete().eq('id', emptyQF.id);
+        }
+      }
+    }
+    
+    console.log('[POPULATE_PLACEMENT] Quarterfinal population done');
+    return;
+  }
+
   // SINGLE GROUP (e.g. mixed_american): populate semifinals with top 4 directly
   if (isSingleGroup) {
     const singleGroupRanking = rankedByGroup.get(sortedGroups[0])!;
@@ -1137,17 +1261,32 @@ export async function populatePlacementMatches(
           .eq('id', semifinalMatches[0].id);
         console.log(`[POPULATE_PLACEMENT] SF1: 1st+4th vs 2nd+3rd`);
 
-        // SF2: 2nd + 3rd vs 1st + 4th (swapped sides for variety)
-        await supabase
-          .from('matches')
-          .update({
-            player1_individual_id: p2,
-            player2_individual_id: p3,
-            player3_individual_id: p1,
-            player4_individual_id: p4,
-          })
-          .eq('id', semifinalMatches[1].id);
-        console.log(`[POPULATE_PLACEMENT] SF2: 2nd+3rd vs 1st+4th`);
+        if (singleGroupRanking.length >= 8) {
+          // With 8+ players, SF2 gets players 5-8
+          const [, , , , p5, p6, p7, p8] = singleGroupRanking;
+          await supabase
+            .from('matches')
+            .update({
+              player1_individual_id: p5,
+              player2_individual_id: p8 || p5,
+              player3_individual_id: p6,
+              player4_individual_id: p7 || p6,
+            })
+            .eq('id', semifinalMatches[1].id);
+          console.log(`[POPULATE_PLACEMENT] SF2: 5th+8th vs 6th+7th`);
+        } else {
+          // With 4-7 players, SF2 uses different pairings of same top 4
+          await supabase
+            .from('matches')
+            .update({
+              player1_individual_id: p1,
+              player2_individual_id: p3,
+              player3_individual_id: p2,
+              player4_individual_id: p4,
+            })
+            .eq('id', semifinalMatches[1].id);
+          console.log(`[POPULATE_PLACEMENT] SF2: 1st+3rd vs 2nd+4th`);
+        }
       }
     }
 
