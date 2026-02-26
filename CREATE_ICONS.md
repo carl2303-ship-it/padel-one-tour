@@ -8,25 +8,38 @@ Os ícones necessários para o PWA e favicon não existem na pasta `public/`:
 
 ## Solução
 
-### Opção 1: Gerador online (Recomendado)
-1. Vai a https://realfavicongenerator.net/ ou https://www.pwabuilder.com/imageGenerator
-2. Faz upload de uma imagem (mínimo 512x512 pixels)
-3. Gera os ícones necessários
-4. Descarrega e coloca na pasta `public/`:
+### Passo 1: Exportar/Descarregar a imagem do favicon
+Tens a imagem do favicon (P azul com raquete de padel). Precisas de:
+1. **Exportar a imagem** no formato PNG, preferencialmente em 512x512 pixels ou maior
+2. Se a imagem for menor, redimensiona para pelo menos 512x512 pixels mantendo a qualidade
+
+### Passo 2: Gerar os ícones (Opção mais fácil - Recomendado)
+1. Vai a **https://realfavicongenerator.net/**
+2. Faz upload da imagem do favicon (PNG, 512x512 ou maior)
+3. O gerador vai criar automaticamente:
+   - `favicon.ico` (vários tamanhos)
+   - `favicon.png` (32x32)
+   - `icon-192.png` (192x192)
+   - `icon-512.png` (512x512)
+4. Descarrega o pacote completo
+5. Extrai os ficheiros e coloca na pasta `public/`:
    - `favicon.ico` ou `favicon.png`
    - `icon-192.png`
    - `icon-512.png`
 
-### Opção 2: Criar manualmente
-1. Cria uma imagem quadrada (512x512 pixels) com o logo da PADEL ONE Tour
-2. Redimensiona para:
-   - 192x192 → `icon-192.png`
-   - 512x512 → `icon-512.png`
-   - 32x32 ou 16x16 → `favicon.png` ou `favicon.ico`
+### Alternativa: Criar manualmente com ferramentas online
+1. Vai a **https://www.iloveimg.com/resize-image** ou **https://www.resizepixel.com/**
+2. Faz upload da imagem do favicon
+3. Redimensiona para cada tamanho:
+   - **512x512** → salva como `icon-512.png`
+   - **192x192** → salva como `icon-192.png`
+   - **32x32** → salva como `favicon.png`
+4. Coloca todos os ficheiros na pasta `public/`
 
-### Opção 3: Usar imagem do Supabase
-Se a imagem do Supabase estiver acessível, podes descarregá-la e usar como base:
+### Opção 3: Usar imagem do Supabase (se disponível)
+Se a imagem do Supabase estiver acessível, podes descarregá-la:
 - URL: https://rqiwnxcexsccguruiteq.supabase.co/storage/v1/object/public/tournament-images/padel-hub-favicon.png
+- Depois redimensiona usando uma das opções acima
 
 ## Verificação
 Depois de adicionar os ícones:
