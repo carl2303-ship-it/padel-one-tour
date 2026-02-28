@@ -807,19 +807,36 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       
       for (const cat of categories) {
         const knockoutStage = (cat as any).knockout_stage || 'semifinals';
-        console.log(`[SUPER-SCHEDULE] Category ${cat.name}: knockout_stage = ${knockoutStage}`);
+        const qualifiedPerGroup = (cat as any).qualified_per_group || 2;
+        const numberOfGroups = (cat as any).number_of_groups || 2;
         
-        // Determinar quantas partidas de cada fase
+        console.log(`[SUPER-SCHEDULE] Category ${cat.name}: knockout_stage = ${knockoutStage}, qualified_per_group = ${qualifiedPerGroup}, groups = ${numberOfGroups}`);
+        
+        // Calculate qualification config to get total qualified
+        const qualConfig = calculateQualificationConfig(numberOfGroups, knockoutStage, false);
+        const totalQualified = qualConfig.totalQualified;
+        
+        console.log(`[SUPER-SCHEDULE] Total qualified teams: ${totalQualified}`);
+        
+        // Determinar quantas partidas de cada fase baseado no número de qualificados
+        // Para equipas: cada jogo tem 2 equipas
         let numQuarters = 0, numSemis = 0, numFinals = 0;
+        
         if (knockoutStage === 'quarterfinals') {
-          numQuarters = 4;
-          numSemis = 2;
+          // Quartos: precisamos de totalQualified / 2 jogos (cada jogo tem 2 equipas)
+          numQuarters = Math.ceil(totalQualified / 2);
+          // Meias: vencedores dos quartos / 2
+          numSemis = Math.ceil(numQuarters / 2);
           numFinals = 2; // Final + 3º lugar
+          console.log(`[SUPER-SCHEDULE] QFs: ${numQuarters}, SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'semifinals') {
-          numSemis = 2;
+          // Meias: totalQualified / 2 jogos
+          numSemis = Math.ceil(totalQualified / 2);
           numFinals = 2; // Final + 3º lugar
+          console.log(`[SUPER-SCHEDULE] SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'final') {
           numFinals = 2; // Final + 3º lugar
+          console.log(`[SUPER-SCHEDULE] Finals: ${numFinals}`);
         }
         
         // Criar confrontos de quartos de final
@@ -3955,6 +3972,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const categoryKnockoutStage = categories.length > 0
             ? ((categories[0] as any).knockout_stage || 'semifinals')
             : ((currentTournament as any).knockout_stage || 'semifinals');
+          
+          // Calculate qualified_per_group from category or use default
+          const categoryQualifiedPerGroup = categories.length > 0
+            ? ((categories[0] as any).qualified_per_group as number | undefined)
+            : undefined;
+          
+          const qualConfig = calculateQualificationConfig(numberOfGroups, categoryKnockoutStage, true);
+          const qualifiedPerGroup = categoryQualifiedPerGroup ?? qualConfig.qualifiedPerGroup;
+          
+          console.log(`[SCHEDULE] Individual Groups Knockout: ${numberOfGroups} groups, ${qualifiedPerGroup} qualified per group, stage: ${categoryKnockoutStage}`);
 
           const individualMatches = generateIndividualGroupsKnockoutSchedule(
             individualPlayers,
@@ -3964,8 +3991,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             startTime,
             endTime,
             matchDuration,
-            2,
-            'semifinals'
+            qualifiedPerGroup,
+            categoryKnockoutStage as 'semifinals' | 'quarterfinals'
           );
 
           const groupOnlyMatches = individualMatches.filter(m =>
@@ -4039,30 +4066,59 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           // Dynamically calculate knockout structure based on total qualified players
           const groupCount = groupNames.length || numberOfGroups;
-          const totalQualifiedPlayers = groupCount * 4; // All players in each group (typically 4)
-          const numFirstRoundMatches = Math.floor(totalQualifiedPlayers / 4);
+          
+          // Reuse qualConfig and qualifiedPerGroup already calculated above
+          // Calculate total qualified players for knockout structure
+          const knockoutQualConfig = calculateQualificationConfig(groupCount, categoryKnockoutStage, true);
+          const totalQualifiedPlayers = knockoutQualConfig.totalQualified;
+          
+          console.log(`[SCHEDULE] Knockout: ${groupCount} groups, ${qualifiedPerGroup} qualified per group, ${totalQualifiedPlayers} total qualified, stage: ${categoryKnockoutStage}`);
 
-          console.log(`[SCHEDULE] Knockout: ${groupCount} groups, ${totalQualifiedPlayers} players, ${numFirstRoundMatches} first-round matches, stage: ${categoryKnockoutStage}`);
+          // Calculate knockout structure dynamically
+          // Each match has 4 players (2v2), so we need totalQualifiedPlayers / 4 matches in first round
+          const numFirstRoundMatches = Math.ceil(totalQualifiedPlayers / 4);
+          
+          console.log(`[SCHEDULE] Knockout structure: ${numFirstRoundMatches} first-round matches (${totalQualifiedPlayers} players)`);
 
-          if (categoryKnockoutStage === 'quarterfinals' && numFirstRoundMatches >= 3) {
-            // 12+ players: QFs + consolation + SFs + final + 3rd
-            for (let i = 0; i < numFirstRoundMatches; i++) {
+          if (categoryKnockoutStage === 'quarterfinals') {
+            // Create quarterfinals (first round)
+            const numQuarters = numFirstRoundMatches;
+            console.log(`[SCHEDULE] Creating ${numQuarters} quarterfinal matches`);
+            
+            for (let i = 0; i < numQuarters; i++) {
               addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
             }
             advanceKoTime();
 
-            // Consolation match for QF losers who don't advance
-            addKoMatch('consolation', '1');
-            addKoMatch('semifinal', ((1 % numberOfCourts) + 1).toString());
-            addKoMatch('semifinal', ((2 % numberOfCourts) + 1).toString());
+            // Create semifinals (second round)
+            // Each quarter produces 1 winner (2 players), so we have numQuarters winners (numQuarters * 2 players)
+            // Each semifinal needs 4 players (2 teams of 2), so we need numQuarters * 2 / 4 = numQuarters / 2 semifinals
+            // Round up to ensure we have enough semifinals, but minimum 1
+            const numSemis = Math.max(1, Math.ceil(numQuarters / 2));
+            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (from ${numQuarters} quarterfinal winners = ${numQuarters * 2} players)`);
+            
+            // Note: If numQuarters is odd (e.g., 3), we'll have 6 players which allows 1 full semifinal (4 players)
+            // The remaining 2 players will need special handling (could go to final directly or have a play-in)
+            for (let i = 0; i < numSemis; i++) {
+              addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+            }
             advanceKoTime();
-          } else {
-            // 8 or fewer: just SFs + final + 3rd
-            addKoMatch('semifinal', '1');
-            addKoMatch('semifinal', '2');
+          } else if (categoryKnockoutStage === 'semifinals') {
+            // Direct to semifinals (no quarters)
+            const numSemis = numFirstRoundMatches;
+            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (no quarters)`);
+            
+            for (let i = 0; i < numSemis; i++) {
+              addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+            }
             advanceKoTime();
+          } else if (categoryKnockoutStage === 'final') {
+            // Direct to final (no quarters, no semis)
+            console.log(`[SCHEDULE] Creating final match only`);
+            // Will be created below
           }
 
+          // Always create 3rd place and final matches
           addKoMatch('3rd_place', '1');
           addKoMatch('final', '2');
 

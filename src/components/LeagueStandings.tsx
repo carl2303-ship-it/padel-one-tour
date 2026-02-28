@@ -117,23 +117,77 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     let standingsData = standingsResult.data || [];
 
     if (standingsData.length > 0) {
-      const { data: organizerPlayers } = await supabase
-        .from('organizer_players')
-        .select('name, player_category')
-        .eq('organizer_id', league.user_id);
+      // Get player_account_ids from standings
+      const playerAccountIds = standingsData
+        .map(s => s.player_account_id)
+        .filter((id): id is string => id !== null && id !== undefined);
 
-      if (organizerPlayers) {
-        const categoryMap = new Map<string, PlayerCategory>();
-        organizerPlayers.forEach(op => {
-          categoryMap.set(normalizeName(op.name), op.player_category as PlayerCategory);
-        });
-        setPlayerCategories(categoryMap);
+      // Fetch player categories from player_accounts (the source of truth)
+      const categoryMapByAccountId = new Map<string, PlayerCategory>();
+      const categoryMapByName = new Map<string, PlayerCategory>();
+      
+      if (playerAccountIds.length > 0) {
+        const { data: playerAccounts } = await supabase
+          .from('player_accounts')
+          .select('id, name, player_category')
+          .in('id', playerAccountIds);
 
-        standingsData = standingsData.map(s => ({
-          ...s,
-          player_category: categoryMap.get(normalizeName(s.entity_name)) || null
-        }));
+        if (playerAccounts) {
+          playerAccounts.forEach(pa => {
+            if (pa.player_category) {
+              categoryMapByAccountId.set(pa.id, pa.player_category as PlayerCategory);
+              // Also add by name for fallback matching
+              categoryMapByName.set(normalizeName(pa.name), pa.player_category as PlayerCategory);
+            }
+          });
+        }
       }
+
+      // Also check organizer_players as fallback for players without player_account_id
+      const standingsWithoutAccount = standingsData.filter(s => !s.player_account_id);
+      if (standingsWithoutAccount.length > 0) {
+        const { data: organizerPlayers } = await supabase
+          .from('organizer_players')
+          .select('name, player_category')
+          .eq('organizer_id', league.user_id);
+
+        if (organizerPlayers) {
+          organizerPlayers.forEach(op => {
+            if (op.player_category) {
+              const normalizedName = normalizeName(op.name);
+              // Only add if not already in map (player_accounts takes precedence)
+              if (!categoryMapByName.has(normalizedName)) {
+                categoryMapByName.set(normalizedName, op.player_category as PlayerCategory);
+              }
+            }
+          });
+        }
+      }
+
+      // Combine both maps for the state (used for filtering)
+      const combinedCategoryMap = new Map<string, PlayerCategory>();
+      categoryMapByAccountId.forEach((cat, id) => combinedCategoryMap.set(id, cat));
+      categoryMapByName.forEach((cat, name) => combinedCategoryMap.set(name, cat));
+      setPlayerCategories(combinedCategoryMap);
+
+      // Map categories to standings
+      standingsData = standingsData.map(s => {
+        let category: PlayerCategory = null;
+        
+        // First try: use player_account_id to get category (most reliable)
+        if (s.player_account_id && categoryMapByAccountId.has(s.player_account_id)) {
+          category = categoryMapByAccountId.get(s.player_account_id)!;
+        } else {
+          // Fallback: try to match by name (for players without player_account_id)
+          const normalizedName = normalizeName(s.entity_name);
+          category = categoryMapByName.get(normalizedName) || null;
+        }
+        
+        return {
+          ...s,
+          player_category: category
+        };
+      });
     }
 
     setStandings(standingsData);

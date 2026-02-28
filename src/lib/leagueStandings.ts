@@ -209,16 +209,16 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
   }
 
   // Buscar todos os jogos completados do torneio
+  // Para round_robin, os matches podem não ter category_id, então buscamos todos
+  // e depois filtramos pelos jogadores que têm a categoria
   let matchesQuery = supabase
     .from('matches')
     .select('*')
     .eq('tournament_id', tournamentId)
     .eq('status', 'completed');
 
-  if (categoryId && categoryId !== 'no-category') {
-    matchesQuery = matchesQuery.eq('category_id', categoryId);
-  }
-
+  // Não filtrar por category_id nos matches - pode não estar definido
+  // Vamos filtrar depois pelos jogadores que participaram
   const { data: completedMatches } = await matchesQuery;
 
   if (!completedMatches || completedMatches.length === 0) {
@@ -251,16 +251,24 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
     });
   });
 
+  // Filtrar matches que incluem jogadores da categoria (se categoria especificada)
+  const playerIds = new Set(players.map(p => p.id));
+  
   completedMatches.forEach(match => {
+    const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
+    const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
+    
+    // Se há categoria, só processar matches onde pelo menos um jogador da categoria participa
+    if (categoryId && categoryId !== 'no-category') {
+      const hasCategoryPlayer = team1Players.some(id => playerIds.has(id)) || 
+                                team2Players.some(id => playerIds.has(id));
+      if (!hasCategoryPlayer) return; // Skip matches without category players
+    }
+    
     const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
     const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
     const isDraw = t1Games === t2Games;
     const t1Won = t1Games > t2Games;
-
-    // Team 1: player1_individual_id + player2_individual_id
-    // Team 2: player3_individual_id + player4_individual_id
-    const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
-    const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
 
     team1Players.forEach(pid => {
       const stats = playerStats.get(pid);
@@ -972,4 +980,92 @@ async function addToPlayerStanding(
         best_position: position,
       });
   }
+}
+
+// Force recalculation when players are assigned to categories
+export async function recalculateLeagueStandingsForCategory(tournamentId: string, categoryId: string) {
+  console.log('[LEAGUE_RECALC_CATEGORY] Recalculating for tournament:', tournamentId, 'category:', categoryId);
+
+  // First, recalculate final positions for players in this category
+  await calculateIndividualFinalPositions(tournamentId, categoryId);
+
+  // Then recalculate league standings
+  await updateLeagueStandings(tournamentId);
+}
+
+// Diagnostic function to check why players are not appearing
+export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueId: string) {
+  console.log('[DIAGNOSE] Checking league standings issue for tournament:', tournamentId, 'league:', leagueId);
+
+  const { data: tournamentLeagues } = await supabase
+    .from('tournament_leagues')
+    .select('league_id, league_category, tournament_id')
+    .eq('tournament_id', tournamentId)
+    .eq('league_id', leagueId);
+
+  if (!tournamentLeagues || tournamentLeagues.length === 0) {
+    console.log('[DIAGNOSE] No tournament_leagues found');
+    return { error: 'No tournament_leagues found' };
+  }
+
+  const tournamentLeague = tournamentLeagues[0];
+  const leagueCategory = tournamentLeague.league_category;
+
+  console.log('[DIAGNOSE] League category:', leagueCategory);
+
+  let categoryId = null;
+  if (leagueCategory) {
+    const { data: category } = await supabase
+      .from('tournament_categories')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('name', leagueCategory)
+      .maybeSingle();
+    
+    categoryId = category?.id || null;
+    console.log('[DIAGNOSE] Category ID:', categoryId);
+  }
+
+  let playersQuery = supabase
+    .from('players')
+    .select('id, name, final_position, category_id')
+    .eq('tournament_id', tournamentId);
+
+  if (categoryId) {
+    playersQuery = playersQuery.eq('category_id', categoryId);
+  }
+
+  const { data: players } = await playersQuery;
+
+  console.log('[DIAGNOSE] Total players:', players?.length || 0);
+  console.log('[DIAGNOSE] Players with final_position:', players?.filter(p => p.final_position).length || 0);
+  console.log('[DIAGNOSE] Players with category_id:', players?.filter(p => p.category_id).length || 0);
+  
+  if (categoryId) {
+    console.log('[DIAGNOSE] Players with matching category_id:', players?.filter(p => p.category_id === categoryId).length || 0);
+    console.log('[DIAGNOSE] Players with matching category_id AND final_position:', 
+      players?.filter(p => p.category_id === categoryId && p.final_position).length || 0);
+  }
+
+  const { data: standings } = await supabase
+    .from('league_standings')
+    .select('*')
+    .eq('league_id', leagueId);
+
+  console.log('[DIAGNOSE] Current standings count:', standings?.length || 0);
+
+  return {
+    tournamentLeague,
+    categoryId,
+    playersCount: players?.length || 0,
+    playersWithPosition: players?.filter(p => p.final_position).length || 0,
+    playersWithCategory: players?.filter(p => p.category_id).length || 0,
+    standingsCount: standings?.length || 0,
+    players: players?.map(p => ({
+      id: p.id,
+      name: p.name,
+      final_position: p.final_position,
+      category_id: p.category_id
+    }))
+  };
 }

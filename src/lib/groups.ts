@@ -1703,8 +1703,68 @@ export async function advanceKnockoutWinner(
 
         // Sort winners by game diff (best first) for seeding
         const sortedWinners = [...qfResults].sort((a, b) => b.winnerGameDiff - a.winnerGameDiff);
-        // Sort losers by game diff (best first) for "lucky loser" selection
-        const sortedLosers = [...qfResults].sort((a, b) => b.loserGameDiff - a.loserGameDiff);
+        
+        // Calculate stats for each losing team based ONLY on their QF match
+        const losingTeamStats = qfResults.map(r => {
+          // Find the QF match for this losing team
+          const qf = quarterfinalMatches.find(m => {
+            const team1Players = [m.player1_individual_id, m.player2_individual_id].filter(Boolean);
+            const team2Players = [m.player3_individual_id, m.player4_individual_id].filter(Boolean);
+            const wasTeam1 = team1Players.includes(r.losers.p1) && team1Players.includes(r.losers.p2);
+            const wasTeam2 = team2Players.includes(r.losers.p1) && team2Players.includes(r.losers.p2);
+            return wasTeam1 || wasTeam2;
+          });
+
+          if (!qf) {
+            return { losers: r.losers, gameDiff: r.loserGameDiff, gamesWon: 0 };
+          }
+
+          const t1g = (qf.team1_score_set1 || 0) + (qf.team1_score_set2 || 0) + (qf.team1_score_set3 || 0);
+          const t2g = (qf.team2_score_set1 || 0) + (qf.team2_score_set2 || 0) + (qf.team2_score_set3 || 0);
+          const team1Players = [qf.player1_individual_id, qf.player2_individual_id].filter(Boolean);
+          const wasTeam1 = team1Players.includes(r.losers.p1) && team1Players.includes(r.losers.p2);
+          
+          // Games won by the losing team in their QF match
+          const gamesWon = wasTeam1 ? t1g : t2g;
+          
+          return {
+            losers: r.losers,
+            gameDiff: r.loserGameDiff, // Negative value (they lost)
+            gamesWon
+          };
+        });
+
+        // Sort losers by QF match stats: 1) best game diff (least negative = best loss), 2) most games won
+        const sortedLosers = [...qfResults].sort((a, b) => {
+          const statsA = losingTeamStats.find(s => 
+            (s.losers.p1 === a.losers.p1 && s.losers.p2 === a.losers.p2) ||
+            (s.losers.p1 === a.losers.p2 && s.losers.p2 === a.losers.p1)
+          );
+          const statsB = losingTeamStats.find(s => 
+            (s.losers.p1 === b.losers.p1 && s.losers.p2 === b.losers.p2) ||
+            (s.losers.p1 === b.losers.p2 && s.losers.p2 === b.losers.p1)
+          );
+
+          const diffA = statsA?.gameDiff || -999;
+          const diffB = statsB?.gameDiff || -999;
+          const wonA = statsA?.gamesWon || 0;
+          const wonB = statsB?.gamesWon || 0;
+
+          // First: better game difference (less negative = better, e.g., -2 is better than -5)
+          if (diffB !== diffA) {
+            return diffB - diffA;
+          }
+          // Second: more games won in the QF match
+          return wonB - wonA;
+        });
+
+        console.log('[ADVANCE_WINNER] Losing teams sorted by QF match stats (diff, games won):', sortedLosers.map((r, idx) => {
+          const stats = losingTeamStats.find(s => 
+            (s.losers.p1 === r.losers.p1 && s.losers.p2 === r.losers.p2) ||
+            (s.losers.p1 === r.losers.p2 && s.losers.p2 === r.losers.p1)
+          );
+          return `${idx + 1}°: diff=${stats?.gameDiff || 0}, won=${stats?.gamesWon || 0}`;
+        }));
 
         // Build SF qualifiers: all winners + best losers to fill SFs
         const sfPairs: Array<{ p1: string; p2: string }> = sortedWinners.map(r => r.winners);
