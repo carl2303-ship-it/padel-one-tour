@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
-import { ArrowLeft, Trophy, TrendingUp, Calendar, RefreshCw, Printer, Tag, ChevronDown, Filter } from 'lucide-react';
+import { ArrowLeft, Trophy, TrendingUp, Calendar, RefreshCw, Printer, Tag, ChevronDown, Filter, Users } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import { exportLeagueStandingsPDF } from '../lib/pdfExport';
 
@@ -63,10 +63,26 @@ function normalizeName(name: string): string {
 
 function getCategoryBadgeColor(category: PlayerCategory): string {
   if (!category) return 'bg-gray-100 text-gray-500';
-  const level = parseInt(category.charAt(1));
-  if (level >= 5) return 'bg-green-100 text-green-700';
-  if (level >= 3) return 'bg-blue-100 text-blue-700';
-  return 'bg-amber-100 text-amber-700';
+  
+  // Cores completamente diferentes para cada categoria
+  const categoryColors: Record<string, string> = {
+    // Masculino - cores distintas
+    'M6': 'bg-purple-100 text-purple-700 border border-purple-300',
+    'M5': 'bg-blue-100 text-blue-700 border border-blue-300',
+    'M4': 'bg-green-100 text-green-700 border border-green-300',
+    'M3': 'bg-yellow-100 text-yellow-700 border border-yellow-300',
+    'M2': 'bg-orange-100 text-orange-700 border border-orange-300',
+    'M1': 'bg-red-100 text-red-700 border border-red-300',
+    // Feminino - cores distintas
+    'F6': 'bg-pink-100 text-pink-700 border border-pink-300',
+    'F5': 'bg-emerald-100 text-emerald-700 border border-emerald-300',
+    'F4': 'bg-violet-100 text-violet-700 border border-violet-300',
+    'F3': 'bg-indigo-100 text-indigo-700 border border-indigo-300',
+    'F2': 'bg-cyan-100 text-cyan-700 border border-cyan-300',
+    'F1': 'bg-teal-100 text-teal-700 border border-teal-300',
+  };
+  
+  return categoryColors[category] || 'bg-gray-100 text-gray-500';
 }
 
 export default function LeagueStandings({ league, onBack }: LeagueStandingsProps) {
@@ -79,6 +95,7 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
   const [selectedScoringTab, setSelectedScoringTab] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [selectedPlayerCategory, setSelectedPlayerCategory] = useState<string>('all');
+  const [selectedGender, setSelectedGender] = useState<string>('all');
   const [playerCategories, setPlayerCategories] = useState<Map<string, PlayerCategory>>(new Map());
 
   const hasCategories = league.categories && league.categories.length > 0;
@@ -247,10 +264,31 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     }
   };
 
+  // Helper function to get gender from category
+  const getGenderFromCategory = (category: PlayerCategory): 'M' | 'F' | null => {
+    if (!category) return null;
+    return category.startsWith('M') ? 'M' : category.startsWith('F') ? 'F' : null;
+  };
+
   const filteredStandings = standings.filter(standing => {
-    if (selectedPlayerCategory === 'all') return true;
-    if (selectedPlayerCategory === 'none') return !standing.player_category;
-    return standing.player_category === selectedPlayerCategory;
+    // Filter by category
+    let categoryMatch = true;
+    if (selectedPlayerCategory !== 'all') {
+      if (selectedPlayerCategory === 'none') {
+        categoryMatch = !standing.player_category;
+      } else {
+        categoryMatch = standing.player_category === selectedPlayerCategory;
+      }
+    }
+
+    // Filter by gender
+    let genderMatch = true;
+    if (selectedGender !== 'all') {
+      const gender = getGenderFromCategory(standing.player_category);
+      genderMatch = gender === selectedGender;
+    }
+
+    return categoryMatch && genderMatch;
   });
 
   const categoryCounts = standings.reduce((acc, s) => {
@@ -338,45 +376,67 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                 </div>
               </div>
 
-              {hasAnyPlayerCategories && (
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Filter className="w-4 h-4" />
-                    <span>Filtrar por categoria:</span>
-                  </div>
-                  <div className="relative">
-                    <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <select
-                      value={selectedPlayerCategory}
-                      onChange={(e) => setSelectedPlayerCategory(e.target.value)}
-                      className="pl-9 pr-8 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white text-sm"
-                    >
-                      <option value="all">Todas ({standings.length})</option>
-                      <option value="none">Sem categoria ({categoryCounts['none'] || 0})</option>
-                      <optgroup label="Masculino">
-                        {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
-                          <option key={c.value} value={c.value}>
-                            {c.label} ({categoryCounts[c.value] || 0})
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="Feminino">
-                        {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
-                          <option key={c.value} value={c.value}>
-                            {c.label} ({categoryCounts[c.value] || 0})
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  </div>
-                  {selectedPlayerCategory !== 'all' && (
-                    <span className="text-sm text-gray-500">
-                      ({filteredStandings.length} jogadores)
-                    </span>
-                  )}
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {/* Gender Filter */}
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <Users className="w-4 h-4" />
+                  <span>Género:</span>
                 </div>
-              )}
+                <div className="relative">
+                  <select
+                    value={selectedGender}
+                    onChange={(e) => setSelectedGender(e.target.value)}
+                    className="pl-3 pr-8 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white text-sm"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="M">Masculino ({standings.filter(s => getGenderFromCategory(s.player_category) === 'M').length})</option>
+                    <option value="F">Feminino ({standings.filter(s => getGenderFromCategory(s.player_category) === 'F').length})</option>
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+
+                {/* Category Filter */}
+                {hasAnyPlayerCategories && (
+                  <>
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <Filter className="w-4 h-4" />
+                      <span>Categoria:</span>
+                    </div>
+                    <div className="relative">
+                      <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <select
+                        value={selectedPlayerCategory}
+                        onChange={(e) => setSelectedPlayerCategory(e.target.value)}
+                        className="pl-9 pr-8 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white text-sm"
+                      >
+                        <option value="all">Todas</option>
+                        <option value="none">Sem categoria ({categoryCounts['none'] || 0})</option>
+                        <optgroup label="Masculino">
+                          {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
+                            <option key={c.value} value={c.value}>
+                              {c.label} ({categoryCounts[c.value] || 0})
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Feminino">
+                          {PLAYER_CATEGORIES.filter(c => c.gender === 'F').map(c => (
+                            <option key={c.value} value={c.value}>
+                              {c.label} ({categoryCounts[c.value] || 0})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </>
+                )}
+                
+                {(selectedPlayerCategory !== 'all' || selectedGender !== 'all') && (
+                  <span className="text-sm text-gray-500">
+                    ({filteredStandings.length} jogadores)
+                  </span>
+                )}
+              </div>
             </div>
 
             {filteredStandings.length === 0 ? (
