@@ -2,16 +2,17 @@ import { useEffect, useState } from 'react';
 import { supabase, Tournament } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Contact, Filter } from 'lucide-react';
+import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Contact, Filter, Calculator } from 'lucide-react';
 import OrganizerPlayersModal from './OrganizerPlayersModal';
 
 type TournamentListProps = {
   onSelectTournament: (tournament: Tournament) => void;
   onCreateTournament: () => void;
   onShowRegistration: (tournament: Tournament) => void;
+  onOpenSimulator?: () => void;
 };
 
-export default function TournamentList({ onSelectTournament, onCreateTournament, onShowRegistration }: TournamentListProps) {
+export default function TournamentList({ onSelectTournament, onCreateTournament, onShowRegistration, onOpenSimulator }: TournamentListProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -327,6 +328,16 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
             <Contact className="w-4 h-4 sm:w-5 sm:h-5" />
             <span className="hidden lg:inline">Jogadores</span>
           </button>
+          {onOpenSimulator && (
+            <button
+              onClick={onOpenSimulator}
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm sm:text-base font-bold shadow-md"
+              title="Simulador de Torneio"
+            >
+              <Calculator className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden sm:inline">Simulador</span>
+            </button>
+          )}
           <button
             onClick={onCreateTournament}
             className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-[#007BFF] text-white rounded-lg hover:bg-[#0069d9] transition-colors text-sm sm:text-base font-bold shadow-md"

@@ -13,6 +13,7 @@ import PlayerSettings from './components/PlayerSettings';
 import LeagueManagement from './components/LeagueManagement';
 import LiveTournamentView from './components/LiveTournamentView';
 import PlayerDashboard from './components/PlayerDashboard';
+import TournamentSimulator from './components/TournamentSimulator';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
@@ -35,6 +36,7 @@ function App() {
   const [isLoadingDeepLink, setIsLoadingDeepLink] = useState(true);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [userRole, setUserRole] = useState<'organizer' | 'player' | null>(null);
+  const [showSimulator, setShowSimulator] = useState(false);
 
   const handleSelectTournament = (tournament: Tournament) => {
     setSelectedTournament(tournament);
@@ -326,6 +328,7 @@ function App() {
               onSelectTournament={handleSelectTournament}
               onCreateTournament={() => setShowCreateTournament(true)}
               onShowRegistration={handleShowRegistration}
+              onOpenSimulator={() => setShowSimulator(true)}
             />
           )}
 
@@ -370,6 +373,10 @@ function App() {
 
       {showSettings && userRole === 'player' && (
         <PlayerSettings onClose={() => setShowSettings(false)} />
+      )}
+
+      {showSimulator && (
+        <TournamentSimulator onClose={() => setShowSimulator(false)} />
       )}
     </div>
   );
