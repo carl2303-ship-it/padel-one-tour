@@ -269,27 +269,32 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   }
 
   if (playerIds.length < 4) {
-    console.log('[RatingEngine] Less than 4 players found, skipping:', matchId, 'found:', playerIds.length)
+    console.warn('[RatingEngine] Less than 4 players found, skipping:', matchId, 'found:', playerIds.length, 'isIndividual:', !!isIndividual, 'team1_id:', match.team1_id, 'team2_id:', match.team2_id)
     return null
   }
 
   // 4) Buscar dados dos jogadores na tabela 'players'
-  const { data: playersData } = await supabase
+  const { data: playersData, error: playersErr } = await supabase
     .from('players')
     .select('id, name, phone_number, user_id')
     .in('id', playerIds)
 
   if (!playersData || playersData.length < 4) {
-    console.log('[RatingEngine] Could not fetch all player entries:', matchId)
+    console.warn('[RatingEngine] Could not fetch all player entries:', matchId, 'fetched:', playersData?.length || 0, 'expected: 4', 'error:', playersErr)
+    if (playersData) {
+      playersData.forEach(p => console.log(`  Player: ${p.name} | user_id: ${p.user_id || 'NULL'} | phone: ${p.phone_number || 'NULL'}`))
+    }
     return null
   }
 
   // 5) Mapear para player_accounts (onde está o rating real)
   const accountsMap = new Map<string, any>()
   const selectFields = 'id, user_id, name, level, rated_matches, wins, losses, level_reliability_percent'
+  const unmappedPlayers: string[] = []
 
   for (const p of playersData) {
     let account: any = null
+    let matchedBy = ''
 
     // Prioridade 1: user_id
     if (p.user_id) {
@@ -298,7 +303,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
         .select(selectFields)
         .eq('user_id', p.user_id)
         .maybeSingle()
-      if (data) account = data
+      if (data) { account = data; matchedBy = 'user_id' }
     }
 
     // Prioridade 2: phone_number
@@ -308,26 +313,44 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
         .select(selectFields)
         .eq('phone_number', p.phone_number)
         .maybeSingle()
-      if (data) account = data
+      if (data) { account = data; matchedBy = 'phone_number' }
     }
 
-    // Prioridade 3: name
+    // Prioridade 3: name (exact)
     if (!account && p.name) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
         .ilike('name', p.name)
         .maybeSingle()
-      if (data) account = data
+      if (data) { account = data; matchedBy = 'name' }
+    }
+
+    // Prioridade 4: name parcial (primeiro nome + apelido)
+    if (!account && p.name && p.name.includes('/')) {
+      // Nomes no formato "Carlos/Padel1/BoostPadel" - tentar primeiro segmento
+      const firstName = p.name.split('/')[0].trim()
+      if (firstName.length >= 3) {
+        const { data } = await supabase
+          .from('player_accounts')
+          .select(selectFields)
+          .ilike('name', `${firstName}%`)
+          .maybeSingle()
+        if (data) { account = data; matchedBy = 'partial_name' }
+      }
     }
 
     if (account) {
       accountsMap.set(p.id, account)
+      console.log(`[RatingEngine] ✅ ${p.name} → ${account.name} (matched by ${matchedBy}, level: ${account.level})`)
+    } else {
+      unmappedPlayers.push(p.name || p.id)
+      console.warn(`[RatingEngine] ❌ ${p.name}: NOT mapped (user_id: ${p.user_id || 'NULL'}, phone: ${p.phone_number || 'NULL'})`)
     }
   }
 
   if (accountsMap.size < 4) {
-    console.log('[RatingEngine] Could not map all players to accounts:', matchId, 'mapped:', accountsMap.size)
+    console.warn(`[RatingEngine] Could not map all players to accounts for match ${matchId}: mapped ${accountsMap.size}/4. Unmapped: ${unmappedPlayers.join(', ')}`)
     return null
   }
 
@@ -475,7 +498,7 @@ export async function processAllUnratedMatches(
     return { processed: 0, skipped: 0, errors: 0, total: 0 }
   }
 
-  console.log(`[RatingEngine] Found ${matches.length} completed matches to process`)
+  console.log(`[RatingEngine] Found ${matches.length} completed matches to process${tournamentId ? ` (tournament: ${tournamentId})` : ''}`)
   onProgress?.(0, matches.length, 'A iniciar processamento...')
 
   const playerCache: PlayerCache = new Map()
@@ -483,6 +506,7 @@ export async function processAllUnratedMatches(
   let processed = 0
   let skipped = 0
   let errors = 0
+  const errorDetails: string[] = []
 
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i]
@@ -490,6 +514,7 @@ export async function processAllUnratedMatches(
       const result = await processMatchRating(match.id, playerCache)
       if (!result) {
         errors++
+        errorDetails.push(`Match ${match.id}: falha no mapeamento de jogadores`)
       } else if (result.skipped) {
         skipped++
       } else {
@@ -498,11 +523,16 @@ export async function processAllUnratedMatches(
     } catch (err) {
       console.error('[RatingEngine] Error processing match:', match.id, err)
       errors++
+      errorDetails.push(`Match ${match.id}: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     if ((i + 1) % 5 === 0 || i === matches.length - 1) {
       onProgress?.(i + 1, matches.length, `Processados: ${processed} | Saltados: ${skipped} | Erros: ${errors}`)
     }
+  }
+
+  if (errorDetails.length > 0) {
+    console.warn('[RatingEngine] Error details:\n' + errorDetails.join('\n'))
   }
 
   const uniquePlayers = playerCache.size
@@ -512,4 +542,133 @@ export async function processAllUnratedMatches(
   onProgress?.(matches.length, matches.length, summary)
 
   return { processed, skipped, errors, total: matches.length }
+}
+
+// ============================================
+// Tournament Reward Points
+// ============================================
+
+/**
+ * Atribui reward points a todos os jogadores de um torneio.
+ * Usa a regra 'tournament_played' do clube associado ao torneio.
+ * 
+ * @param tournamentId - ID do torneio
+ * @returns Resumo dos pontos atribuídos
+ */
+export async function awardTournamentRewardPoints(
+  tournamentId: string
+): Promise<{ awarded: number; skipped: number; errors: number; details: string[] }> {
+  const details: string[] = []
+  let awarded = 0
+  let skipped = 0
+  let errors = 0
+
+  // 1) Buscar o torneio para obter club_id
+  const { data: tournament, error: tErr } = await supabase
+    .from('tournaments')
+    .select('id, name, club_id')
+    .eq('id', tournamentId)
+    .single()
+
+  if (tErr || !tournament) {
+    console.error('[Rewards] Tournament not found:', tournamentId, tErr)
+    return { awarded: 0, skipped: 0, errors: 1, details: ['Torneio não encontrado'] }
+  }
+
+  if (!tournament.club_id) {
+    console.log('[Rewards] Tournament has no club_id, cannot award rewards')
+    return { awarded: 0, skipped: 0, errors: 0, details: ['Torneio sem clube associado - sem rewards'] }
+  }
+
+  // 2) Verificar se a regra 'tournament_played' existe e está ativa
+  const { data: rule } = await supabase
+    .from('reward_rules')
+    .select('id, points')
+    .eq('club_id', tournament.club_id)
+    .eq('action_type', 'tournament_played')
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!rule) {
+    console.log('[Rewards] No active tournament_played rule for club:', tournament.club_id)
+    return { awarded: 0, skipped: 0, errors: 0, details: ['Sem regra de reward "tournament_played" ativa neste clube'] }
+  }
+
+  // 3) Buscar todos os jogadores do torneio
+  const { data: players } = await supabase
+    .from('players')
+    .select('id, name, user_id, phone_number')
+    .eq('tournament_id', tournamentId)
+
+  if (!players || players.length === 0) {
+    return { awarded: 0, skipped: 0, errors: 0, details: ['Sem jogadores no torneio'] }
+  }
+
+  console.log(`[Rewards] Found ${players.length} players in tournament ${tournament.name}`)
+
+  // 4) Para cada jogador, encontrar o player_account_id e atribuir pontos
+  for (const player of players) {
+    let playerAccountId: string | null = null
+
+    // Prioridade 1: user_id
+    if (player.user_id) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select('id')
+        .eq('user_id', player.user_id)
+        .maybeSingle()
+      if (data) playerAccountId = data.id
+    }
+
+    // Prioridade 2: phone_number
+    if (!playerAccountId && player.phone_number) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select('id')
+        .eq('phone_number', player.phone_number)
+        .maybeSingle()
+      if (data) playerAccountId = data.id
+    }
+
+    // Prioridade 3: name
+    if (!playerAccountId && player.name) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select('id')
+        .ilike('name', player.name)
+        .maybeSingle()
+      if (data) playerAccountId = data.id
+    }
+
+    if (!playerAccountId) {
+      skipped++
+      details.push(`⚠️ ${player.name}: sem conta encontrada`)
+      continue
+    }
+
+    // Atribuir pontos via RPC
+    const { data: result, error: awardErr } = await supabase.rpc('award_reward_points', {
+      p_player_account_id: playerAccountId,
+      p_club_id: tournament.club_id,
+      p_action_type: 'tournament_played',
+      p_reference_id: tournamentId,
+      p_custom_description: `Participou no torneio "${tournament.name}"`,
+    })
+
+    if (awardErr) {
+      console.error('[Rewards] Error awarding points to:', player.name, awardErr)
+      errors++
+      details.push(`❌ ${player.name}: erro ao atribuir pontos`)
+    } else if (result && !result.success) {
+      // Provavelmente já tinha pontos atribuídos (duplicado)
+      skipped++
+      details.push(`⏭️ ${player.name}: ${result.error || 'já tinha pontos'}`)
+    } else {
+      awarded++
+      details.push(`✅ ${player.name}: +${result?.points_earned || rule.points} pts (total: ${result?.new_total || '?'})`)
+    }
+  }
+
+  console.log(`[Rewards] Tournament rewards: ${awarded} awarded, ${skipped} skipped, ${errors} errors`)
+  return { awarded, skipped, errors, details }
 }

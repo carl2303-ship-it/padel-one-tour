@@ -13,7 +13,7 @@ import BracketView from './BracketView';
 import ManageCategoriesModal from './ManageCategoriesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
-import { processAllUnratedMatches } from '../lib/ratingEngine';
+import { processAllUnratedMatches, awardTournamentRewardPoints } from '../lib/ratingEngine';
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
@@ -4560,19 +4560,40 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
       // 4. Process ratings ONLY for matches in THIS tournament (not all tournaments!)
       console.log('[FINALIZE] Processing player ratings for tournament:', tournament.id);
+      let ratingInfo = '';
       try {
         const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
         console.log('[FINALIZE] Rating processing result:', ratingResult);
+        ratingInfo = `\n\n📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.errors} erros de ${ratingResult.total} jogos`;
       } catch (ratingErr) {
         console.error('[FINALIZE] Error processing ratings:', ratingErr);
-        // Não bloquear a finalização se o rating falhar
+        ratingInfo = '\n\n⚠️ Erro ao processar ratings dos jogadores';
       }
 
-      // 5. Refresh data
+      // 5. Award reward points to all tournament participants
+      console.log('[FINALIZE] Awarding tournament reward points...');
+      let rewardInfo = '';
+      try {
+        const rewardResult = await awardTournamentRewardPoints(tournament.id);
+        console.log('[FINALIZE] Reward result:', rewardResult);
+        if (rewardResult.awarded > 0 || rewardResult.skipped > 0 || rewardResult.errors > 0) {
+          rewardInfo = `\n\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
+          if (rewardResult.details.length > 0) {
+            console.log('[FINALIZE] Reward details:', rewardResult.details.join('\n'));
+          }
+        } else if (rewardResult.details.length > 0) {
+          rewardInfo = `\n\nℹ️ Rewards: ${rewardResult.details[0]}`;
+        }
+      } catch (rewardErr) {
+        console.error('[FINALIZE] Error awarding rewards:', rewardErr);
+        rewardInfo = '\n\n⚠️ Erro ao atribuir rewards';
+      }
+
+      // 6. Refresh data
       await fetchTournamentData();
       setCurrentTournament({ ...currentTournament, status: 'completed' });
       
-      alert('Torneio finalizado com sucesso! Os resultados e ratings foram atualizados.');
+      alert(`Torneio finalizado com sucesso!${ratingInfo}${rewardInfo}`);
     } catch (error) {
       console.error('Error finalizing tournament:', error);
       alert('Erro ao finalizar o torneio. Tente novamente.');
@@ -4670,6 +4691,41 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               >
                 <Trophy className="w-4 h-4" />
                 Finalizar Torneio
+              </button>
+            )}
+            {currentTournament.status === 'completed' && (
+              <button
+                onClick={async () => {
+                  if (!confirm('Reprocessar ratings e rewards para todos os jogos deste torneio?')) return;
+                  setLoading(true);
+                  try {
+                    // Reset rating_processed flag for all matches in this tournament
+                    const { error: resetErr } = await supabase
+                      .from('matches')
+                      .update({ rating_processed: false })
+                      .eq('tournament_id', tournament.id);
+                    if (resetErr) console.error('[REPROCESS] Error resetting flags:', resetErr);
+
+                    const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
+                    const rewardResult = await awardTournamentRewardPoints(tournament.id);
+                    
+                    let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.errors} erros`;
+                    msg += `\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
+                    if (rewardResult.details.length > 0) {
+                      msg += '\n\nDetalhes:\n' + rewardResult.details.join('\n');
+                    }
+                    alert(msg);
+                  } catch (err) {
+                    console.error('[REPROCESS] Error:', err);
+                    alert('Erro ao reprocessar. Ver consola para detalhes.');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
+              >
+                <Award className="w-4 h-4" />
+                Reprocessar Ratings & Rewards
               </button>
             )}
           </div>
