@@ -84,6 +84,217 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     }
   };
 
+  // Garantir que o jogador existe no torneio atual (copiar se necessário)
+  const ensurePlayerInTournament = async (playerId: string): Promise<string> => {
+    // Verificar se o jogador já está no torneio atual
+    const { data: existingPlayer } = await supabase
+      .from('players')
+      .select('*')
+      .eq('id', playerId)
+      .single();
+
+    if (!existingPlayer) {
+      throw new Error('Jogador não encontrado');
+    }
+
+    // Se já está no torneio atual, atualizar categoria se necessário e retornar o mesmo ID
+    if (existingPlayer.tournament_id === tournamentId) {
+      // Atualizar category_id se necessário
+      if (categoryId && existingPlayer.category_id !== categoryId) {
+        await supabase
+          .from('players')
+          .update({ category_id: categoryId })
+          .eq('id', playerId);
+      }
+      return playerId;
+    }
+
+    // Jogador está noutro torneio - verificar se já existe neste torneio pelo telefone/nome
+    const { data: playerInThisTournament } = await supabase
+      .from('players')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('phone_number', existingPlayer.phone_number || '')
+      .maybeSingle();
+
+    if (playerInThisTournament) {
+      // Já existe neste torneio, atualizar categoria se necessário
+      if (categoryId) {
+        await supabase
+          .from('players')
+          .update({ category_id: categoryId })
+          .eq('id', playerInThisTournament.id);
+      }
+      return playerInThisTournament.id;
+    }
+
+    // Criar cópia do jogador para este torneio
+    const { data: newPlayer, error } = await supabase
+      .from('players')
+      .insert([{
+        name: existingPlayer.name,
+        email: existingPlayer.email,
+        phone_number: existingPlayer.phone_number,
+        user_id: null,
+        tournament_id: tournamentId,
+        category_id: categoryId || null
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`[EDIT-TEAM] Jogador "${existingPlayer.name}" copiado para o torneio atual`);
+    await fetchPlayers();
+    return newPlayer.id;
+  };
+
+  // Verificar se um jogador ainda está noutra equipa do mesmo torneio
+  const isPlayerInOtherTeam = async (playerId: string, excludeTeamId: string): Promise<boolean> => {
+    try {
+      // Primeiro, verificar se a equipa atual ainda tem este jogador (não deveria acontecer)
+      const { data: currentTeam } = await supabase
+        .from('teams')
+        .select('player1_id, player2_id')
+        .eq('id', excludeTeamId)
+        .single();
+
+      if (currentTeam && (currentTeam.player1_id === playerId || currentTeam.player2_id === playerId)) {
+        console.warn(`[EDIT-TEAM] ⚠️ ATENÇÃO: A equipa atual ainda tem o jogador ${playerId}! Isso não deveria acontecer.`);
+      }
+
+      // Verificar player1_id em outras equipas
+      const { data: teamsAsPlayer1 } = await supabase
+        .from('teams')
+        .select('id, name')
+        .eq('tournament_id', tournamentId)
+        .eq('player1_id', playerId)
+        .neq('id', excludeTeamId)
+        .limit(5);
+
+      // Verificar player2_id em outras equipas
+      const { data: teamsAsPlayer2 } = await supabase
+        .from('teams')
+        .select('id, name')
+        .eq('tournament_id', tournamentId)
+        .eq('player2_id', playerId)
+        .neq('id', excludeTeamId)
+        .limit(5);
+
+      const inOtherTeam = ((teamsAsPlayer1?.length || 0) > 0) || ((teamsAsPlayer2?.length || 0) > 0);
+      
+      console.log(`[EDIT-TEAM] Jogador ${playerId} está noutra equipa?`, inOtherTeam, {
+        teamsAsPlayer1: teamsAsPlayer1?.map(t => ({ id: t.id, name: t.name })) || [],
+        teamsAsPlayer2: teamsAsPlayer2?.map(t => ({ id: t.id, name: t.name })) || []
+      });
+
+      return inOtherTeam;
+    } catch (error) {
+      console.error('[EDIT-TEAM] Erro ao verificar se jogador está noutra equipa:', error);
+      // Em caso de erro, assumir que está noutra equipa para evitar remoção acidental
+      return true;
+    }
+  };
+
+  // Remover jogador da tabela players se não estiver noutra equipa
+  const cleanupOldPlayer = async (oldPlayerId: string) => {
+    if (!oldPlayerId) {
+      console.log('[EDIT-TEAM] cleanupOldPlayer: oldPlayerId vazio, ignorando');
+      return;
+    }
+
+    console.log(`[EDIT-TEAM] Iniciando cleanup para jogador: ${oldPlayerId}`);
+
+    const stillInOtherTeam = await isPlayerInOtherTeam(oldPlayerId, team.id);
+    
+    if (stillInOtherTeam) {
+      console.log(`[EDIT-TEAM] Jogador ${oldPlayerId} ainda está noutra equipa, não removendo`);
+      return;
+    }
+
+    console.log(`[EDIT-TEAM] Jogador ${oldPlayerId} não está noutra equipa, verificando se pode ser removido...`);
+
+    // Verificar se o jogador está no torneio atual
+    const { data: player, error: playerError } = await supabase
+      .from('players')
+      .select('id, tournament_id, name')
+      .eq('id', oldPlayerId)
+      .single();
+
+    if (playerError) {
+      console.error('[EDIT-TEAM] Erro ao buscar jogador:', playerError);
+      return;
+    }
+
+    if (!player) {
+      console.log(`[EDIT-TEAM] Jogador ${oldPlayerId} não encontrado na tabela players`);
+      return;
+    }
+
+    // Só remover se estiver no torneio atual
+    if (player.tournament_id === tournamentId) {
+      // Verificar se o jogador está referenciado em matches individuais
+      const [match1, match2, match3, match4] = await Promise.all([
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player1_individual_id', oldPlayerId).limit(1),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player2_individual_id', oldPlayerId).limit(1),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player3_individual_id', oldPlayerId).limit(1),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player4_individual_id', oldPlayerId).limit(1),
+      ]);
+
+      const hasMatches = 
+        (match1.data && match1.data.length > 0) ||
+        (match2.data && match2.data.length > 0) ||
+        (match3.data && match3.data.length > 0) ||
+        (match4.data && match4.data.length > 0);
+
+      if (match1.error || match2.error || match3.error || match4.error) {
+        console.error('[EDIT-TEAM] Erro ao verificar matches:', match1.error || match2.error || match3.error || match4.error);
+      }
+
+      if (hasMatches) {
+        console.log(`[EDIT-TEAM] Jogador ${oldPlayerId} está referenciado em matches individuais, não removendo`);
+        return;
+      }
+
+      console.log(`[EDIT-TEAM] Removendo jogador ${oldPlayerId} (${player.name}) da tabela players...`);
+      
+      const { data: deletedData, error: deleteError } = await supabase
+        .from('players')
+        .delete()
+        .eq('id', oldPlayerId)
+        .select();
+
+      if (deleteError) {
+        console.error('[EDIT-TEAM] Erro ao remover jogador antigo:', deleteError);
+        console.error('[EDIT-TEAM] Detalhes do erro:', JSON.stringify(deleteError, null, 2));
+        
+        // Se o erro for de foreign key constraint, tentar atualizar em vez de remover
+        if (deleteError.code === '23503' || deleteError.message?.includes('foreign key')) {
+          console.log('[EDIT-TEAM] Erro de foreign key detectado. O jogador pode estar referenciado noutras tabelas.');
+          console.log('[EDIT-TEAM] Considerar marcar o jogador como inativo em vez de remover.');
+        }
+      } else {
+        console.log(`[EDIT-TEAM] ✅ Jogador antigo removido com sucesso: ${oldPlayerId} (${player.name})`);
+        console.log('[EDIT-TEAM] Dados removidos:', deletedData);
+        
+        // Verificar se o jogador foi realmente removido
+        const { data: verifyPlayer } = await supabase
+          .from('players')
+          .select('id')
+          .eq('id', oldPlayerId)
+          .maybeSingle();
+        
+        if (verifyPlayer) {
+          console.warn(`[EDIT-TEAM] ⚠️ ATENÇÃO: Jogador ${oldPlayerId} ainda existe após tentativa de remoção!`);
+        } else {
+          console.log(`[EDIT-TEAM] ✅ Confirmado: Jogador ${oldPlayerId} foi removido com sucesso`);
+        }
+      }
+    } else {
+      console.log(`[EDIT-TEAM] Jogador ${oldPlayerId} está noutro torneio (${player.tournament_id}), não removendo`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -105,18 +316,49 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
       console.log('[EDIT-TEAM] Updating team:', {
         id: team.id,
         name: teamName,
-        player1_id: player1Id,
-        player2_id: player2Id
+        old_player1_id: team.player1_id,
+        new_player1_id: player1Id,
+        old_player2_id: team.player2_id,
+        new_player2_id: player2Id
       });
 
+      // Guardar IDs antigos antes de atualizar
+      const oldPlayer1Id = team.player1_id;
+      const oldPlayer2Id = team.player2_id;
+
+      // Garantir que os novos jogadores existem no torneio atual
+      let finalPlayer1Id = player1Id;
+      let finalPlayer2Id = player2Id;
+
+      if (player1Id !== oldPlayer1Id) {
+        finalPlayer1Id = await ensurePlayerInTournament(player1Id);
+      } else if (categoryId !== team.category_id) {
+        // Jogador não mudou mas categoria mudou - atualizar categoria
+        await supabase
+          .from('players')
+          .update({ category_id: categoryId || null })
+          .eq('id', player1Id);
+      }
+
+      if (player2Id !== oldPlayer2Id) {
+        finalPlayer2Id = await ensurePlayerInTournament(player2Id);
+      } else if (categoryId !== team.category_id) {
+        // Jogador não mudou mas categoria mudou - atualizar categoria
+        await supabase
+          .from('players')
+          .update({ category_id: categoryId || null })
+          .eq('id', player2Id);
+      }
+
+      // Atualizar a equipa
       const { data, error: updateError } = await supabase
         .from('teams')
         .update({
           name: teamName,
           seed: seed === '' ? null : seed,
           category_id: categoryId || null,
-          player1_id: player1Id,
-          player2_id: player2Id,
+          player1_id: finalPlayer1Id,
+          player2_id: finalPlayer2Id,
         })
         .eq('id', team.id)
         .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)');
@@ -127,12 +369,41 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
         setError(updateError.message);
         setLoading(false);
       } else {
-        console.log('[EDIT-TEAM] Team updated successfully, calling onSuccess');
+        console.log('[EDIT-TEAM] Team updated successfully');
+
+        // Limpar jogadores antigos se não estiverem noutras equipas
+        console.log('[EDIT-TEAM] Verificando jogadores antigos para remover:', {
+          oldPlayer1Id,
+          finalPlayer1Id,
+          player1Changed: oldPlayer1Id !== finalPlayer1Id,
+          oldPlayer2Id,
+          finalPlayer2Id,
+          player2Changed: oldPlayer2Id !== finalPlayer2Id
+        });
+
+        if (oldPlayer1Id && oldPlayer1Id !== finalPlayer1Id) {
+          console.log('[EDIT-TEAM] Player1 mudou, iniciando cleanup...');
+          await cleanupOldPlayer(oldPlayer1Id);
+        } else {
+          console.log('[EDIT-TEAM] Player1 não mudou ou é null, não removendo');
+        }
+
+        if (oldPlayer2Id && oldPlayer2Id !== finalPlayer2Id) {
+          console.log('[EDIT-TEAM] Player2 mudou, iniciando cleanup...');
+          await cleanupOldPlayer(oldPlayer2Id);
+        } else {
+          console.log('[EDIT-TEAM] Player2 não mudou ou é null, não removendo');
+        }
+
+        // Atualizar lista de jogadores disponíveis
+        await fetchPlayers();
+
+        console.log('[EDIT-TEAM] Calling onSuccess');
         onSuccess();
       }
     } catch (err) {
       console.error('[EDIT-TEAM] Exception:', err);
-      setError('An unexpected error occurred');
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setLoading(false);
     }
   };

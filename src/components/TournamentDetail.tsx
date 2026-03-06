@@ -3473,15 +3473,138 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleDeletePlayer = async (playerId: string) => {
-    if (!confirm(t.tournament.confirmDeletePlayer || 'Tem certeza que deseja eliminar este jogador?')) return;
+    if (!confirm(t.tournament.confirmDeletePlayer || 'Tem certeza que deseja eliminar este jogador? As equipas e jogos associados também serão eliminados.')) return;
     
+    if (!currentTournament) {
+      alert('Torneio não encontrado');
+      return;
+    }
+
     try {
-      const { error } = await supabase.from('players').delete().eq('id', playerId);
-      if (error) throw error;
+      console.log(`[DELETE-PLAYER] Iniciando remoção do jogador ${playerId} do torneio ${currentTournament.id}`);
+
+      // 1) Verificar se o jogador existe e pertence a este torneio
+      const { data: playerCheck, error: playerCheckError } = await supabase
+        .from('players')
+        .select('id, name, tournament_id')
+        .eq('id', playerId)
+        .eq('tournament_id', currentTournament.id)
+        .maybeSingle();
+
+      if (playerCheckError) {
+        console.error('[DELETE-PLAYER] Erro ao verificar jogador:', playerCheckError);
+        throw playerCheckError;
+      }
+
+      if (!playerCheck) {
+        console.log('[DELETE-PLAYER] Jogador não encontrado neste torneio');
+        alert('Jogador não encontrado neste torneio.');
+        await fetchTournamentData();
+        return;
+      }
+
+      console.log(`[DELETE-PLAYER] Jogador encontrado: ${playerCheck.name}`);
+
+      // 2) Encontrar e remover matches individuais que referenciam este jogador
+      const [match1, match2, match3, match4] = await Promise.all([
+        supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).eq('player1_individual_id', playerId),
+        supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).eq('player2_individual_id', playerId),
+        supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).eq('player3_individual_id', playerId),
+        supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).eq('player4_individual_id', playerId),
+      ]);
+
+      const individualMatchIds = [
+        ...(match1.data || []).map(m => m.id),
+        ...(match2.data || []).map(m => m.id),
+        ...(match3.data || []).map(m => m.id),
+        ...(match4.data || []).map(m => m.id),
+      ];
+      const uniqueIndividualMatchIds = [...new Set(individualMatchIds)];
+
+      if (uniqueIndividualMatchIds.length > 0) {
+        console.log(`[DELETE-PLAYER] Removendo ${uniqueIndividualMatchIds.length} match(es) individuais...`);
+        for (const matchId of uniqueIndividualMatchIds) {
+          await supabase.from('matches').delete().eq('id', matchId);
+        }
+        console.log(`[DELETE-PLAYER] ✅ Matches individuais removidos`);
+      }
+
+      // 3) Encontrar equipas que referenciam este jogador
+      const [teamsAsP1, teamsAsP2] = await Promise.all([
+        supabase.from('teams').select('id, name').eq('tournament_id', currentTournament.id).eq('player1_id', playerId),
+        supabase.from('teams').select('id, name').eq('tournament_id', currentTournament.id).eq('player2_id', playerId),
+      ]);
+
+      const teamsWithPlayer = [
+        ...(teamsAsP1.data || []),
+        ...(teamsAsP2.data || [])
+      ];
+
+      if (teamsWithPlayer.length > 0) {
+        const teamIds = teamsWithPlayer.map(t => t.id);
+        console.log(`[DELETE-PLAYER] Encontradas ${teamsWithPlayer.length} equipa(s): ${teamsWithPlayer.map(t => t.name).join(', ')}`);
+
+        // 3a) Remover matches que referenciam essas equipas (matches.team1_id/team2_id tem ON DELETE CASCADE,
+        //     mas removemos explicitamente para garantir)
+        const [mTeam1, mTeam2] = await Promise.all([
+          supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).in('team1_id', teamIds),
+          supabase.from('matches').select('id').eq('tournament_id', currentTournament.id).in('team2_id', teamIds),
+        ]);
+
+        const teamMatchIds = [...new Set([
+          ...(mTeam1.data || []).map(m => m.id),
+          ...(mTeam2.data || []).map(m => m.id),
+        ])];
+
+        if (teamMatchIds.length > 0) {
+          console.log(`[DELETE-PLAYER] Removendo ${teamMatchIds.length} match(es) de equipas...`);
+          for (const matchId of teamMatchIds) {
+            await supabase.from('matches').delete().eq('id', matchId);
+          }
+          console.log(`[DELETE-PLAYER] ✅ Matches de equipas removidos`);
+        }
+
+        // 3b) Remover as equipas
+        console.log(`[DELETE-PLAYER] Removendo ${teamsWithPlayer.length} equipa(s)...`);
+        for (const team of teamsWithPlayer) {
+          const { error: teamErr } = await supabase.from('teams').delete().eq('id', team.id);
+          if (teamErr) {
+            console.error(`[DELETE-PLAYER] Erro ao remover equipa ${team.id}:`, teamErr);
+          } else {
+            console.log(`[DELETE-PLAYER] ✅ Equipa ${team.name} removida`);
+          }
+        }
+      }
+
+      // 4) Remover o jogador (com a migração CASCADE, equipas/matches restantes serão eliminados automaticamente)
+      console.log(`[DELETE-PLAYER] Removendo jogador: ${playerCheck.name} (${playerId})`);
+
+      const { error } = await supabase
+        .from('players')
+        .delete()
+        .eq('id', playerId)
+        .eq('tournament_id', currentTournament.id);
+
+      if (error) {
+        console.error('[DELETE-PLAYER] ❌ Erro ao remover jogador:', JSON.stringify(error, null, 2));
+        
+        let errorMessage = 'Erro ao eliminar jogador';
+        if (error.code === '23503' || error.message?.includes('foreign key') || error.message?.includes('constraint')) {
+          errorMessage = 'Não é possível eliminar este jogador porque ainda está referenciado noutras tabelas. Por favor, elimine todas as referências primeiro.';
+        } else if (error.code === '42501' || error.message?.includes('permission') || error.message?.includes('policy')) {
+          errorMessage = 'Não tem permissão para eliminar este jogador.';
+        } else if (error.message) {
+          errorMessage = `Erro: ${error.message}`;
+        }
+        
+        alert(errorMessage);
+        throw error;
+      }
+
+      console.log(`[DELETE-PLAYER] ✅ Jogador ${playerCheck.name} removido com sucesso`);
       await fetchTournamentData();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error deleting player:', error);
-      alert('Erro ao eliminar jogador');
     }
   };
 

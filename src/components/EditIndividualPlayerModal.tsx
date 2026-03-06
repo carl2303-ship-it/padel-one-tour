@@ -86,7 +86,7 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
   };
 
   const handleDelete = async () => {
-    if (!confirm('Tem a certeza que quer eliminar este jogador? Esta acao nao pode ser revertida.')) {
+    if (!confirm('Tem a certeza que quer eliminar este jogador? As equipas e jogos associados também serão eliminados. Esta ação não pode ser revertida.')) {
       return;
     }
 
@@ -94,19 +94,85 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
     setError('');
 
     try {
+      console.log(`[DELETE-PLAYER] Iniciando remoção do jogador ${player.id} (${player.name})`);
+
+      // 1) Encontrar e remover matches individuais que referenciam este jogador
+      const [match1, match2, match3, match4] = await Promise.all([
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player1_individual_id', player.id),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player2_individual_id', player.id),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player3_individual_id', player.id),
+        supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('player4_individual_id', player.id),
+      ]);
+
+      const individualMatchIds = [...new Set([
+        ...(match1.data || []).map(m => m.id),
+        ...(match2.data || []).map(m => m.id),
+        ...(match3.data || []).map(m => m.id),
+        ...(match4.data || []).map(m => m.id),
+      ])];
+
+      if (individualMatchIds.length > 0) {
+        console.log(`[DELETE-PLAYER] Removendo ${individualMatchIds.length} match(es) individuais...`);
+        for (const matchId of individualMatchIds) {
+          await supabase.from('matches').delete().eq('id', matchId);
+        }
+      }
+
+      // 2) Encontrar e remover equipas (e os seus matches) que referenciam este jogador
+      const [teamsAsP1, teamsAsP2] = await Promise.all([
+        supabase.from('teams').select('id, name').eq('tournament_id', tournamentId).eq('player1_id', player.id),
+        supabase.from('teams').select('id, name').eq('tournament_id', tournamentId).eq('player2_id', player.id),
+      ]);
+
+      const teamsWithPlayer = [
+        ...(teamsAsP1.data || []),
+        ...(teamsAsP2.data || [])
+      ];
+
+      if (teamsWithPlayer.length > 0) {
+        const teamIds = teamsWithPlayer.map(t => t.id);
+        console.log(`[DELETE-PLAYER] Removendo ${teamsWithPlayer.length} equipa(s) e os seus matches...`);
+
+        // Remover matches das equipas primeiro
+        const [mTeam1, mTeam2] = await Promise.all([
+          supabase.from('matches').select('id').eq('tournament_id', tournamentId).in('team1_id', teamIds),
+          supabase.from('matches').select('id').eq('tournament_id', tournamentId).in('team2_id', teamIds),
+        ]);
+
+        const teamMatchIds = [...new Set([
+          ...(mTeam1.data || []).map(m => m.id),
+          ...(mTeam2.data || []).map(m => m.id),
+        ])];
+
+        for (const matchId of teamMatchIds) {
+          await supabase.from('matches').delete().eq('id', matchId);
+        }
+
+        // Remover as equipas
+        for (const team of teamsWithPlayer) {
+          await supabase.from('teams').delete().eq('id', team.id);
+        }
+      }
+
+      // 3) Remover o jogador (com migração CASCADE, referências restantes são limpas automaticamente)
       const { error: deleteError } = await supabase
         .from('players')
         .delete()
-        .eq('id', player.id);
+        .eq('id', player.id)
+        .eq('tournament_id', tournamentId);
 
       if (deleteError) {
+        console.error('[DELETE-PLAYER] ❌ Erro ao remover jogador:', deleteError);
         setError(deleteError.message);
         setLoading(false);
       } else {
+        console.log(`[DELETE-PLAYER] ✅ Jogador ${player.name} removido com sucesso`);
         onSuccess();
       }
-    } catch (err) {
-      setError('Ocorreu um erro inesperado');
+    } catch (err: unknown) {
+      console.error('[DELETE-PLAYER] Exception:', err);
+      const msg = err instanceof Error ? err.message : 'Ocorreu um erro inesperado';
+      setError(msg);
       setLoading(false);
     }
   };
