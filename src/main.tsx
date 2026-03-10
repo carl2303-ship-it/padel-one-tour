@@ -23,6 +23,18 @@ function showError(title: string, message: string, detail?: string) {
 
 async function init() {
   try {
+    // Register Service Worker for push notifications
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.register('/service-worker.js', {
+          scope: '/',
+        });
+        console.log('[SW] Service Worker registered:', registration.scope);
+      } catch (error) {
+        console.error('[SW] Service Worker registration failed:', error);
+      }
+    }
+
     const path = window.location.pathname;
     const isLivePage = path.match(/^\/tournament\/[^/]+\/live$/);
 

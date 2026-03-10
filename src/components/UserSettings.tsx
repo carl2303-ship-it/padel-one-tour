@@ -358,7 +358,7 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
             </div>
           </div>
 
-          {isPushSupported && (
+          {isPushSupported ? (
             <div>
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Bell className="w-5 h-5" />
@@ -424,6 +424,26 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
                     <span className="text-sm font-medium">{pushMessage.text}</span>
                   </div>
                 )}
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <BellOff className="w-5 h-5" />
+                Notificacoes Push
+              </h3>
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800 mb-2">
+                  <strong>Notificacoes push nao estao disponiveis</strong>
+                </p>
+                <p className="text-xs text-yellow-700">
+                  Para receber notificacoes de novas inscricoes, certifique-se de que:
+                </p>
+                <ul className="text-xs text-yellow-700 mt-2 list-disc list-inside space-y-1">
+                  <li>Esta a usar um navegador que suporta notificacoes push (Chrome, Firefox, Edge)</li>
+                  <li>O site esta a ser acedido via HTTPS</li>
+                  <li>As notificacoes estao permitidas nas definicoes do navegador</li>
+                </ul>
               </div>
             </div>
           )}

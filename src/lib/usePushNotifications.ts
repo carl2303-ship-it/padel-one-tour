@@ -24,19 +24,37 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const supported = 'serviceWorker' in navigator &&
-                      'PushManager' in window &&
-                      'Notification' in window &&
-                      !!VAPID_PUBLIC_KEY;
-    setIsSupported(supported);
+    const checkSupport = async () => {
+      const hasServiceWorker = 'serviceWorker' in navigator;
+      const hasPushManager = 'PushManager' in window;
+      const hasNotification = 'Notification' in window;
+      const hasVapidKey = !!VAPID_PUBLIC_KEY;
+      
+      const supported = hasServiceWorker && hasPushManager && hasNotification && hasVapidKey;
+      setIsSupported(supported);
 
-    if ('Notification' in window) {
-      setPermission(Notification.permission);
-    }
+      if ('Notification' in window) {
+        setPermission(Notification.permission);
+      }
 
-    if (supported && (user || playerAccountId)) {
-      checkSubscription();
-    }
+      // Wait for service worker to be ready before checking subscription
+      if (supported && (user || playerAccountId)) {
+        try {
+          // Wait for service worker registration to be ready
+          if ('serviceWorker' in navigator) {
+            await navigator.serviceWorker.ready;
+          }
+          checkSubscription();
+        } catch (error) {
+          console.error('[PushNotifications] Error waiting for service worker:', error);
+          // Still try to check subscription even if service worker isn't ready
+          checkSubscription();
+        }
+      }
+    };
+
+    checkSupport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, playerAccountId]);
 
   const checkSubscription = async () => {
