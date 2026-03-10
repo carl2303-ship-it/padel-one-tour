@@ -133,7 +133,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     if (formData.categoryId) {
       const category = categories.find(c => c.id === formData.categoryId);
       if (category) {
-        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender') {
+        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'crossed_playoffs_teams' || category.format === 'mixed_gender') {
           return true;
         }
         if (category.format === 'round_robin') {
@@ -141,6 +141,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         }
         return false;
       }
+    }
+    // crossed_playoffs_teams é para equipas, não individual
+    if (tournament.format === 'crossed_playoffs_teams') {
+      return false;
     }
     return (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
            tournament.format === 'individual_groups_knockout' ||
@@ -195,11 +199,13 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
   const fetchCategoryTeams = async (categoryId: string) => {
     const category = categories.find(c => c.id === categoryId);
-    const isCategoryIndividual = category?.format === 'individual_groups_knockout' ||
+    const isCategoryIndividual = category?.format === 'crossed_playoffs_teams' 
+      ? false // Formato de equipas
+      : (category?.format === 'individual_groups_knockout' ||
       category?.format === 'mixed_american' ||
       category?.format === 'crossed_playoffs' ||
       category?.format === 'mixed_gender' ||
-      (category?.format === 'round_robin' && tournament.round_robin_type === 'individual');
+      (category?.format === 'round_robin' && tournament.round_robin_type === 'individual'));
 
     if (isCategoryIndividual) {
       const { data: players, count } = await supabase

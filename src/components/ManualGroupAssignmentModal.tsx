@@ -84,7 +84,10 @@ export function ManualGroupAssignmentModal({
     if (isIndividual) {
       return p.name;
     }
-    return `${p.player1_name} / ${p.player2_name}`;
+    // Support both formats: nested objects (player1.name) or flat strings (player1_name)
+    const player1Name = p.player1?.name || p.player1_name || 'N/A';
+    const player2Name = p.player2?.name || p.player2_name || 'N/A';
+    return `${player1Name} / ${player2Name}`;
   };
 
   const getParticipantsInGroup = (groupName: string) => {

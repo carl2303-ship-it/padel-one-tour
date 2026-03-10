@@ -17,7 +17,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [newCategory, setNewCategory] = useState({
     name: '',
-    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'round_robin_teams' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
+    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'round_robin_teams' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'crossed_playoffs_teams' | 'mixed_gender' | 'mixed_american',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
@@ -97,7 +97,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
     try {
       const dbFormat = newCategory.format === 'round_robin_teams' ? 'round_robin' : newCategory.format;
-      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(dbFormat);
+      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(dbFormat);
       const { error } = await supabase
         .from('tournament_categories')
         .insert({
@@ -140,7 +140,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
     try {
       const dbFormat = editingCategory.format === 'round_robin_teams' ? 'round_robin' : editingCategory.format;
-      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(dbFormat);
+      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(dbFormat);
       const { error } = await supabase
         .from('tournament_categories')
         .update({
@@ -251,12 +251,13 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   </optgroup>
                   <optgroup label="Especial">
                     <option value="crossed_playoffs">{t.format.crossed_playoffs}</option>
+                    <option value="crossed_playoffs_teams">{t.format.crossed_playoffs_teams || 'Playoffs Cruzados (Equipas)'}</option>
                     <option value="mixed_gender">{t.format.mixed_gender}</option>
                   </optgroup>
                 </select>
               </div>
 
-              {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(newCategory.format)) && (
+                          {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(newCategory.format)) && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -416,12 +417,13 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                               </optgroup>
                               <optgroup label="Especial">
                                 <option value="crossed_playoffs">{t.format.crossed_playoffs}</option>
+                                <option value="crossed_playoffs_teams">{t.format.crossed_playoffs_teams || 'Playoffs Cruzados (Equipas)'}</option>
                                 <option value="mixed_gender">{t.format.mixed_gender}</option>
                               </optgroup>
                             </select>
                           </div>
 
-                          {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(editingCategory.format)) && (
+                          {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(editingCategory.format)) && (
                             <>
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">

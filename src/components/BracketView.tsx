@@ -33,12 +33,14 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
   const allRoundNames = Array.from(new Set(matches.map(m => m.round)));
 
   const mainRoundOrder = [
-    'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3',
+    'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
+    'crossed_r2_j1', 'crossed_r2_j2',
     'crossed_r2_j4', 'crossed_r2_j5', 'crossed_r2_j6',
     'crossed_r3_j7', 'crossed_r3_j8',
+    'crossed_r3_final', 'crossed_r3_3rd_place',
+    'crossed_r4_5th', 'crossed_r5_7th',
     // Legacy names (backwards compatibility)
     'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_5th_place',
-    'crossed_r3_final', 'crossed_r3_3rd_place',
     'crossed_playoff_categories', 'crossed_playoff',
     'mixed_semifinal1', 'mixed_semifinal2', 'mixed_final',
     'round_of_128', 'round_of_64', 'round_of_32', 'round_of_16', 
@@ -84,20 +86,25 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       }
     }
     switch(round) {
-      case 'crossed_r1_j1': return 'Playoff R1 - Jogo 1';
-      case 'crossed_r1_j2': return 'Playoff R1 - Jogo 2';
-      case 'crossed_r1_j3': return 'Playoff R1 - Jogo 3';
+      case 'crossed_r1_j1': return 'Quarto-Final 1';
+      case 'crossed_r1_j2': return 'Quarto-Final 2';
+      case 'crossed_r1_j3': return 'Quarto-Final 3';
+      case 'crossed_r1_j4': return 'Quarto-Final 4';
+      case 'crossed_r2_j1': return 'Meia-Final 1';
+      case 'crossed_r2_j2': return 'Meia-Final 2';
       case 'crossed_r2_j4': return 'Meia-Final 1';
       case 'crossed_r2_j5': return 'Meia-Final 2';
       case 'crossed_r2_j6': return '5º/6º Lugar';
       case 'crossed_r3_j7': return 'Final';
       case 'crossed_r3_j8': return '3º/4º Lugar';
+      case 'crossed_r3_final': return 'Final';
+      case 'crossed_r3_3rd_place': return '3º/4º Lugar';
+      case 'crossed_r4_5th': return '5º/6º Lugar';
+      case 'crossed_r5_7th': return '7º/8º Lugar';
       // Legacy names (backwards compatibility)
       case 'crossed_r2_semifinal1': return 'Meia-Final 1';
       case 'crossed_r2_semifinal2': return 'Meia-Final 2';
       case 'crossed_r2_5th_place': return '5º/6º Lugar';
-      case 'crossed_r3_final': return 'Final';
-      case 'crossed_r3_3rd_place': return '3º/4º Lugar';
       case 'mixed_semifinal1': return 'Meia-Final Mista 1';
       case 'mixed_semifinal2': return 'Meia-Final Mista 2';
       case 'mixed_final': return 'Final Mista';
@@ -254,8 +261,10 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       case '3rd_place':
       case 'crossed_r3_j8':
       case 'crossed_r3_3rd_place': return isWinner ? '3rd' : '4th';
-      case '5th_place': return isWinner ? '5th' : '6th';
-      case '7th_place': return isWinner ? '7th' : '8th';
+      case '5th_place':
+      case 'crossed_r4_5th': return isWinner ? '5th' : '6th';
+      case '7th_place':
+      case 'crossed_r5_7th': return isWinner ? '7th' : '8th';
       case '9th_place': return isWinner ? '9th' : '10th';
       case '11th_place': return isWinner ? '11th' : '12th';
       case '13th_place': return isWinner ? '13th' : '14th';

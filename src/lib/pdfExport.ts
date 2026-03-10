@@ -240,6 +240,7 @@ export async function exportTournamentPDF(
   const formatLabels: Record<string, string> = {
     individual_groups_knockout: 'Americano - Grupos + Eliminatórias',
     crossed_playoffs: 'Playoffs Cruzados',
+    crossed_playoffs_teams: 'Playoffs Cruzados por Equipas',
     mixed_gender: 'Americano Misto',
     round_robin: roundRobinType === 'individual' || roundRobinType === 'american' ? 'Americano Individual - Todos contra Todos' : roundRobinType === 'teams' ? 'Americano Equipas - Todos contra Todos' : 'Torneio Non Stop (Round Robin)',
     groups_knockout: 'Equipas - Grupos + Eliminatórias',
@@ -283,7 +284,9 @@ export async function exportTournamentPDF(
   }
 
   // Escolha do PDF = exactamente o tipo definido nas definições do torneio (sem inferências)
-  if (format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender') {
+  if (format === 'crossed_playoffs_teams') {
+    yPos = exportCrossedPlayoffsTeamsTournament(doc, yPos, tournament, teams, completedMatches, categories);
+  } else if (format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender') {
     yPos = exportIndividualTournament(doc, yPos, tournament, players, groupMatches, knockoutMatches, categories);
   } else if (format === 'round_robin') {
     if (roundRobinType === 'individual' || roundRobinType === 'american') {
@@ -865,6 +868,372 @@ function exportSuperTeamsTournament(
       yPos = (doc as any).lastAutoTable.finalY + 12;
     }
   }
+  return yPos;
+}
+
+// ============================================================
+// CROSSED PLAYOFFS TEAMS EXPORT
+// ============================================================
+function exportCrossedPlayoffsTeamsTournament(
+  doc: jsPDF,
+  yPos: number,
+  tournament: Tournament,
+  teams: TeamWithPlayers[],
+  matches: MatchWithTeams[],
+  categories: TournamentCategory[]
+): number {
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  console.log('[PDF-CROSSED-TEAMS] Teams:', teams.length);
+  console.log('[PDF-CROSSED-TEAMS] Matches:', matches.length);
+  console.log('[PDF-CROSSED-TEAMS] Categories:', categories.length);
+
+  // Separate group matches and knockout matches
+  const groupMatches = matches.filter(m => {
+    const r = m.round || '';
+    return r.startsWith('group_');
+  });
+  const knockoutMatches = matches.filter(m => {
+    const r = m.round || '';
+    return r.startsWith('crossed_');
+  });
+
+  console.log('[PDF-CROSSED-TEAMS] Group matches:', groupMatches.length, 'Knockout matches:', knockoutMatches.length);
+
+  // ── FINAL CLASSIFICATION from knockout results ──
+  const getWinnerLoser = (match: MatchWithTeams) => {
+    const t1 = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+    const t2 = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+    return {
+      winnerId: t1 > t2 ? match.team1_id : (match.winner_id || match.team2_id),
+      loserId: t1 > t2 ? match.team2_id : match.team1_id
+    };
+  };
+
+  const finalMatch = knockoutMatches.find(m => m.round === 'crossed_r3_final');
+  const thirdPlaceMatch = knockoutMatches.find(m => m.round === 'crossed_r3_3rd_place');
+  const fifthPlaceMatch = knockoutMatches.find(m => m.round === 'crossed_r4_5th');
+  const seventhPlaceMatch = knockoutMatches.find(m => m.round === 'crossed_r5_7th');
+
+  type FinalPos = { position: number; teamId: string | null; label: string };
+  const finalPositions: FinalPos[] = [];
+
+  if (finalMatch) {
+    const { winnerId, loserId } = getWinnerLoser(finalMatch);
+    finalPositions.push({ position: 1, teamId: winnerId, label: '1o - Campeao' });
+    finalPositions.push({ position: 2, teamId: loserId, label: '2o - Finalista' });
+  }
+  if (thirdPlaceMatch) {
+    const { winnerId, loserId } = getWinnerLoser(thirdPlaceMatch);
+    finalPositions.push({ position: 3, teamId: winnerId, label: '3o' });
+    finalPositions.push({ position: 4, teamId: loserId, label: '4o' });
+  }
+  if (fifthPlaceMatch) {
+    const { winnerId, loserId } = getWinnerLoser(fifthPlaceMatch);
+    finalPositions.push({ position: 5, teamId: winnerId, label: '5o' });
+    finalPositions.push({ position: 6, teamId: loserId, label: '6o' });
+  }
+  if (seventhPlaceMatch) {
+    const { winnerId, loserId } = getWinnerLoser(seventhPlaceMatch);
+    finalPositions.push({ position: 7, teamId: winnerId, label: '7o' });
+    finalPositions.push({ position: 8, teamId: loserId, label: '8o' });
+  }
+
+  finalPositions.sort((a, b) => a.position - b.position);
+
+  // Show final classification if available
+  if (finalPositions.length > 0) {
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(139, 92, 246);
+    doc.text('Classificacao Final', 14, yPos);
+    doc.setTextColor(0, 0, 0);
+    yPos += 8;
+
+    const finalData = finalPositions.map(fp => {
+      const team = teams.find(t => t.id === fp.teamId);
+      if (!team) return [fp.label, '-', '-', '0', '0', '0', '0', '0', '+0', '0'];
+
+      // Calculate ALL match stats (group + knockout)
+      let wins = 0, draws = 0, losses = 0, matchesPlayed = 0, gamesWon = 0, gamesLost = 0;
+      matches.forEach(m => {
+        if (m.team1_id !== team.id && m.team2_id !== team.id) return;
+        const isTeam1 = m.team1_id === team.id;
+        const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+        const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+        const t1Won = t1 > t2;
+        const isDraw = t1 === t2;
+        matchesPlayed++;
+        if (isTeam1) {
+          gamesWon += t1; gamesLost += t2;
+          if (isDraw) draws++; else if (t1Won) wins++; else losses++;
+        } else {
+          gamesWon += t2; gamesLost += t1;
+          if (isDraw) draws++; else if (!t1Won) wins++; else losses++;
+        }
+      });
+
+      const diff = gamesWon - gamesLost;
+      const pts = wins * 2 + draws;
+      const playerNames = getTeamPlayerNames(team);
+      return [
+        fp.label,
+        team.name,
+        playerNames,
+        matchesPlayed.toString(),
+        wins.toString(),
+        draws.toString(),
+        losses.toString(),
+        gamesWon.toString(),
+        gamesLost.toString(),
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
+      ];
+    });
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Pos.', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
+      body: finalData,
+      theme: 'striped',
+      headStyles: { fillColor: [139, 92, 246], fontSize: 8 },
+      bodyStyles: { fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 18, halign: 'center', fontStyle: 'bold' },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 36, fontSize: 6 },
+        3: { cellWidth: 8, halign: 'center' },
+        4: { cellWidth: 8, halign: 'center' },
+        5: { cellWidth: 8, halign: 'center' },
+        6: { cellWidth: 8, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 10, halign: 'center' },
+        9: { cellWidth: 12, halign: 'center' },
+        10: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    yPos = (doc as any).lastAutoTable.finalY + 12;
+  }
+
+  // ── KNOCKOUT MATCH RESULTS ──
+  if (knockoutMatches.length > 0) {
+    if (yPos > 200) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(249, 115, 22);
+    doc.text('Fase Eliminatoria', 14, yPos);
+    doc.setTextColor(0, 0, 0);
+    yPos += 8;
+
+    const roundOrder = [
+      'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
+      'crossed_r2_j1', 'crossed_r2_j2',
+      'crossed_r3_final', 'crossed_r3_3rd_place',
+      'crossed_r4_5th', 'crossed_r5_7th'
+    ];
+    const roundNames: Record<string, string> = {
+      'crossed_r1_j1': 'Quarto-Final 1', 'crossed_r1_j2': 'Quarto-Final 2',
+      'crossed_r1_j3': 'Quarto-Final 3', 'crossed_r1_j4': 'Quarto-Final 4',
+      'crossed_r2_j1': 'Meia-Final 1', 'crossed_r2_j2': 'Meia-Final 2',
+      'crossed_r3_final': 'FINAL', 'crossed_r3_3rd_place': '3o/4o Lugar',
+      'crossed_r4_5th': '5o/6o Lugar', 'crossed_r5_7th': '7o/8o Lugar'
+    };
+
+    // Sort knockout matches by round order
+    const sortedKnockout = [...knockoutMatches].sort((a, b) => {
+      const ai = roundOrder.indexOf(a.round || '');
+      const bi = roundOrder.indexOf(b.round || '');
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
+
+    const koData = sortedKnockout.map(match => {
+      const team1 = teams.find(t => t.id === match.team1_id);
+      const team2 = teams.find(t => t.id === match.team2_id);
+      const roundName = roundNames[match.round || ''] || match.round || '';
+      const t1Str = team1 ? `${team1.name} (${getTeamPlayerNames(team1)})` : 'TBD';
+      const t2Str = team2 ? `${team2.name} (${getTeamPlayerNames(team2)})` : 'TBD';
+      const scores: string[] = [];
+      if (match.team1_score_set1 != null && match.team2_score_set1 != null)
+        scores.push(`${match.team1_score_set1}-${match.team2_score_set1}`);
+      if (match.team1_score_set2 != null && match.team2_score_set2 != null)
+        scores.push(`${match.team1_score_set2}-${match.team2_score_set2}`);
+      if (match.team1_score_set3 != null && match.team2_score_set3 != null)
+        scores.push(`${match.team1_score_set3}-${match.team2_score_set3}`);
+      return [roundName, t1Str, scores.join(' / ') || '-', t2Str];
+    });
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['Ronda', 'Equipa 1 (Jogadores)', 'Resultado', 'Equipa 2 (Jogadores)']],
+      body: koData,
+      theme: 'grid',
+      headStyles: { fillColor: [249, 115, 22], fontSize: 8 },
+      bodyStyles: { fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 28, fontStyle: 'bold' },
+        1: { cellWidth: 50 },
+        2: { cellWidth: 22, halign: 'center' },
+        3: { cellWidth: 50 }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    yPos = (doc as any).lastAutoTable.finalY + 12;
+  }
+
+  // ── GROUP STANDINGS per category ──
+  const teamsByCategory = new Map<string, TeamWithPlayers[]>();
+  teams.forEach(team => {
+    const catId = team.category_id || 'none';
+    if (!teamsByCategory.has(catId)) teamsByCategory.set(catId, []);
+    teamsByCategory.get(catId)!.push(team);
+  });
+
+  for (const cat of categories) {
+    if (yPos > 220) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    const catTeams = teamsByCategory.get(cat.id) || [];
+    if (catTeams.length === 0) continue;
+
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(59, 130, 246);
+    doc.text(`Grupo: ${cat.name}`, 14, yPos);
+    doc.setTextColor(0, 0, 0);
+    yPos += 8;
+
+    // Group matches for this category
+    const catGroupMatches = groupMatches.filter(m =>
+      catTeams.some(t => t.id === m.team1_id || t.id === m.team2_id)
+    );
+
+    // Calculate stats
+    const teamStats: PlayerStats[] = catTeams.map(team => {
+      const stats: PlayerStats = {
+        id: team.id, name: team.name,
+        matchesPlayed: 0, wins: 0, draws: 0, losses: 0,
+        gamesWon: 0, gamesLost: 0,
+        final_position: team.final_position, group_name: team.group_name
+      };
+      catGroupMatches.forEach(m => {
+        if (m.team1_id !== team.id && m.team2_id !== team.id) return;
+        const isTeam1 = m.team1_id === team.id;
+        const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+        const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+        const t1Won = t1 > t2;
+        const isDraw = t1 === t2;
+        stats.matchesPlayed++;
+        if (isTeam1) {
+          stats.gamesWon += t1; stats.gamesLost += t2;
+          if (isDraw) stats.draws++; else if (t1Won) stats.wins++; else stats.losses++;
+        } else {
+          stats.gamesWon += t2; stats.gamesLost += t1;
+          if (isDraw) stats.draws++; else if (!t1Won) stats.wins++; else stats.losses++;
+        }
+      });
+      return stats;
+    });
+
+    // Sort
+    const teamOrder = new Map(catTeams.map((t, i) => [t.id, i]));
+    const sortedTeamStats = sortTeamStatsForPDF(teamStats, catGroupMatches, teamOrder);
+
+    // Group standings table
+    const standingsData = sortedTeamStats.map((s, idx) => {
+      const team = catTeams.find(t => t.id === s.id);
+      const playerNames = getTeamPlayerNames(team);
+      const pts = s.wins * 2 + (s.draws || 0);
+      const diff = s.gamesWon - s.gamesLost;
+      return [
+        (idx + 1).toString(),
+        s.name,
+        playerNames,
+        s.matchesPlayed.toString(),
+        s.wins.toString(),
+        (s.draws || 0).toString(),
+        s.losses.toString(),
+        s.gamesWon.toString(),
+        s.gamesLost.toString(),
+        (diff >= 0 ? '+' : '') + diff.toString(),
+        pts.toString()
+      ];
+    });
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['#', 'Equipa', 'Jogadores', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
+      body: standingsData,
+      theme: 'striped',
+      headStyles: { fillColor: [34, 197, 94], fontSize: 8 },
+      bodyStyles: { fontSize: 7 },
+      columnStyles: {
+        0: { cellWidth: 8, halign: 'center' },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 36, fontSize: 6 },
+        3: { cellWidth: 8, halign: 'center' },
+        4: { cellWidth: 8, halign: 'center' },
+        5: { cellWidth: 8, halign: 'center' },
+        6: { cellWidth: 8, halign: 'center' },
+        7: { cellWidth: 10, halign: 'center' },
+        8: { cellWidth: 10, halign: 'center' },
+        9: { cellWidth: 12, halign: 'center' },
+        10: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
+      },
+      margin: { left: 14, right: 14 }
+    });
+
+    yPos = (doc as any).lastAutoTable.finalY + 5;
+
+    // Group match results
+    if (catGroupMatches.length > 0) {
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Jogos dos Grupos', 14, yPos);
+      yPos += 4;
+
+      const matchData = catGroupMatches.map(m => {
+        const team1 = catTeams.find(t => t.id === m.team1_id);
+        const team2 = catTeams.find(t => t.id === m.team2_id);
+        const t1Str = team1 ? `${team1.name} (${getTeamPlayerNames(team1)})` : '-';
+        const t2Str = team2 ? `${team2.name} (${getTeamPlayerNames(team2)})` : '-';
+        const scores: string[] = [];
+        if (m.team1_score_set1 != null && m.team2_score_set1 != null)
+          scores.push(`${m.team1_score_set1}-${m.team2_score_set1}`);
+        if (m.team1_score_set2 != null && m.team2_score_set2 != null)
+          scores.push(`${m.team1_score_set2}-${m.team2_score_set2}`);
+        if (m.team1_score_set3 != null && m.team2_score_set3 != null)
+          scores.push(`${m.team1_score_set3}-${m.team2_score_set3}`);
+        return [t1Str, scores.join(' / ') || '-', t2Str];
+      });
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [['Equipa 1 (Jogadores)', 'Resultado', 'Equipa 2 (Jogadores)']],
+        body: matchData,
+        theme: 'grid',
+        headStyles: { fillColor: [59, 130, 246], fontSize: 7 },
+        bodyStyles: { fontSize: 6 },
+        columnStyles: {
+          0: { cellWidth: 65 },
+          1: { cellWidth: 25, halign: 'center' },
+          2: { cellWidth: 65 }
+        },
+        margin: { left: 14, right: 14 }
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 10;
+    }
+  }
+
   return yPos;
 }
 
@@ -1920,9 +2289,10 @@ function exportKnockoutPhase(
     'round_of_16', 'quarter_final', 'quarterfinals', 
     'semi_final', 'semifinal', 'semifinals',
     'mixed_semifinal1', 'mixed_semifinal2',
-    'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3',
-    'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_5th_place',
+    'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
+    'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_j1', 'crossed_r2_j2', 'crossed_r2_5th_place',
     'crossed_r3_3rd_place', 'crossed_r3_final',
+    'crossed_r4_5th', 'crossed_r5_7th',
     'mixed_3rd_place', 'mixed_final',
     '5th_place', '3rd_place', 'final'
   ];
@@ -1936,14 +2306,19 @@ function exportKnockoutPhase(
     'semifinals': 'Meias-Finais',
     'mixed_semifinal1': 'Meia-Final 1',
     'mixed_semifinal2': 'Meia-Final 2',
-    'crossed_r1_j1': 'Playoffs - Jogo 1',
-    'crossed_r1_j2': 'Playoffs - Jogo 2',
-    'crossed_r1_j3': 'Playoffs - Jogo 3',
-    'crossed_r2_semifinal1': 'Playoff - Meia-Final 1',
-    'crossed_r2_semifinal2': 'Playoff - Meia-Final 2',
+    'crossed_r1_j1': 'Quarto-Final 1',
+    'crossed_r1_j2': 'Quarto-Final 2',
+    'crossed_r1_j3': 'Quarto-Final 3',
+    'crossed_r1_j4': 'Quarto-Final 4',
+    'crossed_r2_semifinal1': 'Meia-Final 1',
+    'crossed_r2_semifinal2': 'Meia-Final 2',
+    'crossed_r2_j1': 'Meia-Final 1',
+    'crossed_r2_j2': 'Meia-Final 2',
     'crossed_r2_5th_place': '5o/6o Lugar',
     'crossed_r3_3rd_place': '3o/4o Lugar',
     'crossed_r3_final': 'FINAL',
+    'crossed_r4_5th': '5o/6o Lugar',
+    'crossed_r5_7th': '7o/8o Lugar',
     'mixed_3rd_place': '3o/4o Lugar',
     'mixed_final': 'FINAL',
     '5th_place': '5o/6o Lugar',

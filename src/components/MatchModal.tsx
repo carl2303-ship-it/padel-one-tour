@@ -211,6 +211,121 @@ async function advanceClassificationWinner(
     .eq('id', match.id);
 }
 
+// ================================================================
+// CROSSED PLAYOFFS TEAMS - Progression Logic
+// Handles advancing winners/losers through: QF → SF → Final/3rd/5th/7th
+// ================================================================
+async function advanceCrossedPlayoffTeam(
+  tournamentId: string,
+  completedRound: string,
+  winnerId: string,
+  loserId: string
+) {
+  // Determine round type: crossed_r1_jN (QF), crossed_r2_jN (SF)
+  const r1Match = completedRound.match(/^crossed_r1_j(\d+)$/);
+  const r2Match = completedRound.match(/^crossed_r2_j(\d+)$/);
+
+  if (r1Match) {
+    // QUARTERFINAL completed - advance winner to semifinal, loser to classification
+    const qfNumber = parseInt(r1Match[1]); // 1, 2, 3, or 4
+    
+    // QF1 winner → SF1 team1, QF2 winner → SF1 team2
+    // QF3 winner → SF2 team1, QF4 winner → SF2 team2
+    const sfNumber = qfNumber <= 2 ? 1 : 2;
+    const sfSlot = qfNumber % 2 === 1 ? 'team1_id' : 'team2_id';
+    const sfRound = `crossed_r2_j${sfNumber}`;
+    
+    console.log(`[CROSSED-ADVANCE] QF${qfNumber} winner → ${sfRound} ${sfSlot}`);
+    
+    // Find and update the semifinal match
+    const { data: sfMatch } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('round', sfRound)
+      .is('category_id', null)
+      .maybeSingle();
+    
+    if (sfMatch) {
+      await supabase
+        .from('matches')
+        .update({ [sfSlot]: winnerId })
+        .eq('id', sfMatch.id);
+      console.log(`[CROSSED-ADVANCE] Updated ${sfRound} ${sfSlot} with winner`);
+    }
+    
+    // Losers of QF go to classification:
+    // L(QF1) → 5-6 team1, L(QF2) → 5-6 team2
+    // L(QF3) → 7-8 team1, L(QF4) → 7-8 team2
+    const classRound = qfNumber <= 2 ? 'crossed_r4_5th' : 'crossed_r5_7th';
+    const classSlot = qfNumber % 2 === 1 ? 'team1_id' : 'team2_id';
+    
+    console.log(`[CROSSED-ADVANCE] QF${qfNumber} loser → ${classRound} ${classSlot}`);
+    
+    const { data: classMatch } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('round', classRound)
+      .is('category_id', null)
+      .maybeSingle();
+    
+    if (classMatch) {
+      await supabase
+        .from('matches')
+        .update({ [classSlot]: loserId })
+        .eq('id', classMatch.id);
+      console.log(`[CROSSED-ADVANCE] Updated ${classRound} ${classSlot} with loser`);
+    }
+    
+  } else if (r2Match) {
+    // SEMIFINAL completed - advance winner to final, loser to 3rd place
+    const sfNumber = parseInt(r2Match[1]); // 1 or 2
+    
+    // SF1 winner → Final team1, SF2 winner → Final team2
+    const finalSlot = sfNumber === 1 ? 'team1_id' : 'team2_id';
+    
+    console.log(`[CROSSED-ADVANCE] SF${sfNumber} winner → crossed_r3_final ${finalSlot}`);
+    
+    const { data: finalMatch } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('round', 'crossed_r3_final')
+      .is('category_id', null)
+      .maybeSingle();
+    
+    if (finalMatch) {
+      await supabase
+        .from('matches')
+        .update({ [finalSlot]: winnerId })
+        .eq('id', finalMatch.id);
+      console.log(`[CROSSED-ADVANCE] Updated final ${finalSlot} with winner`);
+    }
+    
+    // SF loser → 3rd place
+    const thirdSlot = sfNumber === 1 ? 'team1_id' : 'team2_id';
+    
+    console.log(`[CROSSED-ADVANCE] SF${sfNumber} loser → crossed_r3_3rd_place ${thirdSlot}`);
+    
+    const { data: thirdMatch } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('tournament_id', tournamentId)
+      .eq('round', 'crossed_r3_3rd_place')
+      .is('category_id', null)
+      .maybeSingle();
+    
+    if (thirdMatch) {
+      await supabase
+        .from('matches')
+        .update({ [thirdSlot]: loserId })
+        .eq('id', thirdMatch.id);
+      console.log(`[CROSSED-ADVANCE] Updated 3rd place ${thirdSlot} with loser`);
+    }
+  }
+}
+
 function shuffleArray<T>(array: T[]): T[] {
   const shuffled = [...array];
   for (let i = shuffled.length - 1; i > 0; i--) {
@@ -782,6 +897,30 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         }
       }
 
+      // CROSSED PLAYOFFS TEAMS - Handle progression for crossed playoff rounds
+      if (winner && tournament?.format === 'crossed_playoffs_teams' && currentMatch) {
+        const isCrossedKnockout = currentMatch.round?.startsWith('crossed_r1_') || currentMatch.round?.startsWith('crossed_r2_');
+        
+        if (isCrossedKnockout) {
+          const loserId = winner === formData.team1_id ? formData.team2_id : formData.team1_id;
+          console.log(`[MATCH_MODAL] Crossed playoffs teams match completed: ${currentMatch.round}, winner: ${winner}, loser: ${loserId}`);
+          
+          await advanceCrossedPlayoffTeam(
+            tournamentId,
+            currentMatch.round,
+            winner,
+            loserId
+          );
+        }
+        
+        // Handle final/3rd/classification rounds for position calculation
+        const crossedFinalRounds = ['crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r4_5th', 'crossed_r5_7th'];
+        if (crossedFinalRounds.includes(currentMatch.round)) {
+          console.log('[MATCH_MODAL] Crossed playoff final/classification match completed, calculating positions');
+          await calculateIndividualFinalPositions(tournamentId, null);
+        }
+      }
+
       if ((tournament?.format === 'individual_groups_knockout' || tournament?.format === 'mixed_american' || tournament?.format === 'mixed_gender') && currentMatch) {
         const isGroupMatch = currentMatch.round.startsWith('group_');
 
@@ -839,7 +978,8 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
           'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', 'consolation',
           '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
-          'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place'
+          'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place',
+          'crossed_r4_5th', 'crossed_r5_7th'
         ];
 
         if (allFinalRounds.includes(currentMatch.round)) {
@@ -975,6 +1115,31 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       if (isKnockoutRound && knockoutPositionRounds.includes(matchData.round)) {
         console.log('[MATCH_MODAL] Reverting knockout position match, clearing final positions');
         await clearIndividualFinalPositions(tournamentId, matchData.category_id);
+      }
+
+      // CROSSED PLAYOFFS TEAMS - Revert progression
+      if (matchData.round?.startsWith('crossed_r1_j')) {
+        // Reverting a QF match - clear the SF slot and classification slot
+        const qfNum = parseInt(matchData.round.match(/j(\d+)/)?.[1] || '0');
+        const sfNumber = qfNum <= 2 ? 1 : 2;
+        const sfSlot = qfNum % 2 === 1 ? 'team1_id' : 'team2_id';
+        const sfRound = `crossed_r2_j${sfNumber}`;
+        const classRound = qfNum <= 2 ? 'crossed_r4_5th' : 'crossed_r5_7th';
+        const classSlot = qfNum % 2 === 1 ? 'team1_id' : 'team2_id';
+        
+        console.log(`[MATCH_MODAL] Reverting crossed QF${qfNum}: clearing ${sfRound} ${sfSlot} and ${classRound} ${classSlot}`);
+        
+        await supabase.from('matches').update({ [sfSlot]: null }).eq('tournament_id', tournamentId).eq('round', sfRound).is('category_id', null);
+        await supabase.from('matches').update({ [classSlot]: null }).eq('tournament_id', tournamentId).eq('round', classRound).is('category_id', null);
+      } else if (matchData.round?.startsWith('crossed_r2_j')) {
+        // Reverting a SF match - clear the final slot and 3rd place slot
+        const sfNum = parseInt(matchData.round.match(/j(\d+)/)?.[1] || '0');
+        const slot = sfNum === 1 ? 'team1_id' : 'team2_id';
+        
+        console.log(`[MATCH_MODAL] Reverting crossed SF${sfNum}: clearing final and 3rd_place ${slot}`);
+        
+        await supabase.from('matches').update({ [slot]: null }).eq('tournament_id', tournamentId).eq('round', 'crossed_r3_final').is('category_id', null);
+        await supabase.from('matches').update({ [slot]: null }).eq('tournament_id', tournamentId).eq('round', 'crossed_r3_3rd_place').is('category_id', null);
       }
 
       console.log('[MATCH_MODAL] Match reverted successfully');

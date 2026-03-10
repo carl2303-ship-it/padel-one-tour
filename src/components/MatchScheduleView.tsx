@@ -261,14 +261,22 @@ export default function MatchScheduleView({
       '21st_place': '21st/22nd Place',
       '23rd_place': '23rd/24th Place',
       // Playoffs Cruzados
-      'crossed_r1_j1': 'Playoff J1',
-      'crossed_r1_j2': 'Playoff J2',
-      'crossed_r1_j3': 'Playoff J3',
+      'crossed_r1_j1': 'Quarto-Final 1',
+      'crossed_r1_j2': 'Quarto-Final 2',
+      'crossed_r1_j3': 'Quarto-Final 3',
       'crossed_r2_j4': 'Meia-Final 1',
       'crossed_r2_j5': 'Meia-Final 2',
       'crossed_r2_j6': '5°/6° Lugar',
       'crossed_r3_j7': 'FINAL',
       'crossed_r3_j8': '3°/4° Lugar',
+      // Playoffs Cruzados (equipas) - novos nomes
+      'crossed_r1_j4': 'Quarto-Final 4',
+      'crossed_r2_j1': 'Meia-Final 1',
+      'crossed_r2_j2': 'Meia-Final 2',
+      'crossed_r3_final': 'FINAL',
+      'crossed_r3_3rd_place': '3°/4° Lugar',
+      'crossed_r4_5th': '5°/6° Lugar',
+      'crossed_r5_7th': '7°/8° Lugar',
     };
     return roundLabels[round] || round;
   };
@@ -712,17 +720,24 @@ export default function MatchScheduleView({
       '5th_place': '5°/6° Lugar',
       '7th_place': '7°/8° Lugar',
       // Playoffs Cruzados - Ronda 1
-      'crossed_r1_j1': 'Playoff J1',
-      'crossed_r1_j2': 'Playoff J2',
-      'crossed_r1_j3': 'Playoff J3',
-      // Playoffs Cruzados - Ronda 2 (Meias-finais + 5º/6º)
+      'crossed_r1_j1': 'Quarto-Final 1',
+      'crossed_r1_j2': 'Quarto-Final 2',
+      'crossed_r1_j3': 'Quarto-Final 3',
+      // Playoffs Cruzados - Ronda 1 (equipas - quartos)
+      'crossed_r1_j4': 'Quarto-Final 4',
+      // Playoffs Cruzados - Ronda 2 (Meias-finais)
+      'crossed_r2_j1': 'Meia-Final 1',
+      'crossed_r2_j2': 'Meia-Final 2',
       'crossed_r2_j4': 'Meia-Final 1',
       'crossed_r2_j5': 'Meia-Final 2',
       'crossed_r2_j6': '5°/6° Lugar',
       // Playoffs Cruzados - Ronda 3 (Finais)
       'crossed_r3_j7': 'FINAL',
       'crossed_r3_j8': '3°/4° Lugar',
-      // Nomes antigos (compatibilidade)
+      // Playoffs Cruzados - Classificação
+      'crossed_r4_5th': '5°/6° Lugar',
+      'crossed_r5_7th': '7°/8° Lugar',
+      // Nomes compatibilidade
       'crossed_r2_semifinal1': 'Meia-Final 1',
       'crossed_r2_semifinal2': 'Meia-Final 2',
       'crossed_r2_5th_place': '5°/6° Lugar',

@@ -59,11 +59,13 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const [individualPlayers, setIndividualPlayers] = useState<IndividualPlayerStats[]>([]);
   const [knockoutRankings, setKnockoutRankings] = useState<KnockoutRanking[]>([]);
   const [individualFinalRankings, setIndividualFinalRankings] = useState<IndividualFinalRanking[]>([]);
+  const [crossedPlayoffResults, setCrossedPlayoffResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
   const isIndividualGroupsKnockout = format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender' || format === 'mixed_american';
   const isMixedAmerican = format === 'mixed_american' || format === 'mixed_gender'; // Kept for rendering label only
+  const isCrossedPlayoffsTeams = format === 'crossed_playoffs_teams';
 
   useEffect(() => {
     console.log('[STANDINGS] Component mounted, fetching standings...');
@@ -1168,6 +1170,234 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       return;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // CROSSED PLAYOFFS TEAMS: group standings + final classification from knockout
+    // ═══════════════════════════════════════════════════════════════
+    if (isCrossedPlayoffsTeams) {
+      console.log('[STANDINGS-CROSSED-TEAMS] Processing crossed_playoffs_teams format');
+
+      // Fetch teams with players
+      const { data: teamsData } = await supabase
+        .from('teams')
+        .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)')
+        .eq('tournament_id', tournamentId);
+
+      if (!teamsData) { setLoading(false); return; }
+
+      // Fetch ALL matches (not just completed)
+      const { data: allMatches } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('tournament_id', tournamentId);
+
+      const completedMatches = (allMatches || []).filter(m =>
+        m.status === 'completed' || (m.team1_score_set1 != null && m.team2_score_set1 != null)
+      );
+
+      // Fetch categories
+      const { data: categoriesData } = await supabase
+        .from('tournament_categories')
+        .select('id, name')
+        .eq('tournament_id', tournamentId)
+        .order('name');
+
+      const categories = categoriesData || [];
+      const allTeams = teamsData as unknown as TeamWithPlayers[];
+
+      console.log('[STANDINGS-CROSSED-TEAMS] Teams:', allTeams.length, 'Completed matches:', completedMatches.length, 'Categories:', categories.length);
+
+      // ── GROUP STANDINGS per category ──
+      const grouped = new Map<string, TeamWithPlayers[]>();
+
+      categories.forEach(cat => {
+        const catTeams = allTeams.filter(t => t.category_id === cat.id);
+        if (catTeams.length === 0) return;
+
+        const groupName = cat.name;
+        const teamOrderMap = new Map(catTeams.map((t, i) => [t.id, i]));
+
+        // Group matches for this category
+        const catGroupMatches = completedMatches.filter(m => {
+          const round = m.round || '';
+          return round.startsWith('group_') && catTeams.some(t => t.id === m.team1_id || t.id === m.team2_id);
+        });
+
+        const teamsWithStats = catTeams.map(team => {
+          let wins = 0, draws = 0, losses = 0, matchesPlayed = 0;
+          let setsWon = 0, setsLost = 0, gamesWon = 0, gamesLost = 0;
+
+          catGroupMatches.forEach(match => {
+            if (match.team1_id !== team.id && match.team2_id !== team.id) return;
+            const isTeam1 = match.team1_id === team.id;
+            const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+            const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+            const t1Won = t1Games > t2Games;
+            const isDraw = t1Games === t2Games;
+            matchesPlayed++;
+            if (isTeam1) {
+              gamesWon += t1Games; gamesLost += t2Games;
+              if (isDraw) draws++; else if (t1Won) wins++; else losses++;
+            } else {
+              gamesWon += t2Games; gamesLost += t1Games;
+              if (isDraw) draws++; else if (!t1Won) wins++; else losses++;
+            }
+          });
+
+          return { ...team, wins, draws, losses, matchesPlayed, setsWon, setsLost, gamesWon, gamesLost } as TeamWithPlayers;
+        });
+
+        // Sort by tiebreaker
+        const teamStatsForSort: TeamStats[] = teamsWithStats.map(t => ({
+          id: t.id, name: t.name, group_name: groupName,
+          wins: t.wins, draws: t.draws ?? 0, gamesWon: t.gamesWon, gamesLost: t.gamesLost
+        }));
+        const matchDataForSort: MatchData[] = catGroupMatches.map(m => ({
+          team1_id: m.team1_id, team2_id: m.team2_id, winner_id: m.winner_id,
+          team1_score_set1: m.team1_score_set1, team2_score_set1: m.team2_score_set1,
+          team1_score_set2: m.team1_score_set2, team2_score_set2: m.team2_score_set2,
+          team1_score_set3: m.team1_score_set3, team2_score_set3: m.team2_score_set3
+        }));
+        const sortedStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrderMap);
+        const sortedTeams = sortedStats.map(s => teamsWithStats.find(t => t.id === s.id)!);
+        grouped.set(groupName, sortedTeams);
+      });
+
+      setGroupedTeams(grouped);
+
+      // ── FINAL CLASSIFICATION from knockout matches ──
+      const getTeamWinnerLoser = (match: any) => {
+        const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        return {
+          winnerId: t1Games > t2Games ? match.team1_id : (match.winner_id || match.team1_id),
+          loserId: t1Games > t2Games ? match.team2_id : match.team1_id
+        };
+      };
+
+      const finalPositions: { position: number; teamId: string; label: string }[] = [];
+
+      const finalMatch = completedMatches.find(m => m.round === 'crossed_r3_final');
+      const thirdPlaceMatch = completedMatches.find(m => m.round === 'crossed_r3_3rd_place');
+      const fifthPlaceMatch = completedMatches.find(m => m.round === 'crossed_r4_5th');
+      const seventhPlaceMatch = completedMatches.find(m => m.round === 'crossed_r5_7th');
+
+      if (finalMatch) {
+        const { winnerId, loserId } = getTeamWinnerLoser(finalMatch);
+        finalPositions.push({ position: 1, teamId: winnerId, label: '1º - Campeão' });
+        finalPositions.push({ position: 2, teamId: loserId, label: '2º - Finalista' });
+      }
+      if (thirdPlaceMatch) {
+        const { winnerId, loserId } = getTeamWinnerLoser(thirdPlaceMatch);
+        finalPositions.push({ position: 3, teamId: winnerId, label: '3º Lugar' });
+        finalPositions.push({ position: 4, teamId: loserId, label: '4º Lugar' });
+      }
+      if (fifthPlaceMatch) {
+        const { winnerId, loserId } = getTeamWinnerLoser(fifthPlaceMatch);
+        finalPositions.push({ position: 5, teamId: winnerId, label: '5º Lugar' });
+        finalPositions.push({ position: 6, teamId: loserId, label: '6º Lugar' });
+      }
+      if (seventhPlaceMatch) {
+        const { winnerId, loserId } = getTeamWinnerLoser(seventhPlaceMatch);
+        finalPositions.push({ position: 7, teamId: winnerId, label: '7º Lugar' });
+        finalPositions.push({ position: 8, teamId: loserId, label: '8º Lugar' });
+      }
+
+      finalPositions.sort((a, b) => a.position - b.position);
+      console.log('[STANDINGS-CROSSED-TEAMS] Final positions:', finalPositions);
+
+      // Build final classification with ALL match stats (group + knockout)
+      const calcAllStats = (team: any) => {
+        let wins = 0, draws = 0, losses = 0, matchesPlayed = 0;
+        let setsWon = 0, setsLost = 0, gamesWon = 0, gamesLost = 0;
+        completedMatches.forEach(match => {
+          if (match.team1_id !== team.id && match.team2_id !== team.id) return;
+          const isTeam1 = match.team1_id === team.id;
+          const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+          const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+          const t1Won = t1Games > t2Games;
+          const isDraw = t1Games === t2Games;
+          matchesPlayed++;
+          if (isTeam1) {
+            gamesWon += t1Games; gamesLost += t2Games;
+            if (isDraw) draws++; else if (t1Won) wins++; else losses++;
+          } else {
+            gamesWon += t2Games; gamesLost += t1Games;
+            if (isDraw) draws++; else if (!t1Won) wins++; else losses++;
+          }
+        });
+        return { wins, draws, losses, matchesPlayed, setsWon, setsLost, gamesWon, gamesLost };
+      };
+
+      if (finalPositions.length > 0) {
+        const knockoutTeams = finalPositions.map(fp => {
+          const team = allTeams.find(t => t.id === fp.teamId);
+          if (!team) return null;
+          const stats = calcAllStats(team);
+          return { ...team, ...stats, final_position: fp.position } as TeamWithPlayers;
+        }).filter(Boolean) as TeamWithPlayers[];
+        setTeams(knockoutTeams);
+      } else {
+        // No knockout results yet - show all teams sorted by group stats
+        const allTeamsWithStats = allTeams.map(team => {
+          const stats = calcAllStats(team);
+          return { ...team, ...stats } as TeamWithPlayers;
+        });
+        allTeamsWithStats.sort((a, b) => {
+          if (b.wins !== a.wins) return b.wins - a.wins;
+          const diffA = a.gamesWon - a.gamesLost;
+          const diffB = b.gamesWon - b.gamesLost;
+          if (diffB !== diffA) return diffB - diffA;
+          return b.gamesWon - a.gamesWon;
+        });
+        setTeams(allTeamsWithStats);
+      }
+
+      // Store knockout match results for display
+      const roundOrder = [
+        'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
+        'crossed_r2_j1', 'crossed_r2_j2',
+        'crossed_r3_final', 'crossed_r3_3rd_place',
+        'crossed_r4_5th', 'crossed_r5_7th'
+      ];
+      const roundNames: Record<string, string> = {
+        'crossed_r1_j1': 'Quarto-Final 1', 'crossed_r1_j2': 'Quarto-Final 2',
+        'crossed_r1_j3': 'Quarto-Final 3', 'crossed_r1_j4': 'Quarto-Final 4',
+        'crossed_r2_j1': 'Meia-Final 1', 'crossed_r2_j2': 'Meia-Final 2',
+        'crossed_r3_final': 'FINAL', 'crossed_r3_3rd_place': '3º/4º Lugar',
+        'crossed_r4_5th': '5º/6º Lugar', 'crossed_r5_7th': '7º/8º Lugar'
+      };
+
+      const crossedKnockoutMatches = (allMatches || [])
+        .filter(m => m.round?.startsWith('crossed_'))
+        .sort((a, b) => {
+          const ai = roundOrder.indexOf(a.round || '');
+          const bi = roundOrder.indexOf(b.round || '');
+          return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+        })
+        .map(m => {
+          const team1 = allTeams.find(t => t.id === m.team1_id);
+          const team2 = allTeams.find(t => t.id === m.team2_id);
+          const scores: string[] = [];
+          if (m.team1_score_set1 != null && m.team2_score_set1 != null) scores.push(`${m.team1_score_set1}-${m.team2_score_set1}`);
+          if (m.team1_score_set2 != null && m.team2_score_set2 != null) scores.push(`${m.team1_score_set2}-${m.team2_score_set2}`);
+          if (m.team1_score_set3 != null && m.team2_score_set3 != null) scores.push(`${m.team1_score_set3}-${m.team2_score_set3}`);
+          return {
+            round: m.round,
+            roundName: roundNames[m.round || ''] || m.round,
+            team1Name: team1 ? team1.name : 'TBD',
+            team1Players: team1 ? `${(team1 as any).player1?.name || ''} / ${(team1 as any).player2?.name || ''}` : '',
+            team2Name: team2 ? team2.name : 'TBD',
+            team2Players: team2 ? `${(team2 as any).player1?.name || ''} / ${(team2 as any).player2?.name || ''}` : '',
+            score: scores.join(' / ') || '-',
+            status: m.status
+          };
+        });
+
+      setCrossedPlayoffResults(crossedKnockoutMatches);
+      setLoading(false);
+      return;
+    }
+
     // Original team-based logic
     // Add a timestamp to prevent caching
     const timestamp = Date.now();
@@ -1422,7 +1652,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
-  if (format !== 'groups_knockout' && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
+  if (format !== 'groups_knockout' && !isCrossedPlayoffsTeams && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
     return (
       <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
         <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -1773,6 +2003,197 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
           </p>
         </div>
+      </div>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CROSSED PLAYOFFS TEAMS RENDERING
+  // ═══════════════════════════════════════════════════════════════
+  if (isCrossedPlayoffsTeams) {
+    const sortedGroups = Array.from(groupedTeams.keys()).sort();
+    const hasFinalResults = teams.length > 0 && teams.some(t => t.final_position != null);
+
+    return (
+      <div className="space-y-6">
+        {/* ── FINAL CLASSIFICATION ── */}
+        {hasFinalResults && (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-yellow-500 to-yellow-600">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                <Trophy className="w-6 h-6" />
+                Classificação Final
+              </h2>
+              <p className="text-yellow-100 text-sm mt-1">
+                Resultados de todas as fases (grupos + eliminatórias)
+              </p>
+            </div>
+
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+                  <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+                  <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {teams.map((team, index) => {
+                  const gameDiff = team.gamesWon - team.gamesLost;
+                  const pts = team.wins * 2 + (team.draws || 0);
+                  const pos = team.final_position || (index + 1);
+                  return (
+                    <tr key={team.id} className={
+                      pos === 1 ? 'bg-yellow-50' :
+                      pos === 2 ? 'bg-gray-100' :
+                      pos === 3 ? 'bg-amber-50' :
+                      ''
+                    }>
+                      <td className="pl-3 pr-1 py-2">
+                        <div className="flex items-center gap-1">
+                          {getMedalIcon(pos)}
+                          <span className="font-bold text-gray-700">{pos}º</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                        <div className="text-xs text-gray-500 leading-tight">
+                          {team.player1?.name} / {team.player2?.name}
+                        </div>
+                      </td>
+                      <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
+                      <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                      <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                      <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                      <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                      <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                      <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                        {gameDiff > 0 ? '+' : ''}{gameDiff}
+                      </td>
+                      <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ── KNOCKOUT MATCH RESULTS ── */}
+        {crossedPlayoffResults.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 bg-gradient-to-r from-orange-500 to-red-600">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Trophy className="w-5 h-5" />
+                Fase Eliminatória - Resultados
+              </h2>
+            </div>
+            <div className="p-4 space-y-3">
+              {crossedPlayoffResults.map((match, idx) => {
+                const isCompleted = match.status === 'completed';
+                return (
+                  <div key={idx} className={`border rounded-lg p-3 ${
+                    match.round === 'crossed_r3_final' ? 'border-yellow-400 bg-yellow-50' :
+                    match.round === 'crossed_r3_3rd_place' ? 'border-amber-300 bg-amber-50/50' :
+                    'border-gray-200 bg-gray-50'
+                  }`}>
+                    <div className="text-xs font-semibold text-gray-500 mb-2 uppercase">{match.roundName}</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex-1 text-right">
+                        <div className="font-medium text-gray-900 text-sm">{match.team1Name}</div>
+                        <div className="text-xs text-gray-500">{match.team1Players}</div>
+                      </div>
+                      <div className={`px-3 py-1 rounded font-bold text-sm min-w-[60px] text-center ${
+                        isCompleted ? 'bg-blue-100 text-blue-800' : 'bg-gray-200 text-gray-500'
+                      }`}>
+                        {match.score}
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-medium text-gray-900 text-sm">{match.team2Name}</div>
+                        <div className="text-xs text-gray-500">{match.team2Players}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── GROUP STANDINGS per category ── */}
+        {sortedGroups.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-600 to-green-700">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Trophy className="w-5 h-5" />
+                Classificação dos Grupos
+              </h2>
+            </div>
+            <div className="p-4 space-y-6">
+              {sortedGroups.map(groupName => {
+                const groupTeams = groupedTeams.get(groupName) as TeamWithPlayers[];
+                if (!groupTeams) return null;
+                return (
+                  <div key={groupName}>
+                    <h3 className="font-semibold text-gray-900 mb-2 text-sm">Grupo: {groupName}</h3>
+                    <table className="w-full text-sm border border-gray-200 rounded">
+                      <thead className="bg-green-50 border-b border-gray-200">
+                        <tr>
+                          <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+                          <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+                          <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+                          <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {groupTeams.map((team, index) => {
+                          const gameDiff = team.gamesWon - team.gamesLost;
+                          const pts = team.wins * 2 + (team.draws || 0);
+                          const isQualified = index < qualifiedPerGroup;
+                          return (
+                            <tr key={team.id} className={isQualified ? 'bg-green-50/50' : ''}>
+                              <td className="pl-3 pr-1 py-2 font-bold text-gray-700">{index + 1}</td>
+                              <td className="px-2 py-2">
+                                <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                                <div className="text-xs text-gray-500 leading-tight">{team.player1?.name} / {team.player2?.name}</div>
+                              </td>
+                              <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                              <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                              <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                              <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                              <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                              <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                                {gameDiff > 0 ? '+' : ''}{gameDiff}
+                              </td>
+                              <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+              <p className="text-xs text-gray-500">
+                <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

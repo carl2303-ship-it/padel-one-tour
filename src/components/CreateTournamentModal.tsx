@@ -475,6 +475,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               </optgroup>
               <optgroup label={t.tournament.formatOptgroupSpecial}>
                 <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
+                <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams || 'Playoffs Cruzados (Equipas) - 2-3 Categorias'}</option>
                 <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
                 <option value="mixed_american">{t.tournament.formatOption_mixed_american || 'Americano Misto - 1H+1M vs 1H+1M (São Valentim)'}</option>
               </optgroup>
@@ -514,6 +515,13 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
               <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTitle}</h4>
               <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsDescription}</p>
+            </div>
+          )}
+
+          {formData.format === 'crossed_playoffs_teams' && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTeamsTitle || 'Playoffs Cruzados (Equipas)'}</h4>
+              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsTeamsDescription || 'Ideal para torneios de equipas com 2-3 categorias onde as melhores equipas de cada categoria se cruzam nas eliminatórias. Estrutura: R1 (3 jogos) → R2 Meias-finais + 5º/6º → R3 Final + 3º/4º. Equipas são combinadas de diferentes categorias.'}</p>
             </div>
           )}
 

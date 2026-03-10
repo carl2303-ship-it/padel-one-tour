@@ -199,6 +199,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 setTimeout(() => fetchTournamentData(), 500);
               } else if (fmt === 'crossed_playoffs') {
                 setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
+              } else if (fmt === 'crossed_playoffs_teams') {
+                // Para equipas, usar lógica diferente (será implementada)
+                console.log('[REALTIME] Crossed playoffs teams - groups done');
               } else if (fmt === 'individual_groups_knockout') {
                 setTimeout(async () => {
                   console.log('[REALTIME] All groups done, populating knockout brackets');
@@ -387,6 +390,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const isIndividualFormat = () => {
     // Formatos de torneio que são sempre individuais
+    // NOTA: crossed_playoffs_teams é para equipas, não individual
+    if (currentTournament?.format === 'crossed_playoffs_teams') {
+      return false; // Formato de equipas
+    }
     if (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender' || currentTournament?.format === 'mixed_american') {
       return true;
     }
@@ -395,6 +402,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     if (selectedCategory && selectedCategory !== 'no-category') {
       const category = categories.find(c => c.id === selectedCategory);
       if (category) {
+        if (category.format === 'crossed_playoffs_teams') {
+          return false; // Formato de equipas
+        }
         if (category.format === 'individual_groups_knockout' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender' || category.format === 'mixed_american') {
           return true;
         }
@@ -1011,7 +1021,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names')
           .eq('tournament_id', tournament.id)
           .order('name'),
         supabase
@@ -1051,7 +1061,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -1291,9 +1301,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // ================================================================
             // CROSSED PLAYOFFS: preencher R1 se vazio
             // ================================================================
-            if (currentTournament?.format === 'crossed_playoffs' && hasCrossedRounds) {
+            if ((currentTournament?.format === 'crossed_playoffs') && hasCrossedRounds) {
               const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
-              if (r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+              
+              // NOTA: crossed_playoffs_teams é tratado no bloco de TEAMS (mais abaixo)
+              // Aqui só tratamos crossed_playoffs individual
+              
+              // Para formato individual (crossed_playoffs)
+              if (currentTournament?.format === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
                 console.log('[FETCH-FILL] Filling crossed playoffs R1...');
                 
                 if (sortedCats.length === 3) {
@@ -1329,7 +1344,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
       }
-    } else {
+    }
+    
+    if (currentTournament?.format !== 'super_teams' && !isIndividualGroupsKnockout && !isIndividualRoundRobin) {
       setSuperTeams([]);
       setSuperTeamConfrontations([]);
       setSuperTeamStandings([]);
@@ -1356,7 +1373,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -1391,6 +1408,435 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
       }
+
+      // ================================================================
+      // AUTO-POPULATE CROSSED PLAYOFFS TEAMS quando todos os grupos estão completos
+      // ================================================================
+      // Usar tournament.format diretamente em vez de currentTournament que pode estar desatualizado
+      const tournamentFormat = tournament.format || (currentTournament?.format);
+      console.log('[FETCH-CHECK-TEAMS] Tournament format from prop:', tournament.format);
+      console.log('[FETCH-CHECK-TEAMS] Tournament format from state:', currentTournament?.format);
+      console.log('[FETCH-CHECK-TEAMS] Using format:', tournamentFormat);
+      console.log('[FETCH-CHECK-TEAMS] Has matchesResult.data:', !!matchesResult.data);
+      console.log('[FETCH-CHECK-TEAMS] Has teamsResult.data:', !!teamsResult.data);
+      console.log('[FETCH-CHECK-TEAMS] Has categoriesResult.data:', !!categoriesResult.data);
+      
+      if (tournamentFormat === 'crossed_playoffs_teams' && matchesResult.data && teamsResult.data && categoriesResult.data) {
+        console.log('[FETCH-CHECK-TEAMS] ====================================');
+        console.log('[FETCH-CHECK-TEAMS] Checking crossed_playoffs_teams format in TEAMS block...');
+        const allMatchesLocal = matchesResult.data as unknown as MatchWithTeams[];
+        const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('group_'));
+        
+        // Verificação robusta: jogo está "done" se status é 'completed' OU se tem scores preenchidos
+        const isMatchDone = (m: MatchWithTeams) => {
+          if (m.status === 'completed') return true;
+          // Se tem scores preenchidos (pelo menos set1), considerar como done
+          const hasScores = (m.team1_score_set1 != null && m.team2_score_set1 != null) && 
+            ((m.team1_score_set1 as number) > 0 || (m.team2_score_set1 as number) > 0);
+          return hasScores;
+        };
+        
+        const allGroupsDoneLocal = groupMatchesLocal.length > 0 && groupMatchesLocal.every(m => isMatchDone(m));
+        const crossedMatches = allMatchesLocal.filter(m => m.round?.startsWith('crossed_'));
+        const hasCrossedRounds = crossedMatches.length > 0;
+        
+        console.log('[FETCH-CHECK-TEAMS] Group matches breakdown:', {
+          total: groupMatchesLocal.length,
+          completed: groupMatchesLocal.filter(m => m.status === 'completed').length,
+          withScores: groupMatchesLocal.filter(m => isMatchDone(m)).length,
+          scheduled: groupMatchesLocal.filter(m => m.status === 'scheduled').length,
+          other: groupMatchesLocal.filter(m => m.status !== 'completed' && m.status !== 'scheduled').map(m => ({ round: m.round, status: m.status, set1: `${m.team1_score_set1}-${m.team2_score_set1}` }))
+        });
+        
+        // ================================================================
+        // AUTO-FIX: Verificar se estrutura de playoffs está completa
+        // Se faltam jogos (ex: só tem 4 em vez de 10), criar os que faltam
+        // ================================================================
+        const localCats = categoriesResult.data as Array<{ id: string; name: string; qualified_per_group?: number; knockout_stage?: string }>;
+        
+        // Fallback robusto: categoria → torneio → auto-cálculo
+        let qualifiedPerGroupLocal = (localCats[0] as any)?.qualified_per_group;
+        let knockoutStageLocal = (localCats[0] as any)?.knockout_stage;
+        
+        if (!qualifiedPerGroupLocal || qualifiedPerGroupLocal <= 0) {
+          // Auto-calcular: número máximo de equipas numa categoria
+          const maxTeamsPerCat = Math.max(...localCats.map(c => (teamsResult.data || []).filter((t: any) => t.category_id === c.id).length));
+          qualifiedPerGroupLocal = maxTeamsPerCat || 2;
+          console.log(`[FETCH-CHECK-TEAMS] WARNING: qualified_per_group not in DB, auto-calculated to ${qualifiedPerGroupLocal}`);
+        }
+        if (!knockoutStageLocal) {
+          const tournamentKS = (currentTournament as any)?.knockout_stage;
+          if (tournamentKS) {
+            knockoutStageLocal = tournamentKS;
+          } else {
+            const totalQ = localCats.length * qualifiedPerGroupLocal;
+            knockoutStageLocal = totalQ >= 8 ? 'quarterfinals' : totalQ >= 4 ? 'semifinals' : 'final';
+          }
+          console.log(`[FETCH-CHECK-TEAMS] WARNING: knockout_stage not in DB, auto-calculated to ${knockoutStageLocal}`);
+        }
+        const totalQualifiedLocal = localCats.length * qualifiedPerGroupLocal;
+        
+        // Calcular quantos playoffs DEVEM existir
+        let expectedR1 = 0, expectedR2 = 0, expectedR3 = 2, expectedR4 = 0, expectedR5 = 0;
+        if (knockoutStageLocal === 'quarterfinals') {
+          expectedR1 = totalQualifiedLocal / 2; // ex: 8/2 = 4 quartos
+          expectedR2 = expectedR1 / 2; // 2 meias
+          expectedR4 = 1; // 5-6
+          expectedR5 = 1; // 7-8
+        } else {
+          expectedR1 = totalQualifiedLocal / 2; // meias diretas
+        }
+        const expectedTotal = expectedR1 + expectedR2 + expectedR3 + expectedR4 + expectedR5;
+        
+        // Contar quantos playoffs EXISTEM
+        const existingR1 = crossedMatches.filter(m => m.round?.startsWith('crossed_r1_')).length;
+        const existingR2 = crossedMatches.filter(m => m.round?.startsWith('crossed_r2_')).length;
+        const existingR3 = crossedMatches.filter(m => m.round?.startsWith('crossed_r3_')).length;
+        const existingR4 = crossedMatches.filter(m => m.round?.startsWith('crossed_r4_')).length;
+        const existingR5 = crossedMatches.filter(m => m.round?.startsWith('crossed_r5_')).length;
+        const existingTotal = existingR1 + existingR2 + existingR3 + existingR4 + existingR5;
+        
+        console.log(`[FETCH-CHECK-TEAMS] Playoff structure: expected=${expectedTotal} (R1:${expectedR1} R2:${expectedR2} R3:${expectedR3} R4:${expectedR4} R5:${expectedR5}), existing=${existingTotal} (R1:${existingR1} R2:${existingR2} R3:${existingR3} R4:${existingR4} R5:${existingR5})`);
+        
+        if (hasCrossedRounds && existingTotal < expectedTotal) {
+          console.log('[FETCH-AUTOFIX] ====================================');
+          console.log(`[FETCH-AUTOFIX] Playoff structure incomplete: ${existingTotal}/${expectedTotal}. Auto-fixing...`);
+          
+          // Apagar TODOS os playoffs existentes e recriá-los
+          const { error: deleteErr } = await supabase.from('matches')
+            .delete()
+            .eq('tournament_id', tournament.id)
+            .like('round', 'crossed_%');
+          
+          if (deleteErr) {
+            console.error('[FETCH-AUTOFIX] Error deleting old playoffs:', deleteErr);
+          } else {
+            // Calcular horário para os playoffs (último jogo de grupo + duração)
+            const matchDuration = currentTournament?.match_duration_minutes || 20;
+            const lastGroupMatch = [...groupMatchesLocal].sort((a, b) => 
+              new Date(b.scheduled_time || 0).getTime() - new Date(a.scheduled_time || 0).getTime()
+            )[0];
+            const baseTime = lastGroupMatch?.scheduled_time 
+              ? new Date(new Date(lastGroupMatch.scheduled_time).getTime() + matchDuration * 60000)
+              : new Date();
+            
+            const maxNum = Math.max(...allMatchesLocal.map(m => m.match_number || 0), 0);
+            let matchNum = maxNum + 1;
+            const numberOfCourts = currentTournament?.number_of_courts || 4;
+            
+            const formatTime = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
+            
+            const newPlayoffs: any[] = [];
+            let currentTime = new Date(baseTime);
+            
+            // R1 - Quartos de final
+            const r1TimeStr = formatTime(currentTime);
+            for (let i = 0; i < expectedR1; i++) {
+              newPlayoffs.push({
+                tournament_id: tournament.id,
+                category_id: null,
+                round: `crossed_r1_j${i + 1}`,
+                match_number: matchNum++,
+                team1_id: null,
+                team2_id: null,
+                scheduled_time: r1TimeStr,
+                court: String((i % numberOfCourts) + 1),
+                status: 'scheduled'
+              });
+            }
+            
+            // R2 - Meias-finais
+            if (expectedR2 > 0) {
+              currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+              const r2TimeStr = formatTime(currentTime);
+              for (let i = 0; i < expectedR2; i++) {
+                newPlayoffs.push({
+                  tournament_id: tournament.id,
+                  category_id: null,
+                  round: `crossed_r2_j${i + 1}`,
+                  match_number: matchNum++,
+                  team1_id: null,
+                  team2_id: null,
+                  scheduled_time: r2TimeStr,
+                  court: String((i % numberOfCourts) + 1),
+                  status: 'scheduled'
+                });
+              }
+            }
+            
+            // R3 - Final + 3º/4º (+ 5-6 e 7-8 no mesmo slot)
+            currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+            const r3TimeStr = formatTime(currentTime);
+            
+            newPlayoffs.push({
+              tournament_id: tournament.id, category_id: null,
+              round: 'crossed_r3_final', match_number: matchNum++,
+              team1_id: null, team2_id: null,
+              scheduled_time: r3TimeStr, court: '1', status: 'scheduled'
+            });
+            newPlayoffs.push({
+              tournament_id: tournament.id, category_id: null,
+              round: 'crossed_r3_3rd_place', match_number: matchNum++,
+              team1_id: null, team2_id: null,
+              scheduled_time: r3TimeStr, court: '2', status: 'scheduled'
+            });
+            
+            if (expectedR4 > 0) {
+              newPlayoffs.push({
+                tournament_id: tournament.id, category_id: null,
+                round: 'crossed_r4_5th', match_number: matchNum++,
+                team1_id: null, team2_id: null,
+                scheduled_time: r3TimeStr, court: '3', status: 'scheduled'
+              });
+            }
+            if (expectedR5 > 0) {
+              newPlayoffs.push({
+                tournament_id: tournament.id, category_id: null,
+                round: 'crossed_r5_7th', match_number: matchNum++,
+                team1_id: null, team2_id: null,
+                scheduled_time: r3TimeStr, court: '4', status: 'scheduled'
+              });
+            }
+            
+            const { error: insertErr } = await supabase.from('matches').insert(newPlayoffs);
+            if (insertErr) {
+              console.error('[FETCH-AUTOFIX] Error inserting playoffs:', insertErr);
+            } else {
+              console.log(`[FETCH-AUTOFIX] Created ${newPlayoffs.length} playoff matches (R1:${expectedR1} R2:${expectedR2} R3:${expectedR3} R4:${expectedR4} R5:${expectedR5}). Refreshing...`);
+              await fetchTournamentData();
+              return;
+            }
+          }
+        }
+        
+        console.log('[FETCH-CHECK-TEAMS] Format:', currentTournament?.format);
+        console.log('[FETCH-CHECK-TEAMS] Total matches:', allMatchesLocal.length);
+        console.log('[FETCH-CHECK-TEAMS] Group matches:', groupMatchesLocal.length);
+        console.log('[FETCH-CHECK-TEAMS] All groups done:', allGroupsDoneLocal);
+        console.log('[FETCH-CHECK-TEAMS] Has crossed rounds:', hasCrossedRounds);
+        console.log('[FETCH-CHECK-TEAMS] Teams data:', teamsResult.data?.length);
+        console.log('[FETCH-CHECK-TEAMS] Categories data:', categoriesResult.data?.length);
+        
+        if (allGroupsDoneLocal && hasCrossedRounds) {
+          const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
+          const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
+          const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
+          
+          console.log('[FETCH-CHECK-TEAMS] R1J1 match found:', !!r1j1Local);
+          console.log('[FETCH-CHECK-TEAMS] R1J1 team1_id:', r1j1Local?.team1_id);
+          console.log('[FETCH-CHECK-TEAMS] R1J1 team2_id:', r1j1Local?.team2_id);
+          console.log('[FETCH-CHECK-TEAMS] Sorted categories:', sortedCats.length, sortedCats.map(c => c.name));
+          
+          if (r1j1Local && !r1j1Local.team1_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+            console.log('[FETCH-FILL-TEAMS] ====================================');
+            console.log('[FETCH-FILL-TEAMS] Filling crossed playoffs teams R1...');
+            
+            // Função para calcular ranking de equipas de uma categoria
+            const getCategoryTeamRankings = (categoryId: string) => {
+              const categoryTeams = teamsResult.data!.filter((t: any) => t.category_id === categoryId);
+              const categoryMatches = matchesResult.data!.filter((m: any) => {
+                if (m.category_id !== categoryId || !m.round?.startsWith('group_') || !m.team1_id || !m.team2_id) return false;
+                // Aceitar se status é 'completed' OU se tem scores preenchidos
+                if (m.status === 'completed') return true;
+                const hasScores = (m.team1_score_set1 != null && m.team2_score_set1 != null) && 
+                  ((m.team1_score_set1 || 0) > 0 || (m.team2_score_set1 || 0) > 0);
+                return hasScores;
+              });
+
+              console.log(`[FETCH-FILL-TEAMS] Category ${categoryId}: ${categoryTeams.length} teams, ${categoryMatches.length} done matches`);
+
+              const teamStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
+              
+              categoryTeams.forEach((team: any) => {
+                teamStats.set(team.id, { 
+                  id: team.id, 
+                  name: team.name, 
+                  wins: 0, 
+                  gamesWon: 0, 
+                  gamesLost: 0 
+                });
+              });
+
+              categoryMatches.forEach((match: any) => {
+                const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+                const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+                const team1Won = team1Games > team2Games;
+
+                if (match.team1_id) {
+                  const stats = teamStats.get(match.team1_id);
+                  if (stats) {
+                    stats.gamesWon += team1Games;
+                    stats.gamesLost += team2Games;
+                    if (team1Won) stats.wins++;
+                  }
+                }
+
+                if (match.team2_id) {
+                  const stats = teamStats.get(match.team2_id);
+                  if (stats) {
+                    stats.gamesWon += team2Games;
+                    stats.gamesLost += team1Games;
+                    if (!team1Won) stats.wins++;
+                  }
+                }
+              });
+
+              return Array.from(teamStats.values())
+                .sort((a, b) => {
+                  if (a.wins !== b.wins) return b.wins - a.wins;
+                  const diffA = a.gamesWon - a.gamesLost;
+                  const diffB = b.gamesWon - b.gamesLost;
+                  return diffB - diffA;
+                });
+            };
+            
+            try {
+              if (sortedCats.length === 3) {
+                const [catA, catB, catC] = sortedCats;
+                const rankA = getCategoryTeamRankings(catA.id);
+                const rankB = getCategoryTeamRankings(catB.id);
+                const rankC = getCategoryTeamRankings(catC.id);
+                
+                console.log(`[FETCH-FILL-TEAMS] Rankings calculated - A: ${rankA.length} teams, B: ${rankB.length} teams, C: ${rankC.length} teams`);
+                console.log(`[FETCH-FILL-TEAMS] Rank A:`, rankA.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
+                console.log(`[FETCH-FILL-TEAMS] Rank B:`, rankB.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
+                console.log(`[FETCH-FILL-TEAMS] Rank C:`, rankC.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
+                
+                // Ler configurações das categorias para determinar quantas equipas qualificam
+                let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
+                if (!qualifiedPerGroup || qualifiedPerGroup <= 0) {
+                  qualifiedPerGroup = Math.max(rankA.length, rankB.length, rankC.length);
+                }
+                
+                // Encontrar todos os jogos R1 (usar allMatchesLocal do scope pai)
+                const r1MatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('crossed_r1_j')).sort((a, b) => {
+                  const aNum = parseInt(a.round?.match(/j(\d+)/)?.[1] || '0');
+                  const bNum = parseInt(b.round?.match(/j(\d+)/)?.[1] || '0');
+                  return aNum - bNum;
+                });
+                
+                console.log(`[FETCH-FILL-TEAMS] Found ${r1MatchesLocal.length} R1 matches, qualified_per_group=${qualifiedPerGroup}`);
+                
+                if (rankA.length >= qualifiedPerGroup && rankB.length >= qualifiedPerGroup && rankC.length >= qualifiedPerGroup) {
+                  console.log(`[FETCH-FILL-TEAMS] 3-cat teams: A=[${rankA.slice(0, qualifiedPerGroup).map(t=>t.name)}], B=[${rankB.slice(0, qualifiedPerGroup).map(t=>t.name)}], C=[${rankC.slice(0, qualifiedPerGroup).map(t=>t.name)}]`);
+                  
+                  // Para 3 categorias, distribuir os jogos entre as categorias
+                  // J1: 1°A vs 4°B
+                  // J2: 2°A vs 3°B
+                  // J3: 1°B vs 4°C
+                  // J4: 2°B vs 3°C (ou 1°C vs 4°A se houver mais jogos)
+                  
+                  const matchups = [];
+                  if (qualifiedPerGroup === 4) {
+                    matchups.push({ team1: rankA[0], team2: rankB[3] }); // J1: 1°A vs 4°B
+                    matchups.push({ team1: rankA[1], team2: rankB[2] }); // J2: 2°A vs 3°B
+                    matchups.push({ team1: rankB[0], team2: rankC[3] }); // J3: 1°B vs 4°C
+                    if (r1MatchesLocal.length >= 4) {
+                      matchups.push({ team1: rankB[1], team2: rankC[2] }); // J4: 2°B vs 3°C
+                    }
+                  } else if (qualifiedPerGroup === 2) {
+                    matchups.push({ team1: rankA[0], team2: rankB[1] }); // J1: 1°A vs 2°B
+                    matchups.push({ team1: rankB[0], team2: rankC[1] }); // J2: 1°B vs 2°C
+                  }
+                  
+                  // Preencher os jogos R1
+                  for (let i = 0; i < Math.min(r1MatchesLocal.length, matchups.length); i++) {
+                    const match = r1MatchesLocal[i];
+                    const matchup = matchups[i];
+                    const { error, data } = await supabase.from('matches').update({
+                      team1_id: matchup.team1.id,
+                      team2_id: matchup.team2.id
+                    }).eq('id', match.id).select();
+                    console.log(`[FETCH-FILL-TEAMS] Filled ${match.round}: ${matchup.team1.name} vs ${matchup.team2.name}, error:`, error, 'updated:', data?.length);
+                  }
+                  
+                  console.log('[FETCH-FILL-TEAMS] R1 filled (3 cat teams - direct matchups)! Refreshing...');
+                  await fetchTournamentData(); return;
+                } else {
+                  console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length}, C=${rankC.length} (need ${qualifiedPerGroup} each)`);
+                }
+              } else if (sortedCats.length === 2) {
+                const [catA, catB] = sortedCats;
+                const rankA = getCategoryTeamRankings(catA.id);
+                const rankB = getCategoryTeamRankings(catB.id);
+                
+                console.log(`[FETCH-FILL-TEAMS] Rankings calculated - A: ${rankA.length} teams, B: ${rankB.length} teams`);
+                console.log(`[FETCH-FILL-TEAMS] Rank A:`, rankA.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
+                console.log(`[FETCH-FILL-TEAMS] Rank B:`, rankB.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
+                
+                // Ler configurações das categorias para determinar quantas equipas qualificam
+                let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
+                if (!qualifiedPerGroup || qualifiedPerGroup <= 0) {
+                  qualifiedPerGroup = Math.max(rankA.length, rankB.length);
+                }
+                
+                // Encontrar todos os jogos R1
+                const r1MatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('crossed_r1_j')).sort((a, b) => {
+                  const aNum = parseInt(a.round?.match(/j(\d+)/)?.[1] || '0');
+                  const bNum = parseInt(b.round?.match(/j(\d+)/)?.[1] || '0');
+                  return aNum - bNum;
+                });
+                
+                console.log(`[FETCH-FILL-TEAMS] Found ${r1MatchesLocal.length} R1 matches, qualified_per_group=${qualifiedPerGroup}`);
+                
+                if (rankA.length >= qualifiedPerGroup && rankB.length >= qualifiedPerGroup) {
+                  console.log(`[FETCH-FILL-TEAMS] 2-cat teams: A=[${rankA.slice(0, qualifiedPerGroup).map(t=>t.name)}], B=[${rankB.slice(0, qualifiedPerGroup).map(t=>t.name)}]`);
+                  
+                  // Preencher os jogos R1 baseado no número de jogos e equipas qualificadas
+                  // Para 4 equipas qualificadas por categoria (8 total), temos 4 jogos:
+                  // J1: 1°A vs 4°B
+                  // J2: 2°A vs 3°B
+                  // J3: 3°A vs 2°B
+                  // J4: 4°A vs 1°B
+                  
+                  const matchups = [];
+                  if (qualifiedPerGroup === 4) {
+                    matchups.push({ team1: rankA[0], team2: rankB[3] }); // J1: 1°A vs 4°B
+                    matchups.push({ team1: rankA[1], team2: rankB[2] }); // J2: 2°A vs 3°B
+                    matchups.push({ team1: rankA[2], team2: rankB[1] }); // J3: 3°A vs 2°B
+                    matchups.push({ team1: rankA[3], team2: rankB[0] }); // J4: 4°A vs 1°B
+                  } else if (qualifiedPerGroup === 2) {
+                    matchups.push({ team1: rankA[0], team2: rankB[1] }); // J1: 1°A vs 2°B
+                    matchups.push({ team1: rankA[1], team2: rankB[0] }); // J2: 2°A vs 1°B
+                  }
+                  
+                  // Preencher os jogos R1
+                  for (let i = 0; i < Math.min(r1MatchesLocal.length, matchups.length); i++) {
+                    const match = r1MatchesLocal[i];
+                    const matchup = matchups[i];
+                    const { error, data } = await supabase.from('matches').update({
+                      team1_id: matchup.team1.id,
+                      team2_id: matchup.team2.id
+                    }).eq('id', match.id).select();
+                    console.log(`[FETCH-FILL-TEAMS] Filled ${match.round}: ${matchup.team1.name} vs ${matchup.team2.name}, error:`, error, 'updated:', data?.length);
+                  }
+                  
+                  console.log('[FETCH-FILL-TEAMS] R1 filled (2 cat teams - direct matchups)! Refreshing...');
+                  await fetchTournamentData(); return;
+                } else {
+                  console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length} (need ${qualifiedPerGroup} each)`);
+                }
+              } else {
+                console.log(`[FETCH-FILL-TEAMS] Invalid number of categories: ${sortedCats.length} (need 2 or 3)`);
+              }
+            } catch (err) {
+              console.error('[FETCH-FILL-TEAMS] Error:', err);
+            }
+          } else {
+            console.log('[FETCH-CHECK-TEAMS] Conditions not met:', {
+              hasR1J1: !!r1j1Local,
+              r1j1Team1Id: r1j1Local?.team1_id,
+              r1j1Team2Id: r1j1Local?.team2_id,
+              categoriesCount: sortedCats.length
+            });
+          }
+        } else {
+          console.log('[FETCH-CHECK-TEAMS] Conditions not met:', {
+            allGroupsDone: allGroupsDoneLocal,
+            hasCrossedRounds: hasCrossedRounds
+          });
+        }
+      }
     }
 
     setLoading(false);
@@ -1413,7 +1859,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleAssignGroups = async () => {
-    const validFormats = ['groups_knockout', 'individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'];
+    const validFormats = ['groups_knockout', 'individual_groups_knockout', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'];
     if (!validFormats.includes(currentTournament.format || '')) {
       alert('Group assignment is only available for Groups + Knockout, Crossed Playoffs, Mixed Gender and Mixed American formats');
       return;
@@ -1421,6 +1867,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     const isIndividualFormat = currentTournament.format === 'individual_groups_knockout' || 
                                currentTournament.format === 'crossed_playoffs' || 
+                               currentTournament.format === 'crossed_playoffs_teams' || 
                                currentTournament.format === 'mixed_gender' ||
                                currentTournament.format === 'mixed_american';
     const participantLabel = isIndividualFormat ? 'players' : 'teams';
@@ -1478,13 +1925,55 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
           
           // Para playoffs cruzados, cada categoria = 1 grupo com nome diferente (A, B, C...)
-          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs';
+          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || currentTournament.format === 'crossed_playoffs_teams';
           
           // Ordenar categorias por nome para consistência (primeira = A, segunda = B, terceira = C)
           const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
 
           for (let catIndex = 0; catIndex < sortedCategories.length; catIndex++) {
             const category = sortedCategories[catIndex];
+            
+            // Para playoffs cruzados de equipas, usar teams em vez de players
+            if (currentTournament.format === 'crossed_playoffs_teams') {
+              const categoryTeams = teams.filter(t => t.category_id === category.id);
+              // Se é playoffs cruzados, forçar 1 grupo por categoria
+              const numberOfGroups = isCrossedPlayoffs ? 1 : ((category as any).number_of_groups || tournamentNumberOfGroups);
+              const minTeams = numberOfGroups * 2;
+              
+              // Nome do grupo: para playoffs cruzados, usar A, B, C baseado na ordem da categoria
+              const crossedGroupName = String.fromCharCode(65 + catIndex); // A, B, C
+              
+              console.log('[ASSIGN GROUPS] Category:', category.name, 'Number of groups:', numberOfGroups, 'Teams:', categoryTeams.length, 'Crossed playoffs teams:', isCrossedPlayoffs, 'CrossedGroupName:', crossedGroupName);
+              
+              if (categoryTeams.length < minTeams) {
+                alert(`Categoria "${category.name}" precisa de pelo menos ${minTeams} equipas para ${numberOfGroups} grupo(s). Encontradas: ${categoryTeams.length}`);
+                setLoading(false);
+                return;
+              }
+              
+              // Atribuir grupos às equipas
+              if (isCrossedPlayoffs) {
+                // Para playoffs cruzados de equipas, atribuir o mesmo grupo a todas as equipas da categoria
+                for (const team of categoryTeams) {
+                  await supabase
+                    .from('teams')
+                    .update({ group_name: crossedGroupName })
+                    .eq('id', team.id);
+                }
+              } else {
+                // Distribuição normal por grupos
+                const shuffled = [...categoryTeams].sort(() => Math.random() - 0.5);
+                for (let i = 0; i < shuffled.length; i++) {
+                  const groupIndex = i % numberOfGroups;
+                  const groupName = String.fromCharCode(65 + groupIndex);
+                  await supabase
+                    .from('teams')
+                    .update({ group_name: groupName })
+                    .eq('id', shuffled[i].id);
+                }
+              }
+            } else {
+              // Lógica original para jogadores individuais
             const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
             // Se é playoffs cruzados, forçar 1 grupo por categoria
             const numberOfGroups = isCrossedPlayoffs ? 1 : ((category as any).number_of_groups || tournamentNumberOfGroups);
@@ -1511,6 +2000,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             } else {
               const playersWithGroups = assignPlayersToGroups(categoryPlayers, numberOfGroups);
               allPlayersWithGroups.push(...playersWithGroups);
+              }
             }
           }
 
@@ -2630,6 +3120,383 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       alert('Playoffs Cruzados gerados com sucesso!\n\n8 jogos criados:\n- R1: 3 jogos (Playoffs Cruzados)\n- R2: 3 jogos (Meias-finais + 5º/6º)\n- R3: 2 jogos (Final + 3º/4º)');
     } catch (error) {
       console.error('Error generating crossed playoffs between categories:', error);
+      alert('Erro ao gerar playoffs cruzados. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Função para gerar Playoffs Cruzados ENTRE CATEGORIAS COM EQUIPAS (ex: M3, M4, M5 = grupos A, B, C)
+  // Estrutura completa: R1 (3 jogos) + R2 Meias-Finais (3 jogos) + R3 Finais (2 jogos) = 8 jogos total
+  const handleGenerateCrossedPlayoffsTeamsBetweenCategories = async () => {
+    console.log('[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Starting...');
+
+    if (categories.length < 2 || categories.length > 3) {
+      alert(`Playoffs Cruzados entre categorias requer 2 ou 3 categorias. Encontradas: ${categories.length}`);
+      return;
+    }
+
+    // Ordenar categorias por nome para consistência (A=primeira, B=segunda, C=terceira)
+    const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+    const [catA, catB, catC] = sortedCategories;
+
+    console.log(`[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Categorias: ${catA.name} (A), ${catB.name} (B)${catC ? `, ${catC.name} (C)` : ''}`);
+
+    // Função para calcular ranking de equipas de uma categoria
+    const getCategoryTeamRankings = (categoryId: string) => {
+      const categoryTeams = teams.filter(t => t.category_id === categoryId);
+      const categoryMatches = matches.filter(m => 
+        m.category_id === categoryId && 
+        m.round.startsWith('group_') && 
+        m.status === 'completed' &&
+        m.team1_id && 
+        m.team2_id
+      );
+
+      const teamStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
+      
+      categoryTeams.forEach(team => {
+        teamStats.set(team.id, { 
+          id: team.id, 
+          name: team.name, 
+          wins: 0, 
+          gamesWon: 0, 
+          gamesLost: 0 
+        });
+      });
+
+      categoryMatches.forEach(match => {
+        const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        const team1Won = team1Games > team2Games;
+
+        if (match.team1_id) {
+          const stats = teamStats.get(match.team1_id);
+          if (stats) {
+            stats.gamesWon += team1Games;
+            stats.gamesLost += team2Games;
+            if (team1Won) stats.wins++;
+          }
+        }
+
+        if (match.team2_id) {
+          const stats = teamStats.get(match.team2_id);
+          if (stats) {
+            stats.gamesWon += team2Games;
+            stats.gamesLost += team1Games;
+            if (!team1Won) stats.wins++;
+          }
+        }
+      });
+
+      return Array.from(teamStats.values())
+        .sort((a, b) => {
+          if (a.wins !== b.wins) return b.wins - a.wins;
+          const diffA = a.gamesWon - a.gamesLost;
+          const diffB = b.gamesWon - b.gamesLost;
+          return diffB - diffA;
+        });
+    };
+
+    // Obter rankings de cada categoria
+    const rankA = getCategoryTeamRankings(catA.id);
+    const rankB = getCategoryTeamRankings(catB.id);
+    const rankC = catC ? getCategoryTeamRankings(catC.id) : [];
+
+    console.log(`[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Rankings:`);
+    console.log(`  ${catA.name}:`, rankA.map(t => t.name));
+    console.log(`  ${catB.name}:`, rankB.map(t => t.name));
+    if (catC) console.log(`  ${catC.name}:`, rankC.map(t => t.name));
+
+    // Verificar se cada categoria tem pelo menos 4 equipas
+    if (rankA.length < 4 || rankB.length < 4 || (catC && rankC.length < 4)) {
+      alert(`Aguarde a finalização das partidas. Necessário pelo menos 4 equipas classificadas por categoria.\n${catA.name}: ${rankA.length}, ${catB.name}: ${rankB.length}${catC ? `, ${catC.name}: ${rankC.length}` : ''}`);
+      return;
+    }
+
+    let confirmMessage = '';
+    let r1Matches: Array<{ round: string; team1: string; team2: string }> = [];
+
+    if (catC) {
+      // 3 categorias
+      confirmMessage = `PLAYOFFS CRUZADOS ENTRE CATEGORIAS (EQUIPAS)\n` +
+        `(${catA.name} = A, ${catB.name} = B, ${catC.name} = C)\n\n` +
+        `RONDA 1 - Playoffs Cruzados:\n` +
+        `  J1: (1°A + 4°C) vs (2°A + 3°C) → (${rankA[0].name} + ${rankC[3].name}) vs (${rankA[1].name} + ${rankC[2].name})\n` +
+        `  J2: (3°A + 2°B) vs (4°A + 1°B) → (${rankA[2].name} + ${rankB[1].name}) vs (${rankA[3].name} + ${rankB[0].name})\n` +
+        `  J3: (3°B + 2°C) vs (4°B + 1°C) → (${rankB[2].name} + ${rankC[1].name}) vs (${rankB[3].name} + ${rankC[0].name})\n\n` +
+        `RONDA 2:\n` +
+        `  J4: Vencedor J1 vs Vencedor J2\n` +
+        `  J5: Vencedor J3 vs Melhor Perdedor (J1 ou J2, baseado em games)\n` +
+        `  J6: Perdedor J3 vs Pior Perdedor → 5º/6º\n\n` +
+        `RONDA 3 - Finais:\n` +
+        `  J7: Final (Vencedor J4 vs Vencedor J5)\n` +
+        `  J8: 3º/4º (Perdedor J4 vs Perdedor J5)\n\n` +
+        `Continuar?`;
+
+      r1Matches = [
+        { round: 'crossed_r1_j1', team1: rankA[0].id, team2: rankC[3].id }, // (1°A + 4°C) vs (2°A + 3°C)
+        { round: 'crossed_r1_j1', team1: rankA[1].id, team2: rankC[2].id },
+        { round: 'crossed_r1_j2', team1: rankA[2].id, team2: rankB[1].id }, // (3°A + 2°B) vs (4°A + 1°B)
+        { round: 'crossed_r1_j2', team1: rankA[3].id, team2: rankB[0].id },
+        { round: 'crossed_r1_j3', team1: rankB[2].id, team2: rankC[1].id }, // (3°B + 2°C) vs (4°B + 1°C)
+        { round: 'crossed_r1_j3', team1: rankB[3].id, team2: rankC[0].id },
+      ];
+    } else {
+      // 2 categorias
+      confirmMessage = `PLAYOFFS CRUZADOS ENTRE CATEGORIAS (EQUIPAS)\n` +
+        `(${catA.name} = A, ${catB.name} = B)\n\n` +
+        `RONDA 1 - Playoffs Cruzados:\n` +
+        `  J1: (1°A + 4°B) vs (1°B + 4°A) → (${rankA[0].name} + ${rankB[3].name}) vs (${rankB[0].name} + ${rankA[3].name})\n` +
+        `  J2: (2°A + 3°B) vs (2°B + 3°A) → (${rankA[1].name} + ${rankB[2].name}) vs (${rankB[1].name} + ${rankA[2].name})\n` +
+        `  J3: (1°A + 2°B) vs (1°B + 2°A) → (${rankA[0].name} + ${rankB[1].name}) vs (${rankB[0].name} + ${rankA[1].name})\n\n` +
+        `RONDA 2:\n` +
+        `  J4: Vencedor J1 vs Vencedor J2\n` +
+        `  J5: Vencedor J3 vs Melhor Perdedor (J1 ou J2, baseado em games)\n` +
+        `  J6: Perdedor J3 vs Pior Perdedor → 5º/6º\n\n` +
+        `RONDA 3 - Finais:\n` +
+        `  J7: Final (Vencedor J4 vs Vencedor J5)\n` +
+        `  J8: 3º/4º (Perdedor J4 vs Perdedor J5)\n\n` +
+        `Continuar?`;
+
+      r1Matches = [
+        { round: 'crossed_r1_j1', team1: rankA[0].id, team2: rankB[3].id }, // (1°A + 4°B) vs (1°B + 4°A)
+        { round: 'crossed_r1_j1', team1: rankB[0].id, team2: rankA[3].id },
+        { round: 'crossed_r1_j2', team1: rankA[1].id, team2: rankB[2].id }, // (2°A + 3°B) vs (2°B + 3°A)
+        { round: 'crossed_r1_j2', team1: rankB[1].id, team2: rankA[2].id },
+        { round: 'crossed_r1_j3', team1: rankA[0].id, team2: rankB[1].id }, // (1°A + 2°B) vs (1°B + 2°A)
+        { round: 'crossed_r1_j3', team1: rankB[0].id, team2: rankA[1].id },
+      ];
+    }
+
+    const confirmed = confirm(confirmMessage);
+    if (!confirmed) return;
+
+    setLoading(true);
+
+    try {
+      // Verificar se já existem partidas de playoff cruzado
+      const existingPlayoffMatches = matches.filter(m => 
+        m.round.startsWith('crossed_r')
+      );
+
+      if (existingPlayoffMatches.length > 0) {
+        alert('Já existem partidas de playoffs cruzados. Delete-as primeiro para gerar novas.');
+        setLoading(false);
+        return;
+      }
+
+      const lastMatch = matches.sort((a, b) => b.match_number - a.match_number)[0];
+      let matchNumber = (lastMatch?.match_number || 0) + 1;
+
+      // Calcular horário para os playoffs
+      const completedMatches = matches
+        .filter(m => m.scheduled_time)
+        .sort((a, b) => new Date(b.scheduled_time!).getTime() - new Date(a.scheduled_time!).getTime());
+      
+      const matchDuration = currentTournament.match_duration_minutes || 90;
+      let currentTime = completedMatches.length > 0 && completedMatches[0].scheduled_time
+        ? new Date(new Date(completedMatches[0].scheduled_time).getTime() + matchDuration * 60000)
+        : new Date();
+
+      // RONDA 1 - Playoffs Cruzados (3 jogos)
+      // Para equipas combinadas, precisamos criar equipas temporárias combinando jogadores de diferentes equipas
+      // Função auxiliar para criar equipa combinada
+      const createCombinedTeam = async (team1Id: string, team2Id: string, name: string): Promise<string> => {
+        const team1 = teams.find(t => t.id === team1Id);
+        const team2 = teams.find(t => t.id === team2Id);
+        
+        if (!team1 || !team2) throw new Error(`Equipas não encontradas: ${team1Id}, ${team2Id}`);
+        
+        // Buscar os jogadores das equipas
+        const { data: team1Data } = await supabase
+          .from('teams')
+          .select('player1_id, player2_id')
+          .eq('id', team1Id)
+          .single();
+        
+        const { data: team2Data } = await supabase
+          .from('teams')
+          .select('player1_id, player2_id')
+          .eq('id', team2Id)
+          .single();
+        
+        if (!team1Data || !team2Data) throw new Error('Dados das equipas não encontrados');
+        
+        // Criar equipa combinada: player1 da equipa1 + player1 da equipa2
+        const { data: newTeam, error } = await supabase
+          .from('teams')
+          .insert({
+            tournament_id: tournament.id,
+            name: name,
+            player1_id: team1Data.player1_id,
+            player2_id: team2Data.player1_id,
+            category_id: null, // Equipa combinada não pertence a uma categoria específica
+            group_name: null,
+            status: 'active'
+          })
+          .select('id')
+          .single();
+        
+        if (error || !newTeam) throw error || new Error('Erro ao criar equipa combinada');
+        return newTeam.id;
+      };
+
+      // Criar matches da R1 com equipas combinadas
+      const r1MatchesData = catC ? [
+        // J1: (1°A + 4°C) vs (2°A + 3°C)
+        {
+          round: 'crossed_r1_j1',
+          team1Name: `${rankA[0].name} + ${rankC[3].name}`,
+          team2Name: `${rankA[1].name} + ${rankC[2].name}`,
+          team1Pair: [rankA[0].id, rankC[3].id],
+          team2Pair: [rankA[1].id, rankC[2].id]
+        },
+        // J2: (3°A + 2°B) vs (4°A + 1°B)
+        {
+          round: 'crossed_r1_j2',
+          team1Name: `${rankA[2].name} + ${rankB[1].name}`,
+          team2Name: `${rankA[3].name} + ${rankB[0].name}`,
+          team1Pair: [rankA[2].id, rankB[1].id],
+          team2Pair: [rankA[3].id, rankB[0].id]
+        },
+        // J3: (3°B + 2°C) vs (4°B + 1°C)
+        {
+          round: 'crossed_r1_j3',
+          team1Name: `${rankB[2].name} + ${rankC[1].name}`,
+          team2Name: `${rankB[3].name} + ${rankC[0].name}`,
+          team1Pair: [rankB[2].id, rankC[1].id],
+          team2Pair: [rankB[3].id, rankC[0].id]
+        }
+      ] : [
+        // 2 categorias
+        // J1: (1°A + 4°B) vs (1°B + 4°A)
+        {
+          round: 'crossed_r1_j1',
+          team1Name: `${rankA[0].name} + ${rankB[3].name}`,
+          team2Name: `${rankB[0].name} + ${rankA[3].name}`,
+          team1Pair: [rankA[0].id, rankB[3].id],
+          team2Pair: [rankB[0].id, rankA[3].id]
+        },
+        // J2: (2°A + 3°B) vs (2°B + 3°A)
+        {
+          round: 'crossed_r1_j2',
+          team1Name: `${rankA[1].name} + ${rankB[2].name}`,
+          team2Name: `${rankB[1].name} + ${rankA[2].name}`,
+          team1Pair: [rankA[1].id, rankB[2].id],
+          team2Pair: [rankB[1].id, rankA[2].id]
+        },
+        // J3: (1°A + 2°B) vs (1°B + 2°A)
+        {
+          round: 'crossed_r1_j3',
+          team1Name: `${rankA[0].name} + ${rankB[1].name}`,
+          team2Name: `${rankB[0].name} + ${rankA[1].name}`,
+          team1Pair: [rankA[0].id, rankB[1].id],
+          team2Pair: [rankB[0].id, rankA[1].id]
+        }
+      ];
+
+      for (let i = 0; i < r1MatchesData.length; i++) {
+        const m = r1MatchesData[i];
+        
+        // Criar equipas combinadas
+        const combinedTeam1Id = await createCombinedTeam(m.team1Pair[0], m.team1Pair[1], m.team1Name);
+        const combinedTeam2Id = await createCombinedTeam(m.team2Pair[0], m.team2Pair[1], m.team2Name);
+        
+        // Criar match
+        const { error } = await supabase
+          .from('matches')
+          .insert({
+            tournament_id: tournament.id,
+            category_id: null,
+            round: m.round,
+            match_number: matchNumber++,
+            team1_id: combinedTeam1Id,
+            team2_id: combinedTeam2Id,
+            scheduled_time: currentTime.toISOString(),
+            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            status: 'scheduled',
+            team1_score_set1: 0, team2_score_set1: 0,
+            team1_score_set2: 0, team2_score_set2: 0,
+            team1_score_set3: 0, team2_score_set3: 0,
+          });
+        if (error) throw error;
+        if ((i + 1) % (currentTournament.number_of_courts || 1) === 0) {
+          currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+        }
+      }
+
+      // Avançar tempo para R2
+      currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+
+      // RONDA 2 - Meias-Finais (3 jogos) - equipas TBD por agora
+      const r2Matches = [
+        { round: 'crossed_r2_j4' }, // Vencedor J1 vs Vencedor J2
+        { round: 'crossed_r2_j5' }, // Vencedor J3 vs Melhor Perdedor
+        { round: 'crossed_r2_j6' }   // Perdedor J3 vs Pior Perdedor → 5º/6º
+      ];
+
+      for (let i = 0; i < r2Matches.length; i++) {
+        const m = r2Matches[i];
+        const { error } = await supabase
+          .from('matches')
+          .insert({
+            tournament_id: tournament.id,
+            category_id: null,
+            round: m.round,
+            match_number: matchNumber++,
+            team1_id: null,
+            team2_id: null,
+            scheduled_time: currentTime.toISOString(),
+            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            status: 'scheduled',
+            team1_score_set1: 0, team2_score_set1: 0,
+            team1_score_set2: 0, team2_score_set2: 0,
+            team1_score_set3: 0, team2_score_set3: 0,
+          });
+        if (error) throw error;
+        if ((i + 1) % (currentTournament.number_of_courts || 1) === 0) {
+          currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+        }
+      }
+
+      // Avançar tempo para R3
+      currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+
+      // RONDA 3 - Finais (2 jogos)
+      const r3Matches = [
+        { round: 'crossed_r3_j7' },     // Final
+        { round: 'crossed_r3_j8' }      // 3º/4º lugar
+      ];
+
+      for (let i = 0; i < r3Matches.length; i++) {
+        const m = r3Matches[i];
+        const { error } = await supabase
+          .from('matches')
+          .insert({
+            tournament_id: tournament.id,
+            category_id: null,
+            round: m.round,
+            match_number: matchNumber++,
+            team1_id: null,
+            team2_id: null,
+            scheduled_time: currentTime.toISOString(),
+            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            status: 'scheduled',
+            team1_score_set1: 0, team2_score_set1: 0,
+            team1_score_set2: 0, team2_score_set2: 0,
+            team1_score_set3: 0, team2_score_set3: 0,
+          });
+        if (error) throw error;
+        if ((i + 1) % (currentTournament.number_of_courts || 1) === 0) {
+          currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+        }
+      }
+
+      await fetchTournamentData();
+      alert('Playoffs Cruzados (Equipas) gerados com sucesso!\n\n8 jogos criados:\n- R1: 3 jogos (Playoffs Cruzados)\n- R2: 3 jogos (Meias-finais + 5º/6º)\n- R3: 2 jogos (Final + 3º/4º)');
+    } catch (error) {
+      console.error('Error generating crossed playoffs teams between categories:', error);
       alert('Erro ao gerar playoffs cruzados. Tente novamente.');
     } finally {
       setLoading(false);
@@ -4273,6 +5140,445 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           court: m.court,
           status: 'scheduled'
         }));
+        
+      } else if (currentTournament.format === 'crossed_playoffs_teams') {
+        // PLAYOFFS CRUZADOS PARA EQUIPAS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
+        console.log('[SCHEDULE] ====================================');
+        console.log('[SCHEDULE] CROSSED PLAYOFFS TEAMS FORMAT DETECTED');
+        console.log('[SCHEDULE] Using Crossed Playoffs Teams scheduler with', teams.length, 'teams');
+        console.log('[SCHEDULE] Number of courts:', numberOfCourts);
+        console.log('[SCHEDULE] Number of categories:', categories.length);
+        console.log('[SCHEDULE] Crossed Playoffs Teams mode - generating group matches for categories');
+        
+        const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+        
+        // 1. Atribuir campos FIXOS a cada categoria/grupo
+        const categoryCourtAssignments = new Map<string, string[]>();
+        const courtsPerCategory = Math.floor(numberOfCourts / sortedCategories.length);
+        
+        for (let catIdx = 0; catIdx < sortedCategories.length; catIdx++) {
+          const category = sortedCategories[catIdx];
+          const catCourtNames = (category as any).court_names as string[] | null | undefined;
+          
+          if (catCourtNames && catCourtNames.length > 0) {
+            // Usar campos específicos definidos na categoria
+            categoryCourtAssignments.set(category.id, catCourtNames);
+          } else {
+            // Dividir os campos do torneio igualmente entre os grupos
+            const startCourt = catIdx * courtsPerCategory + 1;
+            const endCourt = catIdx === sortedCategories.length - 1
+              ? numberOfCourts  // Última categoria recebe os campos restantes
+              : (catIdx + 1) * courtsPerCategory;
+            const courts: string[] = [];
+            for (let c = startCourt; c <= endCourt; c++) {
+              courts.push(c.toString());
+            }
+            categoryCourtAssignments.set(category.id, courts);
+          }
+          
+          console.log(`[SCHEDULE] Category ${sortedCategories[catIdx].name} FIXED courts: [${categoryCourtAssignments.get(category.id)!.join(', ')}]`);
+        }
+        
+        // 2. Gerar pares round-robin para cada categoria
+        const categoryGroupMatches = new Map<string, Array<{
+          team1_id: string;
+          team2_id: string;
+          round: string;
+          category_id: string;
+        }>>();
+        
+        let totalGroupMatchCount = 0;
+        
+        for (let catIdx = 0; catIdx < sortedCategories.length; catIdx++) {
+          const category = sortedCategories[catIdx];
+          const categoryTeams = teams.filter(t => t.category_id === category.id);
+          const groupName = String.fromCharCode(65 + catIdx); // A, B, C
+          
+          console.log(`[SCHEDULE] Category ${category.name} (Group ${groupName}): ${categoryTeams.length} teams`);
+          
+          if (categoryTeams.length < 2) {
+            console.warn(`[SCHEDULE] Category ${category.name} has fewer than 2 teams, skipping`);
+            categoryGroupMatches.set(category.id, []);
+            continue;
+          }
+          
+          const catMatches: Array<{team1_id: string; team2_id: string; round: string; category_id: string}> = [];
+          for (let i = 0; i < categoryTeams.length; i++) {
+            for (let j = i + 1; j < categoryTeams.length; j++) {
+              catMatches.push({
+                team1_id: categoryTeams[i].id,
+                team2_id: categoryTeams[j].id,
+                round: `group_${groupName}`,
+                category_id: category.id,
+              });
+            }
+          }
+          
+          categoryGroupMatches.set(category.id, catMatches);
+          totalGroupMatchCount += catMatches.length;
+          console.log(`[SCHEDULE] Category ${category.name}: ${categoryTeams.length} teams, ${catMatches.length} group matches`);
+        }
+        
+        console.log(`[SCHEDULE] Total group matches from all categories: ${totalGroupMatchCount}`);
+        
+        // 3. Agendar jogos de grupo em paralelo - cada categoria nos seus campos FIXOS
+        matchesToInsert = [];
+        let matchNumber = 1;
+        
+        // Rastrear progresso por categoria
+        const categoryMatchIndexes = new Map<string, number>();
+        sortedCategories.forEach(cat => categoryMatchIndexes.set(cat.id, 0));
+        
+        // Função para obter o horário de um dia específico
+        const getDaySchedule = (dateStr: string) => {
+          if (dailySchedules && dailySchedules.length > 0) {
+            const schedule = dailySchedules.find((s: { date: string; start_time: string; end_time: string }) => s.date === dateStr);
+            if (schedule) {
+              return { start: schedule.start_time, end: schedule.end_time };
+            }
+          }
+          return { start: startTime, end: endTime };
+        };
+        
+        // Começar com o horário do primeiro dia
+        let currentDateStr = startDate;
+        let daySchedule = getDaySchedule(currentDateStr);
+        
+        // Criar data corretamente (sem problemas de timezone)
+        const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+        const [startHr, startMin] = daySchedule.start.split(':').map(Number);
+        let currentTime = new Date(startYear, startMonth - 1, startDay, startHr, startMin, 0, 0);
+        
+        console.log(`[SCHEDULE] Starting group matches on ${currentDateStr} at ${daySchedule.start} (ends ${daySchedule.end})`);
+        
+        let slotNumber = 0;
+        const MAX_SLOTS = 100; // Segurança contra loops infinitos
+        
+        while (slotNumber < MAX_SLOTS) {
+          // Verificar se todas as categorias terminaram
+          let allCategoriesDone = true;
+          for (const cat of sortedCategories) {
+            const catMatches = categoryGroupMatches.get(cat.id) || [];
+            const catIdx = categoryMatchIndexes.get(cat.id) || 0;
+            if (catIdx < catMatches.length) {
+              allCategoriesDone = false;
+              break;
+            }
+          }
+          if (allCategoriesDone) break;
+          
+          slotNumber++;
+          
+          // Criar string de data/hora no formato ISO LOCAL
+          const year = currentTime.getFullYear();
+          const month = String(currentTime.getMonth() + 1).padStart(2, '0');
+          const day = String(currentTime.getDate()).padStart(2, '0');
+          const hours = String(currentTime.getHours()).padStart(2, '0');
+          const minutes = String(currentTime.getMinutes()).padStart(2, '0');
+          const scheduledTimeStr = `${year}-${month}-${day}T${hours}:${minutes}:00`;
+          
+          console.log(`[SCHEDULE] Slot ${slotNumber}: ${hours}:${minutes} on ${day}/${month}/${year}`);
+          
+          // Para CADA categoria, preencher os seus campos FIXOS
+          for (const cat of sortedCategories) {
+            const catMatches = categoryGroupMatches.get(cat.id) || [];
+            let catIdx = categoryMatchIndexes.get(cat.id) || 0;
+            const catCourts = categoryCourtAssignments.get(cat.id) || [];
+            
+            if (catIdx >= catMatches.length) continue; // Esta categoria já terminou
+            
+            const teamsPlayingThisSlot = new Set<string>();
+            let courtIdx = 0;
+            
+            while (courtIdx < catCourts.length && catIdx < catMatches.length) {
+              // Procurar um jogo onde nenhuma equipa está a jogar neste slot
+              let foundMatch = false;
+              for (let i = catIdx; i < catMatches.length; i++) {
+                const m = catMatches[i];
+                if (!teamsPlayingThisSlot.has(m.team1_id) && !teamsPlayingThisSlot.has(m.team2_id)) {
+                  teamsPlayingThisSlot.add(m.team1_id);
+                  teamsPlayingThisSlot.add(m.team2_id);
+                  
+                  const courtName = catCourts[courtIdx];
+                  console.log(`[SCHEDULE]   Court ${courtName}: ${m.round} - Team ${m.team1_id} vs Team ${m.team2_id}`);
+                  
+                  matchesToInsert.push({
+                    tournament_id: currentTournament.id,
+                    category_id: m.category_id,
+                    round: m.round,
+                    match_number: matchNumber++,
+                    team1_id: m.team1_id,
+                    team2_id: m.team2_id,
+                    scheduled_time: scheduledTimeStr,
+                    court: courtName,
+                    status: 'scheduled'
+                  });
+                  
+                  // Trocar com posição atual e avançar
+                  if (i !== catIdx) {
+                    [catMatches[catIdx], catMatches[i]] = [catMatches[i], catMatches[catIdx]];
+                  }
+                  catIdx++;
+                  courtIdx++;
+                  foundMatch = true;
+                  break;
+                }
+              }
+              
+              if (!foundMatch) break; // Sem jogos disponíveis para este slot nesta categoria
+            }
+            
+            categoryMatchIndexes.set(cat.id, catIdx);
+          }
+          
+          // Avançar para o próximo slot de tempo
+          const endOfDayHour = parseInt(daySchedule.end.split(':')[0]);
+          const endOfDayMinute = parseInt(daySchedule.end.split(':')[1] || '0');
+          const endOfDayInMinutes = endOfDayHour * 60 + endOfDayMinute;
+          
+          const currentHour = currentTime.getHours();
+          const currentMinute = currentTime.getMinutes();
+          const currentInMinutes = currentHour * 60 + currentMinute;
+          const nextSlotInMinutes = currentInMinutes + matchDuration;
+          
+          if (nextSlotInMinutes > endOfDayInMinutes) {
+            currentTime.setDate(currentTime.getDate() + 1);
+            const nextYear = currentTime.getFullYear();
+            const nextMonth = String(currentTime.getMonth() + 1).padStart(2, '0');
+            const nextDay = String(currentTime.getDate()).padStart(2, '0');
+            currentDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+            daySchedule = getDaySchedule(currentDateStr);
+            currentTime.setHours(parseInt(daySchedule.start.split(':')[0]), parseInt(daySchedule.start.split(':')[1] || '0'), 0, 0);
+          } else {
+            currentTime = new Date(currentTime.getTime() + matchDuration * 60000);
+          }
+        }
+        
+        console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} group matches across ${slotNumber} time slots`);
+        
+        // 3. AGORA GERAR AUTOMATICAMENTE OS PLAYOFFS CRUZADOS COM TBD
+        // Ler configurações das categorias para determinar número de jogos
+        console.log('[SCHEDULE] Generating Crossed Playoffs Teams matches with TBD (v2)...');
+        
+        // Calcular número total de equipas qualificadas baseado nas configurações das categorias
+        // Fallback: categoria → torneio → auto-cálculo baseado em número de equipas
+        let totalQualifiedTeams = 0;
+        const numberOfGroups = categories.length; // Cada categoria é um grupo
+        
+        // Ler qualified_per_group e knockout_stage com fallback robusto
+        let qualifiedPerGroup = 2; // default
+        let knockoutStage = 'semifinals'; // default
+        
+        if (categories.length > 0) {
+          const catQPG = (categories[0] as any).qualified_per_group;
+          const catKS = (categories[0] as any).knockout_stage;
+          const tournamentKS = (currentTournament as any).knockout_stage;
+          
+          // Fallback chain: categoria → torneio → auto-cálculo
+          if (catQPG != null && catQPG > 0) {
+            qualifiedPerGroup = catQPG;
+          } else {
+            // Se não está definido na categoria, calcular baseado no número de equipas
+            const maxTeamsPerGroup = Math.max(...categories.map(c => teams.filter(t => t.category_id === c.id).length));
+            qualifiedPerGroup = maxTeamsPerGroup; // Todas as equipas qualificam
+            console.log(`[SCHEDULE] WARNING: qualified_per_group not set in category, auto-calculated to ${qualifiedPerGroup}. Please re-save categories!`);
+          }
+          
+          if (catKS && catKS !== 'null') {
+            knockoutStage = catKS;
+          } else if (tournamentKS && tournamentKS !== 'null') {
+            knockoutStage = tournamentKS;
+          } else {
+            // Auto-determinar baseado no total de equipas qualificadas
+            const totalQ = categories.length * qualifiedPerGroup;
+            if (totalQ >= 8) knockoutStage = 'quarterfinals';
+            else if (totalQ >= 4) knockoutStage = 'semifinals';
+            else knockoutStage = 'final';
+            console.log(`[SCHEDULE] WARNING: knockout_stage not set, auto-calculated to ${knockoutStage}. Please re-save categories!`);
+          }
+          
+          totalQualifiedTeams = categories.length * qualifiedPerGroup;
+          console.log(`[SCHEDULE] Categories config: ${categories.length} categories, ${qualifiedPerGroup} qualified per category, knockout_stage: ${knockoutStage}`);
+          console.log(`[SCHEDULE] Total qualified teams: ${totalQualifiedTeams}`);
+        }
+        
+        // Calcular número de jogos na primeira ronda baseado no knockout_stage
+        let numR1Matches = 0; // Quartos de final
+        let numR2Matches = 0; // Meias-finais
+        let numR3Matches = 2; // Final e 3º/4º
+        let numR4Matches = 0; // Classificação 5-6
+        let numR5Matches = 0; // Classificação 7-8
+        
+        if (knockoutStage === 'quarterfinals') {
+          // Quartos de final: totalQualifiedTeams / 2 = número de jogos
+          numR1Matches = totalQualifiedTeams / 2;
+          // Meias-finais: número de vencedores dos quartos / 2
+          numR2Matches = numR1Matches / 2;
+          // Se temos 8 equipas (4 quartos), temos 2 meias, então precisamos de classificação 5-6 e 7-8
+          if (totalQualifiedTeams === 8) {
+            numR4Matches = 1; // Classificação 5-6 (perdedores das meias que não vão à final)
+            numR5Matches = 1; // Classificação 7-8 (perdedores dos quartos que não vão às meias)
+          }
+        } else if (knockoutStage === 'semifinals') {
+          // Direto para meias-finais: totalQualifiedTeams / 2
+          numR1Matches = totalQualifiedTeams / 2;
+          numR2Matches = 0; // Não há R2, R1 já são as meias-finais
+        } else {
+          // Final direto (não comum, mas possível)
+          numR1Matches = totalQualifiedTeams / 2;
+          numR2Matches = 0;
+        }
+        
+        console.log(`[SCHEDULE] Knockout structure: R1=${numR1Matches} matches (quarters), R2=${numR2Matches} matches (semis), R3=${numR3Matches} matches (final+3rd), R4=${numR4Matches} matches (5-6), R5=${numR5Matches} matches (7-8)`);
+        
+        // Calcular o tempo para começar os playoffs (depois do último jogo de grupo)
+        let playoffsTime = currentTime;
+        // Se já passou do fim do dia, mover para o dia seguinte
+        const endOfDayHour = parseInt(daySchedule.end.split(':')[0]);
+        const endOfDayMinute = parseInt(daySchedule.end.split(':')[1] || '0');
+        const endOfDayInMinutes = endOfDayHour * 60 + endOfDayMinute;
+        const currentHour = playoffsTime.getHours();
+        const currentMinute = playoffsTime.getMinutes();
+        const currentInMinutes = currentHour * 60 + currentMinute;
+        
+        if (currentInMinutes + matchDuration > endOfDayInMinutes) {
+          playoffsTime.setDate(playoffsTime.getDate() + 1);
+          const nextYear = playoffsTime.getFullYear();
+          const nextMonth = String(playoffsTime.getMonth() + 1).padStart(2, '0');
+          const nextDay = String(playoffsTime.getDate()).padStart(2, '0');
+          const nextDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+          const nextDaySchedule = getDaySchedule(nextDateStr);
+          playoffsTime.setHours(parseInt(nextDaySchedule.start.split(':')[0]), parseInt(nextDaySchedule.start.split(':')[1] || '0'), 0, 0);
+        }
+        
+        // RONDA 1 - Playoffs Cruzados (quartos de final ou meias-finais)
+        const r1TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+        
+        for (let i = 0; i < numR1Matches; i++) {
+          const courtNum = ((i % numberOfCourts) + 1).toString();
+          matchesToInsert.push({
+            tournament_id: currentTournament.id,
+            category_id: null,
+            round: `crossed_r1_j${i + 1}`, // crossed_r1_j1, crossed_r1_j2, etc.
+            match_number: matchNumber++,
+            team1_id: null, // TBD - será preenchido quando grupos terminarem
+            team2_id: null, // TBD - será preenchido quando grupos terminarem
+            scheduled_time: r1TimeStr,
+            court: courtNum,
+            status: 'scheduled'
+          });
+        }
+        
+        // RONDA 2 - Meias-finais (se houver quartos de final)
+        if (numR2Matches > 0) {
+          playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
+          const currentDateStr2 = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}`;
+          const daySchedule2 = getDaySchedule(currentDateStr2);
+          const endOfDayInMinutes2 = parseInt(daySchedule2.end.split(':')[0]) * 60 + parseInt(daySchedule2.end.split(':')[1] || '0');
+          const currentInMinutes2 = playoffsTime.getHours() * 60 + playoffsTime.getMinutes();
+          
+          if (currentInMinutes2 + matchDuration > endOfDayInMinutes2) {
+            playoffsTime.setDate(playoffsTime.getDate() + 1);
+            const nextYear = playoffsTime.getFullYear();
+            const nextMonth = String(playoffsTime.getMonth() + 1).padStart(2, '0');
+            const nextDay = String(playoffsTime.getDate()).padStart(2, '0');
+            const nextDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+            const nextDaySchedule = getDaySchedule(nextDateStr);
+            playoffsTime.setHours(parseInt(nextDaySchedule.start.split(':')[0]), parseInt(nextDaySchedule.start.split(':')[1] || '0'), 0, 0);
+          }
+          
+          const r2TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+          
+          for (let i = 0; i < numR2Matches; i++) {
+            const courtNum = ((i % numberOfCourts) + 1).toString();
+            matchesToInsert.push({
+              tournament_id: currentTournament.id,
+              category_id: null,
+              round: `crossed_r2_j${i + 1}`, // crossed_r2_j1, crossed_r2_j2, etc.
+              match_number: matchNumber++,
+              team1_id: null,
+              team2_id: null,
+              scheduled_time: r2TimeStr,
+              court: courtNum,
+              status: 'scheduled'
+            });
+          }
+        }
+        
+        // RONDA 3 - Finais (2 jogos: final e 3º/4º)
+        playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
+        const currentDateStr3 = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}`;
+        const daySchedule3 = getDaySchedule(currentDateStr3);
+        const endOfDayInMinutes3 = parseInt(daySchedule3.end.split(':')[0]) * 60 + parseInt(daySchedule3.end.split(':')[1] || '0');
+        const currentInMinutes3 = playoffsTime.getHours() * 60 + playoffsTime.getMinutes();
+        
+        if (currentInMinutes3 + matchDuration > endOfDayInMinutes3) {
+          playoffsTime.setDate(playoffsTime.getDate() + 1);
+          const nextYear = playoffsTime.getFullYear();
+          const nextMonth = String(playoffsTime.getMonth() + 1).padStart(2, '0');
+          const nextDay = String(playoffsTime.getDate()).padStart(2, '0');
+          const nextDateStr = `${nextYear}-${nextMonth}-${nextDay}`;
+          const nextDaySchedule = getDaySchedule(nextDateStr);
+          playoffsTime.setHours(parseInt(nextDaySchedule.start.split(':')[0]), parseInt(nextDaySchedule.start.split(':')[1] || '0'), 0, 0);
+        }
+        
+        const r3TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+        
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: 'crossed_r3_final', // Final
+          match_number: matchNumber++,
+          team1_id: null,
+          team2_id: null,
+          scheduled_time: r3TimeStr,
+          court: '1',
+          status: 'scheduled'
+        });
+        
+        matchesToInsert.push({
+          tournament_id: currentTournament.id,
+          category_id: null,
+          round: 'crossed_r3_3rd_place', // 3º/4º
+          match_number: matchNumber++,
+          team1_id: null,
+          team2_id: null,
+          scheduled_time: r3TimeStr,
+          court: '2',
+          status: 'scheduled'
+        });
+        
+        // Classificação 5-6 e 7-8 jogam no MESMO slot que final e 3º/4º (campos 3 e 4)
+        if (numR4Matches > 0) {
+          matchesToInsert.push({
+            tournament_id: currentTournament.id,
+            category_id: null,
+            round: 'crossed_r4_5th', // Classificação 5-6
+            match_number: matchNumber++,
+            team1_id: null,
+            team2_id: null,
+            scheduled_time: r3TimeStr, // Mesmo horário que final e 3º/4º
+            court: '3',
+            status: 'scheduled'
+          });
+        }
+        
+        if (numR5Matches > 0) {
+          matchesToInsert.push({
+            tournament_id: currentTournament.id,
+            category_id: null,
+            round: 'crossed_r5_7th', // Classificação 7-8
+            match_number: matchNumber++,
+            team1_id: null,
+            team2_id: null,
+            scheduled_time: r3TimeStr, // Mesmo horário que final e 3º/4º
+            court: '4',
+            status: 'scheduled'
+          });
+        }
+        
+        const totalPlayoffMatches = numR1Matches + numR2Matches + numR3Matches + numR4Matches + numR5Matches;
+        console.log(`[SCHEDULE] Crossed Playoffs Teams: Added ${totalPlayoffMatches} playoff matches (R1:${numR1Matches} quarters + R2:${numR2Matches} semis + R3:${numR3Matches} final+3rd + R4:${numR4Matches} 5-6 + R5:${numR5Matches} 7-8) with TBD. Total matches: ${matchesToInsert.length}`);
         
       } else {
         // Torneios de equipas standard (round_robin, single_elimination, groups_knockout)
