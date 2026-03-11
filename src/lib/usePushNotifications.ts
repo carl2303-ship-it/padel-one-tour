@@ -122,6 +122,7 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
         p256dh: subscriptionJson.keys.p256dh,
         auth: subscriptionJson.keys.auth,
         updated_at: new Date().toISOString(),
+        app_source: 'tour',
       };
 
       if (playerAccountId) {
