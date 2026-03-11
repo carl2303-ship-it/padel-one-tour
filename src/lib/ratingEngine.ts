@@ -1,15 +1,18 @@
 /**
- * Padel One Rating Engine v2
+ * Padel One Rating Engine v3
  * Sistema ELO adaptado para Padel em Duplas
  * 
  * Escala: 0.5 (iniciante) a 7.0 (profissional)
  * Fiabilidade: 0% (0 jogos) a 100% (75+ jogos rated)
  * 
- * v2 Fixes:
- * - K-Factor agora usa rated_matches (contagem real de jogos processados)
- * - wins/losses/rated_matches atualizados em player_accounts após cada jogo
- * - Fiabilidade calculada diretamente a partir de rated_matches
- * - K-Factor inicial reduzido de 0.15 para 0.12 (menos agressivo)
+ * v3 Fixes:
+ * - K-Factor SIGNIFICATIVAMENTE aumentado para jogadores novos (0.5 vs 0.12)
+ *   para que o nível mude visivelmente após cada jogo
+ * - Fórmula ELO com divisor ajustado (1.2 vs 2.0) para maior sensibilidade
+ * - Intensidade do resultado melhorada (3 sets, vitória dominante, etc.)
+ * - Fiabilidade protegida: nunca cai mais de 2% por jogo (preserva avaliação do clube)
+ * - Empate (1-1 sets) tratado com base em games totais
+ * - Logs detalhados para diagnóstico
  */
 
 import { supabase } from './supabase'
@@ -53,6 +56,10 @@ export interface RatingResult {
 /**
  * Calcula os novos ratings de 4 jogadores após um jogo de duplas.
  * Baseado no sistema ELO com adaptações para padel.
+ * 
+ * Escala 0.5-7.0 (range = 6.5). ELO clássico usa range ~2000.
+ * K-Factor proporcional: K_classic=40 → K_padel = 40*(6.5/2000) ≈ 0.13 para veteranos.
+ * Para novos jogadores: K muito mais alto para convergência rápida.
  */
 export function calculateNewRatings(
   team1: { p1: PlayerRating; p2: PlayerRating },
@@ -66,50 +73,75 @@ export function calculateNewRatings(
   const avg1 = (p1.rating + p2.rating) / 2
   const avg2 = (p3.rating + p4.rating) / 2
 
-  // 2. Verificação de Disparidade (Regra do 1.5)
-  //    Se a diferença de médias for >1.5, o jogo não conta para o rating
-  if (Math.abs(avg1 - avg2) > 1.5) {
+  console.log(`[RatingEngine] Team averages: ${avg1.toFixed(2)} vs ${avg2.toFixed(2)}`)
+
+  // 2. Verificação de Disparidade (Regra do 2.0)
+  // Aumentado de 1.5 para 2.0 para permitir mais jogos entre níveis diferentes
+  if (Math.abs(avg1 - avg2) > 2.0) {
     return {
       skipped: true,
-      message: `Disparidade demasiado alta (${Math.abs(avg1 - avg2).toFixed(2)} > 1.5), nível inalterado`,
+      message: `Disparidade demasiado alta (${Math.abs(avg1 - avg2).toFixed(2)} > 2.0), nível inalterado`,
     }
   }
 
   // 3. Probabilidade de Vitória (Expected Outcome)
-  //    Formula Elo: 1 / (1 + 10^((avg2 - avg1) / D))
-  //    D=2 para escala 0.5-7.0
-  const expected1 = 1 / (1 + Math.pow(10, (avg2 - avg1) / 2))
-  const actual1 = score.sets1 > score.sets2 ? 1 : (score.sets1 < score.sets2 ? 0 : 0.5)
+  // Divisor 1.2 (vs 2.0 anterior) — torna a fórmula mais sensível a diferenças de nível
+  // Com divisor 1.2: diferença de 0.5 → expected ≈ 0.27 (antes era 0.36)
+  const expected1 = 1 / (1 + Math.pow(10, (avg2 - avg1) / 1.2))
 
-  // 4. Intensidade do Resultado (Multiplicador)
-  //    Jogo renhido (3 sets) → menor variação (o nível está equilibrado)
-  //    Vitória dominante (grande diferença de games) → maior variação
+  // 4. Resultado Actual
+  // Se empate em sets (1-1), usar diferença de games para desempatar
+  let actual1: number
+  if (score.sets1 > score.sets2) {
+    actual1 = 1
+  } else if (score.sets1 < score.sets2) {
+    actual1 = 0
+  } else {
+    // Empate em sets — usar games totais para determinar vencedor parcial
+    if (score.gamesTotal1 > score.gamesTotal2) {
+      actual1 = 0.6  // Ligeira vantagem (não vitória completa)
+    } else if (score.gamesTotal1 < score.gamesTotal2) {
+      actual1 = 0.4
+    } else {
+      actual1 = 0.5  // Empate verdadeiro
+    }
+  }
+
+  // 5. Intensidade do Resultado (Multiplicador)
   let intensity = 1.0
   const gameDiff = Math.abs(score.gamesTotal1 - score.gamesTotal2)
 
   if (score.sets1 + score.sets2 === 3) {
-    intensity = 0.7  // Jogo renhido de 3 sets (era 0.6)
+    // Jogo de 3 sets — verificar se foi renhido
+    if (gameDiff <= 3) {
+      intensity = 0.6   // Muito renhido (ex: 6-4, 4-6, 7-6)
+    } else {
+      intensity = 0.8   // 3 sets mas com margem
+    }
   } else if (gameDiff > 8) {
-    intensity = 1.2  // Vitória dominante (era 1.3, reduzido)
+    intensity = 1.3   // Vitória dominante (ex: 6-1, 6-2)
+  } else if (gameDiff > 5) {
+    intensity = 1.15  // Vitória clara (ex: 6-3, 6-3)
   }
 
-  // 5. K-Factor: depende do número de jogos RATED do jogador
-  //    Quanto mais jogos, menor o K → mais estável o rating
-  //    < 10 jogos: calibração rápida (jogador novo)
-  //    10-29 jogos: ajuste moderado
-  //    30-49 jogos: ajuste fino
-  //    50+ jogos: estabilidade máxima
+  console.log(`[RatingEngine] Score: sets ${score.sets1}-${score.sets2}, games ${score.gamesTotal1}-${score.gamesTotal2} | expected: ${expected1.toFixed(4)}, actual: ${actual1}, intensity: ${intensity}`)
+
+  // 6. K-Factor baseado em jogos RATED
+  // Muito mais alto para jogadores novos — convergência rápida do nível
   const getKFactor = (matches: number): number => {
-    if (matches < 10) return 0.12   // Era 0.15 - reduzido 20%
-    if (matches < 30) return 0.08
-    if (matches < 50) return 0.05
-    return 0.03
+    if (matches < 5) return 0.50    // Muito novo — convergência rápida
+    if (matches < 10) return 0.35   // Ainda novo
+    if (matches < 20) return 0.25   // A construir histórico
+    if (matches < 40) return 0.15   // Estabelecido
+    if (matches < 60) return 0.10   // Experiente
+    return 0.06                      // Veterano
   }
 
-  // 6. Cálculo do Delta (variação de rating)
+  // 7. Cálculo do Delta
   const calculateDelta = (player: PlayerRating, actual: number, expected: number, intens: number): number => {
     const K = getKFactor(player.matches)
     const change = K * (actual - expected) * intens
+    console.log(`[RatingEngine]   ${player.name}: K=${K}, delta=${change.toFixed(4)} (actual=${actual}, expected=${expected.toFixed(4)}, intensity=${intens})`)
     return parseFloat(change.toFixed(4))
   }
 
@@ -118,11 +150,13 @@ export function calculateNewRatings(
   const delta3 = calculateDelta(p3, 1 - actual1, 1 - expected1, intensity)
   const delta4 = calculateDelta(p4, 1 - actual1, 1 - expected1, intensity)
 
-  // 7. Clamp para manter dentro da escala 0.5 - 7.0
+  // 8. Clamp para manter dentro da escala 0.5 - 7.0
   const clamp = (val: number) => Math.max(0.5, Math.min(7.0, parseFloat(val.toFixed(2))))
 
-  // 8. Determinar quem ganhou/perdeu (para tracking de wins/losses)
-  const team1Won = actual1 === 1 ? true : actual1 === 0 ? false : null // null = draw
+  // 9. Determinar quem ganhou/perdeu
+  const team1Won = actual1 >= 0.6 ? true : actual1 <= 0.4 ? false : null
+
+  console.log(`[RatingEngine] Results: P1 ${p1.rating.toFixed(2)}→${clamp(p1.rating + delta1).toFixed(2)}, P2 ${p2.rating.toFixed(2)}→${clamp(p2.rating + delta2).toFixed(2)}, P3 ${p3.rating.toFixed(2)}→${clamp(p3.rating + delta3).toFixed(2)}, P4 ${p4.rating.toFixed(2)}→${clamp(p4.rating + delta4).toFixed(2)}`)
 
   return {
     team1: {
@@ -141,16 +175,8 @@ export function calculateNewRatings(
 // ============================================
 
 /**
- * Calcula a percentagem de fiabilidade do nível com base no número de jogos RATED.
- * Curva logarítmica: cresce rapidamente no início, estabiliza após 75 jogos.
- * 
- * 0 jogos → 0%
- * 5 jogos → 37%
- * 10 jogos → 55%
- * 20 jogos → 70%
- * 30 jogos → 79%
- * 50 jogos → 91%
- * 75+ jogos → 100%
+ * Calcula a fiabilidade baseada em jogos rated.
+ * 0 jogos = 0%, 75+ jogos = 100%
  */
 export function calculateReliability(totalMatches: number): number {
   if (totalMatches <= 0) return 0
@@ -160,9 +186,17 @@ export function calculateReliability(totalMatches: number): number {
 }
 
 /**
- * Função inversa: dado um valor de fiabilidade, calcula quantos jogos correspondem.
- * Usado quando o utilizador define manualmente a fiabilidade.
+ * Calcula a fiabilidade "protegida" — nunca cai mais de 2% por jogo.
+ * Isto preserva a avaliação feita pelo clube/management.
+ * 
+ * @param newReliability - fiabilidade calculada a partir dos rated_matches
+ * @param currentReliability - fiabilidade actual no player_accounts
+ * @returns fiabilidade a guardar (máximo entre fórmula e decaimento lento)
  */
+export function calculateProtectedReliability(newReliability: number, currentReliability: number): number {
+  return Math.max(newReliability, currentReliability - 2)
+}
+
 export function calculateMatchesFromReliability(reliability: number): number {
   if (reliability <= 0) return 0
   if (reliability >= 100) return 75
@@ -179,28 +213,17 @@ export interface CachedPlayer {
   user_id: string
   name: string
   rating: number
-  matchCount: number  // jogos RATED processados (acumulado)
+  matchCount: number
+  currentReliability: number
 }
 
-export type PlayerCache = Map<string, CachedPlayer>  // key = player_accounts.id
+export type PlayerCache = Map<string, CachedPlayer>
 
 // ============================================
 // Supabase Integration
 // ============================================
 
-/**
- * Processa o rating de um jogo completado.
- * 
- * Fluxo:
- * 1. Busca dados do jogo (scores)
- * 2. Identifica os 4 jogadores
- * 3. Mapeia para player_accounts (onde está o rating)
- * 4. Calcula novos ratings (ELO)
- * 5. Atualiza level + rated_matches + wins/losses + reliability na BD
- * 6. Marca jogo como processado
- */
 export async function processMatchRating(matchId: string, cache?: PlayerCache): Promise<RatingResult | null> {
-  // 1) Buscar o jogo com os IDs das equipas
   const { data: match, error: matchErr } = await supabase
     .from('matches')
     .select(`
@@ -224,7 +247,6 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     return null
   }
 
-  // 2) Calcular score dos sets e games totais
   const s1 = [match.team1_score_set1 ?? 0, match.team2_score_set1 ?? 0] as [number, number]
   const s2 = [match.team1_score_set2 ?? 0, match.team2_score_set2 ?? 0] as [number, number]
   const s3 = [match.team1_score_set3 ?? 0, match.team2_score_set3 ?? 0] as [number, number]
@@ -241,9 +263,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
   const score: MatchScore = { sets1, sets2, gamesTotal1, gamesTotal2 }
 
-  // 3) Identificar os 4 jogadores
   let playerIds: string[] = []
-
   const isIndividual = match.player1_individual_id || match.player2_individual_id
   if (isIndividual) {
     playerIds = [
@@ -269,97 +289,67 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   }
 
   if (playerIds.length < 4) {
-    console.warn('[RatingEngine] Less than 4 players found, skipping:', matchId, 'found:', playerIds.length, 'isIndividual:', !!isIndividual, 'team1_id:', match.team1_id, 'team2_id:', match.team2_id)
+    console.log('[RatingEngine] Less than 4 players found, skipping:', matchId, 'found:', playerIds.length)
     return null
   }
 
-  // 4) Buscar dados dos jogadores na tabela 'players'
-  const { data: playersData, error: playersErr } = await supabase
+  const { data: playersData } = await supabase
     .from('players')
     .select('id, name, phone_number, user_id')
     .in('id', playerIds)
 
   if (!playersData || playersData.length < 4) {
-    console.warn('[RatingEngine] Could not fetch all player entries:', matchId, 'fetched:', playersData?.length || 0, 'expected: 4', 'error:', playersErr)
-    if (playersData) {
-      playersData.forEach(p => console.log(`  Player: ${p.name} | user_id: ${p.user_id || 'NULL'} | phone: ${p.phone_number || 'NULL'}`))
-    }
+    console.log('[RatingEngine] Could not fetch all player entries:', matchId)
     return null
   }
 
-  // 5) Mapear para player_accounts (onde está o rating real)
   const accountsMap = new Map<string, any>()
   const selectFields = 'id, user_id, name, level, rated_matches, wins, losses, level_reliability_percent'
-  const unmappedPlayers: string[] = []
 
   for (const p of playersData) {
     let account: any = null
-    let matchedBy = ''
 
-    // Prioridade 1: user_id
     if (p.user_id) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
         .eq('user_id', p.user_id)
         .maybeSingle()
-      if (data) { account = data; matchedBy = 'user_id' }
+      if (data) account = data
     }
 
-    // Prioridade 2: phone_number
     if (!account && p.phone_number) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
         .eq('phone_number', p.phone_number)
         .maybeSingle()
-      if (data) { account = data; matchedBy = 'phone_number' }
+      if (data) account = data
     }
 
-    // Prioridade 3: name (exact)
     if (!account && p.name) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
         .ilike('name', p.name)
         .maybeSingle()
-      if (data) { account = data; matchedBy = 'name' }
-    }
-
-    // Prioridade 4: name parcial (primeiro nome + apelido)
-    if (!account && p.name && p.name.includes('/')) {
-      // Nomes no formato "Carlos/Padel1/BoostPadel" - tentar primeiro segmento
-      const firstName = p.name.split('/')[0].trim()
-      if (firstName.length >= 3) {
-        const { data } = await supabase
-          .from('player_accounts')
-          .select(selectFields)
-          .ilike('name', `${firstName}%`)
-          .maybeSingle()
-        if (data) { account = data; matchedBy = 'partial_name' }
-      }
+      if (data) account = data
     }
 
     if (account) {
       accountsMap.set(p.id, account)
-      console.log(`[RatingEngine] ✅ ${p.name} → ${account.name} (matched by ${matchedBy}, level: ${account.level})`)
-    } else {
-      unmappedPlayers.push(p.name || p.id)
-      console.warn(`[RatingEngine] ❌ ${p.name}: NOT mapped (user_id: ${p.user_id || 'NULL'}, phone: ${p.phone_number || 'NULL'})`)
     }
   }
 
   if (accountsMap.size < 4) {
-    console.warn(`[RatingEngine] Could not map all players to accounts for match ${matchId}: mapped ${accountsMap.size}/4. Unmapped: ${unmappedPlayers.join(', ')}`)
+    console.log('[RatingEngine] Could not map all players to accounts:', matchId, 'mapped:', accountsMap.size)
     return null
   }
 
-  // 6) Construir PlayerRating para cada jogador
   const buildRating = (playerId: string): PlayerRating | null => {
     const acct = accountsMap.get(playerId)
     if (!acct) return null
 
-    // Se temos cache (batch mode), usar dados acumulados
     const cached = cache?.get(acct.id)
     if (cached) {
       return {
@@ -371,8 +361,6 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       }
     }
 
-    // Primeira vez: usar valores da BD
-    // rated_matches é a fonte de verdade (fallback para wins+losses por compatibilidade)
     return {
       id: acct.id,
       user_id: acct.user_id || '',
@@ -392,7 +380,6 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     return null
   }
 
-  // 7) Calcular novos ratings
   const result = calculateNewRatings({ p1, p2 }, { p3, p4 }, score)
 
   if (result.skipped) {
@@ -400,16 +387,16 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     return result
   }
 
-  // 8) Atualizar BD: level + rated_matches + wins/losses + reliability
   if (result.team1 && result.team2) {
     const allUpdatedPlayers = [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4]
 
     for (const rp of allUpdatedPlayers) {
-      // Calcular fiabilidade com base no número de jogos rated
-      // rp.matches já inclui este jogo (+1 feito no calculateNewRatings)
-      const newReliability = calculateReliability(rp.matches)
+      const formulaReliability = calculateReliability(rp.matches)
+      // Get current reliability from account or cache
+      const acctData = Array.from(accountsMap.values()).find((a: any) => a.id === rp.id)
+      const currentReliability = cache?.get(rp.id)?.currentReliability ?? acctData?.level_reliability_percent ?? 0
+      const protectedReliability = calculateProtectedReliability(formulaReliability, currentReliability)
 
-      // Atualizar cache (para batch mode)
       if (cache) {
         cache.set(rp.id, {
           id: rp.id,
@@ -417,15 +404,15 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
           name: rp.name,
           rating: rp.rating,
           matchCount: rp.matches,
+          currentReliability: protectedReliability,
         })
       }
 
-      // Atualizar na BD via SECURITY DEFINER function (bypassa RLS)
       const { error } = await supabase.rpc('update_player_rating', {
         p_player_account_id: rp.id,
         p_new_level: rp.rating,
-        p_new_reliability: newReliability,
-        p_match_won: rp.won,  // true = win, false = loss, null = draw
+        p_new_reliability: protectedReliability,
+        p_match_won: rp.won,
       })
 
       if (error) {
@@ -433,7 +420,6 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       }
     }
 
-    // Marcar jogo como processado
     const { error: markError } = await supabase.rpc('mark_match_rating_processed', {
       p_match_id: matchId,
     })
@@ -441,31 +427,30 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       console.error('[RatingEngine] Error marking match as processed:', matchId, markError)
     }
 
-    // Logging
     console.log('[RatingEngine] Updated ratings for match:', matchId)
-    const logPlayer = (label: string, before: PlayerRating, after: PlayerRating & { delta: number }) => {
-      const K = after.matches < 10 ? 0.12 : after.matches < 30 ? 0.08 : after.matches < 50 ? 0.05 : 0.03
-      console.log(`  ${after.name}: ${before.rating.toFixed(2)} → ${after.rating.toFixed(2)} (Δ${after.delta >= 0 ? '+' : ''}${after.delta.toFixed(4)}) | K=${K} | jogos rated: ${after.matches} | fiab: ${calculateReliability(after.matches)}%`)
+    const logPlayer = (before: PlayerRating, after: PlayerRating & { delta: number }) => {
+      const K = getKFactorForLog(after.matches)
+      console.log(`  ${after.name}: ${before.rating.toFixed(2)} → ${after.rating.toFixed(2)} (Δ${after.delta >= 0 ? '+' : ''}${after.delta.toFixed(4)}) | K=${K} | jogos: ${after.matches} | fiab: ${calculateReliability(after.matches)}%`)
     }
-    logPlayer('P1', p1, result.team1.p1)
-    logPlayer('P2', p2, result.team1.p2)
-    logPlayer('P3', p3, result.team2.p3)
-    logPlayer('P4', p4, result.team2.p4)
+    logPlayer(p1, result.team1.p1)
+    logPlayer(p2, result.team1.p2)
+    logPlayer(p3, result.team2.p3)
+    logPlayer(p4, result.team2.p4)
   }
 
   return result
 }
 
-/**
- * Processa todos os jogos completados e não processados.
- * Processa cronologicamente para que cada jogo use o rating atualizado do anterior.
- * 
- * IMPORTANTE: Usa PlayerCache para que ratings acumulem correctamente entre jogos.
- * 
- * @param options.since - Filtrar jogos desde esta data
- * @param options.tournamentId - Filtrar jogos apenas deste torneio (RECOMENDADO ao finalizar torneio)
- * @param options.onProgress - Callback de progresso
- */
+// Helper for logging
+function getKFactorForLog(matches: number): number {
+  if (matches < 5) return 0.50
+  if (matches < 10) return 0.35
+  if (matches < 20) return 0.25
+  if (matches < 40) return 0.15
+  if (matches < 60) return 0.10
+  return 0.06
+}
+
 export async function processAllUnratedMatches(
   since?: string,
   onProgress?: (current: number, total: number, info: string) => void,
@@ -498,7 +483,7 @@ export async function processAllUnratedMatches(
     return { processed: 0, skipped: 0, errors: 0, total: 0 }
   }
 
-  console.log(`[RatingEngine] Found ${matches.length} completed matches to process${tournamentId ? ` (tournament: ${tournamentId})` : ''}`)
+  console.log(`[RatingEngine] Found ${matches.length} completed matches to process`)
   onProgress?.(0, matches.length, 'A iniciar processamento...')
 
   const playerCache: PlayerCache = new Map()
@@ -506,7 +491,6 @@ export async function processAllUnratedMatches(
   let processed = 0
   let skipped = 0
   let errors = 0
-  const errorDetails: string[] = []
 
   for (let i = 0; i < matches.length; i++) {
     const match = matches[i]
@@ -514,7 +498,6 @@ export async function processAllUnratedMatches(
       const result = await processMatchRating(match.id, playerCache)
       if (!result) {
         errors++
-        errorDetails.push(`Match ${match.id}: falha no mapeamento de jogadores`)
       } else if (result.skipped) {
         skipped++
       } else {
@@ -523,16 +506,11 @@ export async function processAllUnratedMatches(
     } catch (err) {
       console.error('[RatingEngine] Error processing match:', match.id, err)
       errors++
-      errorDetails.push(`Match ${match.id}: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     if ((i + 1) % 5 === 0 || i === matches.length - 1) {
       onProgress?.(i + 1, matches.length, `Processados: ${processed} | Saltados: ${skipped} | Erros: ${errors}`)
     }
-  }
-
-  if (errorDetails.length > 0) {
-    console.warn('[RatingEngine] Error details:\n' + errorDetails.join('\n'))
   }
 
   const uniquePlayers = playerCache.size
@@ -548,13 +526,6 @@ export async function processAllUnratedMatches(
 // Tournament Reward Points
 // ============================================
 
-/**
- * Atribui reward points a todos os jogadores de um torneio.
- * Usa a regra 'tournament_played' do clube associado ao torneio.
- * 
- * @param tournamentId - ID do torneio
- * @returns Resumo dos pontos atribuídos
- */
 export async function awardTournamentRewardPoints(
   tournamentId: string
 ): Promise<{ awarded: number; skipped: number; errors: number; details: string[] }> {
@@ -563,7 +534,6 @@ export async function awardTournamentRewardPoints(
   let skipped = 0
   let errors = 0
 
-  // 1) Buscar o torneio para obter club_id
   const { data: tournament, error: tErr } = await supabase
     .from('tournaments')
     .select('id, name, club_id')
@@ -580,7 +550,6 @@ export async function awardTournamentRewardPoints(
     return { awarded: 0, skipped: 0, errors: 0, details: ['Torneio sem clube associado - sem rewards'] }
   }
 
-  // 2) Verificar se a regra 'tournament_played' existe e está ativa
   const { data: rule } = await supabase
     .from('reward_rules')
     .select('id, points')
@@ -594,7 +563,6 @@ export async function awardTournamentRewardPoints(
     return { awarded: 0, skipped: 0, errors: 0, details: ['Sem regra de reward "tournament_played" ativa neste clube'] }
   }
 
-  // 3) Buscar todos os jogadores do torneio
   const { data: players } = await supabase
     .from('players')
     .select('id, name, user_id, phone_number')
@@ -606,11 +574,9 @@ export async function awardTournamentRewardPoints(
 
   console.log(`[Rewards] Found ${players.length} players in tournament ${tournament.name}`)
 
-  // 4) Para cada jogador, encontrar o player_account_id e atribuir pontos
   for (const player of players) {
     let playerAccountId: string | null = null
 
-    // Prioridade 1: user_id
     if (player.user_id) {
       const { data } = await supabase
         .from('player_accounts')
@@ -620,7 +586,6 @@ export async function awardTournamentRewardPoints(
       if (data) playerAccountId = data.id
     }
 
-    // Prioridade 2: phone_number
     if (!playerAccountId && player.phone_number) {
       const { data } = await supabase
         .from('player_accounts')
@@ -630,7 +595,6 @@ export async function awardTournamentRewardPoints(
       if (data) playerAccountId = data.id
     }
 
-    // Prioridade 3: name
     if (!playerAccountId && player.name) {
       const { data } = await supabase
         .from('player_accounts')
@@ -646,7 +610,6 @@ export async function awardTournamentRewardPoints(
       continue
     }
 
-    // Atribuir pontos via RPC
     const { data: result, error: awardErr } = await supabase.rpc('award_reward_points', {
       p_player_account_id: playerAccountId,
       p_club_id: tournament.club_id,
@@ -660,7 +623,6 @@ export async function awardTournamentRewardPoints(
       errors++
       details.push(`❌ ${player.name}: erro ao atribuir pontos`)
     } else if (result && !result.success) {
-      // Provavelmente já tinha pontos atribuídos (duplicado)
       skipped++
       details.push(`⏭️ ${player.name}: ${result.error || 'já tinha pontos'}`)
     } else {
