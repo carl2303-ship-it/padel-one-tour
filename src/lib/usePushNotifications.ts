@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from './authContext';
 
-const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || '';
+// Same VAPID public key used across all Padel One apps
+const VAPID_PUBLIC_KEY = 'BET_2Ji1WCUYQHQEzqyUiOzpKsmfQn9LuPTbNemOY0pxOiO4wbwpMYIfRcAMdJncZmo7vBDggAcih1IIxSdGi58';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
