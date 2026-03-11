@@ -179,6 +179,7 @@ Deno.serve(async (req: Request) => {
 
         let wins = 0;
         let losses = 0;
+        let completedNoScore = 0; // Matches completed but without valid scores
 
         const matchResults = (allMatches || []).map((m: any) => {
           const isIndividual = m.p1 || m.p2 || m.p3 || m.p4;
@@ -224,13 +225,22 @@ Deno.serve(async (req: Request) => {
             (m.team2_score_set3 || 0) > (m.team1_score_set3 || 0) ? 1 : 0,
           ].reduce((a, b) => a + b, 0);
           let is_winner: boolean | undefined;
-          if (m.status === 'completed' && (team1Sets > 0 || team2Sets > 0)) {
+          if (m.status === 'completed') {
+            // Count ALL completed matches, not just those with sets > 0
+            const hasScores = team1Sets > 0 || team2Sets > 0;
             const isPlayerInTeam1 = isIndividual
               ? playerIds.includes(m.p1?.id) || playerIds.includes(m.p2?.id)
               : teamIds.includes(m.team1?.id);
-            is_winner = isPlayerInTeam1 ? team1Sets > team2Sets : team2Sets > team1Sets;
-            if (is_winner) wins++;
-            else losses++;
+            if (hasScores) {
+              is_winner = isPlayerInTeam1 ? team1Sets > team2Sets : team2Sets > team1Sets;
+            } else {
+              // Match completed but no scores (e.g., walkover) - count as completed
+              is_winner = undefined;
+            }
+            if (is_winner === true) wins++;
+            else if (is_winner === false) losses++;
+            else if (hasScores && team1Sets === team2Sets) losses++; // Tie counts as loss for stats
+            else completedNoScore++; // Match completed without scores (walkover, etc.)
           }
           const set1 = m.team1_score_set1 != null && m.team2_score_set1 != null
             ? `${m.team1_score_set1}-${m.team2_score_set1}` : undefined;
@@ -259,19 +269,195 @@ Deno.serve(async (req: Request) => {
           };
         });
 
-        const totalMatches = wins + losses;
+        const totalMatches = wins + losses + completedNoScore;
         stats = {
           totalMatches,
           wins,
           losses,
-          winRate: totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0,
+          winRate: (wins + losses) > 0 ? Math.round((wins / (wins + losses)) * 100) : 0,
         };
+        console.log('[EdgeFn] Tournament match breakdown: wins=', wins, 'losses=', losses, 'noScore=', completedNoScore, 'total=', totalMatches);
 
         // Recent completed matches (most recent first, already sorted desc)
         recentMatches = matchResults.filter((m: any) => m.status === 'completed').slice(0, 50);
 
-        console.log('[EdgeFn] Stats computed:', stats, 'recentMatches:', recentMatches.length);
+        console.log('[EdgeFn] Tournament stats computed:', stats, 'recentMatches:', recentMatches.length);
       }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OPEN GAME RESULTS: Also count confirmed open game results
+    // ═══════════════════════════════════════════════════════════════
+    try {
+      // Get game IDs where player participated
+      const ogQueries = [];
+      if (playerAccountId) {
+        ogQueries.push(
+          supabaseAdmin.from('open_game_players').select('game_id').eq('player_account_id', playerAccountId).eq('status', 'confirmed')
+        );
+      }
+      ogQueries.push(
+        supabaseAdmin.from('open_game_players').select('game_id').eq('user_id', user.id).eq('status', 'confirmed')
+      );
+
+      const ogResults = await Promise.all(ogQueries);
+      const ogGameIdSet = new Set<string>();
+      ogResults.forEach(r => {
+        (r.data || []).forEach((g: any) => ogGameIdSet.add(g.game_id));
+      });
+
+      if (ogGameIdSet.size > 0) {
+        const ogGameIds = Array.from(ogGameIdSet);
+
+        // Fetch confirmed results for these games
+        const { data: confirmedResults } = await supabaseAdmin
+          .from('open_game_results')
+          .select('game_id, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, status, created_at')
+          .in('game_id', ogGameIds)
+          .eq('status', 'confirmed')
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (confirmedResults && confirmedResults.length > 0) {
+          // Get player positions to determine which team the player is on
+          const { data: ogPlayers } = await supabaseAdmin
+            .from('open_game_players')
+            .select('game_id, user_id, player_account_id, position')
+            .in('game_id', confirmedResults.map(r => r.game_id))
+            .eq('status', 'confirmed')
+            .order('position', { ascending: true });
+
+          // Get player names
+          const ogUserIds = [...new Set((ogPlayers || []).map((p: any) => p.user_id).filter(Boolean))];
+          const ogPaIds = [...new Set((ogPlayers || []).map((p: any) => p.player_account_id).filter(Boolean))];
+          const ogAccountsMap = new Map<string, string>();
+
+          if (ogUserIds.length > 0 || ogPaIds.length > 0) {
+            const acctQueries = [];
+            if (ogUserIds.length > 0) {
+              acctQueries.push(supabaseAdmin.from('player_accounts').select('id, user_id, name').in('user_id', ogUserIds));
+            }
+            if (ogPaIds.length > 0) {
+              acctQueries.push(supabaseAdmin.from('player_accounts').select('id, user_id, name').in('id', ogPaIds));
+            }
+            const acctResults = await Promise.all(acctQueries);
+            acctResults.forEach(r => {
+              (r.data || []).forEach((a: any) => {
+                if (a.user_id) ogAccountsMap.set('u_' + a.user_id, a.name);
+                ogAccountsMap.set('pa_' + a.id, a.name);
+              });
+            });
+          }
+
+          // Fetch game details (scheduled_at, club_id)
+          const { data: ogGames } = await supabaseAdmin
+            .from('open_games')
+            .select('id, scheduled_at, club_id')
+            .in('id', confirmedResults.map(r => r.game_id));
+
+          const ogGamesMap = new Map((ogGames || []).map((g: any) => [g.id, g]));
+
+          // Fetch club names
+          const ogClubIds = [...new Set((ogGames || []).map((g: any) => g.club_id).filter(Boolean))];
+          const ogClubsMap = new Map<string, string>();
+          if (ogClubIds.length > 0) {
+            const { data: clubs } = await supabaseAdmin.from('clubs').select('id, name').in('id', ogClubIds);
+            (clubs || []).forEach((c: any) => ogClubsMap.set(c.id, c.name));
+          }
+
+          let openWins = 0;
+          let openLosses = 0;
+
+          const openGameMatches = confirmedResults.map((result: any) => {
+            const gamePlayers = (ogPlayers || [])
+              .filter((p: any) => p.game_id === result.game_id)
+              .sort((a: any, b: any) => (a.position || 0) - (b.position || 0));
+
+            const getPlayerName = (idx: number) => {
+              const p = gamePlayers[idx];
+              if (!p) return 'TBD';
+              return (p.player_account_id ? ogAccountsMap.get('pa_' + p.player_account_id) : null) ||
+                     ogAccountsMap.get('u_' + p.user_id) || 'Jogador';
+            };
+
+            const p1Name = getPlayerName(0);
+            const p2Name = getPlayerName(1);
+            const p3Name = getPlayerName(2);
+            const p4Name = getPlayerName(3);
+
+            const sets1 = ((result.team1_score_set1 || 0) > (result.team2_score_set1 || 0) ? 1 : 0) +
+              ((result.team1_score_set2 || 0) > (result.team2_score_set2 || 0) ? 1 : 0) +
+              ((result.team1_score_set3 || 0) > (result.team2_score_set3 || 0) ? 1 : 0);
+            const sets2 = ((result.team2_score_set1 || 0) > (result.team1_score_set1 || 0) ? 1 : 0) +
+              ((result.team2_score_set2 || 0) > (result.team1_score_set2 || 0) ? 1 : 0) +
+              ((result.team2_score_set3 || 0) > (result.team1_score_set3 || 0) ? 1 : 0);
+
+            // Determine if current user is in team 1 or team 2
+            const myPlayer = gamePlayers.find((p: any) =>
+              p.user_id === user.id || (playerAccountId && p.player_account_id === playerAccountId)
+            );
+            const myTeam = myPlayer ? ((myPlayer.position || 0) <= 2 ? 1 : 2) : 0;
+            const is_winner = myTeam === 1 ? sets1 > sets2 : myTeam === 2 ? sets2 > sets1 : undefined;
+
+            if (is_winner === true) openWins++;
+            else if (is_winner === false) openLosses++;
+
+            const game = ogGamesMap.get(result.game_id);
+            const s1 = `${result.team1_score_set1 || 0}-${result.team2_score_set1 || 0}`;
+            const s2 = (result.team1_score_set2 > 0 || result.team2_score_set2 > 0) ? `${result.team1_score_set2}-${result.team2_score_set2}` : undefined;
+            const s3 = (result.team1_score_set3 > 0 || result.team2_score_set3 > 0) ? `${result.team1_score_set3}-${result.team2_score_set3}` : undefined;
+
+            return {
+              id: `open_result_${result.game_id}`,
+              tournament_id: '',
+              tournament_name: 'Jogo Aberto',
+              court: '',
+              start_time: game?.scheduled_at || result.created_at,
+              team1_name: `${p1Name} / ${p2Name}`,
+              team2_name: `${p3Name} / ${p4Name}`,
+              player1_name: p1Name,
+              player2_name: p2Name,
+              player3_name: p3Name,
+              player4_name: p4Name,
+              score1: sets1,
+              score2: sets2,
+              status: 'completed',
+              round: '',
+              is_winner,
+              set1: s1,
+              set2: s2,
+              set3: s3,
+              is_open_game: true,
+              open_game_id: result.game_id,
+              club_name: game?.club_id ? ogClubsMap.get(game.club_id) || '' : '',
+            };
+          });
+
+          // Add open game stats to tournament stats
+          const tournamentWins = stats?.wins || 0;
+          const tournamentLosses = stats?.losses || 0;
+          const totalWins = tournamentWins + openWins;
+          const totalLosses = tournamentLosses + openLosses;
+          const totalAll = totalWins + totalLosses;
+
+          stats = {
+            totalMatches: totalAll,
+            wins: totalWins,
+            losses: totalLosses,
+            winRate: totalAll > 0 ? Math.round((totalWins / totalAll) * 100) : 0,
+          };
+
+          // Merge open game results with recent matches
+          recentMatches = [...recentMatches, ...openGameMatches]
+            .sort((a: any, b: any) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+            .slice(0, 50);
+
+          console.log('[EdgeFn] Open game stats: wins=', openWins, 'losses=', openLosses, 'total open results=', confirmedResults.length);
+          console.log('[EdgeFn] Combined stats:', stats, 'total recentMatches:', recentMatches.length);
+        }
+      }
+    } catch (ogErr) {
+      console.error('[EdgeFn] Error fetching open game results:', ogErr);
     }
 
     // Fetch league standings (priority: player_account_id > entity_id > entity_name)

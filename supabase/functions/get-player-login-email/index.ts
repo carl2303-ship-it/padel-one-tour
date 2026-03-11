@@ -55,20 +55,53 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    console.log('[DEBUG] Looking up phone:', normalizedPhone);
-    console.log('[DEBUG] Phone length:', normalizedPhone.length);
-    console.log('[DEBUG] Phone char codes:', [...normalizedPhone].map(c => c.charCodeAt(0)));
+    console.log('[DEBUG] Input phone:', phone_number);
+    console.log('[DEBUG] Normalized phone:', normalizedPhone);
 
-    const { data: playerAccount, error: accountError } = await supabaseAdmin
+    // Try exact match first - INCLUDE id in select!
+    let { data: playerAccount, error: accountError } = await supabaseAdmin
       .from('player_accounts')
-      .select('user_id, phone_number, email')
+      .select('id, user_id, phone_number, email, name')
       .eq('phone_number', normalizedPhone)
       .maybeSingle();
 
-    console.log('[DEBUG] Query result - playerAccount:', JSON.stringify(playerAccount));
-    console.log('[DEBUG] Query result - accountError:', JSON.stringify(accountError));
+    console.log('[DEBUG] Exact match result:', JSON.stringify(playerAccount));
 
-    if (accountError || !playerAccount) {
+    // If not found, try without the + sign
+    if (!playerAccount) {
+      const phoneWithoutPlus = normalizedPhone.replace('+', '');
+      console.log('[DEBUG] Trying without +:', phoneWithoutPlus);
+      const { data: accountWithoutPlus } = await supabaseAdmin
+        .from('player_accounts')
+        .select('id, user_id, phone_number, email, name')
+        .eq('phone_number', phoneWithoutPlus)
+        .maybeSingle();
+      
+      if (accountWithoutPlus) {
+        playerAccount = accountWithoutPlus;
+        accountError = null;
+        console.log('[DEBUG] Found account without +:', JSON.stringify(accountWithoutPlus));
+      }
+    }
+
+    // If still not found, try with just the last 9 digits (Portuguese mobile format)
+    if (!playerAccount) {
+      const last9Digits = normalizedPhone.slice(-9);
+      console.log('[DEBUG] Trying last 9 digits:', last9Digits);
+      const { data: accountLast9 } = await supabaseAdmin
+        .from('player_accounts')
+        .select('id, user_id, phone_number, email, name')
+        .or(`phone_number.eq.+351${last9Digits},phone_number.eq.${last9Digits},phone_number.ilike.%${last9Digits}`)
+        .maybeSingle();
+      
+      if (accountLast9) {
+        playerAccount = accountLast9;
+        accountError = null;
+        console.log('[DEBUG] Found account with last 9 digits:', JSON.stringify(accountLast9));
+      }
+    }
+
+    if (!playerAccount) {
       const { data: allAccounts } = await supabaseAdmin
         .from('player_accounts')
         .select('phone_number')
@@ -76,7 +109,13 @@ Deno.serve(async (req: Request) => {
       console.log('[DEBUG] Similar accounts found:', JSON.stringify(allAccounts));
 
       return new Response(
-        JSON.stringify({ error: 'Player account not found', debug: { normalizedPhone, accountError } }),
+        JSON.stringify({ 
+          error: 'Player account not found', 
+          debug: { 
+            normalizedPhone, 
+            searchedVariations: [normalizedPhone, normalizedPhone.replace('+', ''), normalizedPhone.slice(-9)] 
+          } 
+        }),
         {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -84,60 +123,127 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let playerEmail = playerAccount.email;
+    console.log('[DEBUG] Found player_account id:', playerAccount.id);
+    console.log('[DEBUG] Found player_account user_id:', playerAccount.user_id);
+    console.log('[DEBUG] Found player_account email:', playerAccount.email);
 
+    // Use the actual phone number from the database
+    const accountPhone = playerAccount.phone_number || normalizedPhone;
+    
+    // PRIORITY: If user_id exists, ALWAYS get the email from auth.users
+    // This is the email that will be used for signInWithPassword
+    let playerEmail: string | null = null;
+
+    if (playerAccount.user_id) {
+      console.log('[DEBUG] Player has user_id, getting email from auth system...');
+      const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(
+        playerAccount.user_id
+      );
+      
+      if (authUser?.user?.email) {
+        playerEmail = authUser.user.email;
+        console.log('[DEBUG] Got email from auth.users:', playerEmail);
+        
+        // Sync email to player_accounts if different
+        if (playerAccount.email !== playerEmail) {
+          console.log('[DEBUG] Syncing email to player_accounts (was:', playerAccount.email, ', now:', playerEmail, ')');
+          await supabaseAdmin
+            .from('player_accounts')
+            .update({ email: playerEmail })
+            .eq('id', playerAccount.id);
+        }
+      } else {
+        console.log('[DEBUG] Auth user not found or has no email:', authError?.message);
+        // Auth user might be deleted/corrupt - use player_accounts email or generate
+        playerEmail = playerAccount.email;
+      }
+    } else {
+      // No user_id yet - use email from player_accounts
+      playerEmail = playerAccount.email;
+    }
+
+    // If still no email, generate one
     if (!playerEmail) {
-      const phoneDigits = normalizedPhone.replace(/[^\d]/g, '');
+      const phoneDigits = accountPhone.replace(/[^\d]/g, '');
       playerEmail = `${phoneDigits}@boostpadel.app`;
-
-      console.log('[DEBUG] No email found, generated:', playerEmail);
+      console.log('[DEBUG] Generated email:', playerEmail);
 
       await supabaseAdmin
         .from('player_accounts')
         .update({ email: playerEmail })
-        .eq('phone_number', normalizedPhone);
-
+        .eq('id', playerAccount.id);
+      
       console.log('[DEBUG] Updated player_account with generated email');
     }
+    
+    console.log('[DEBUG] Final email to return:', playerEmail);
 
+    // If no user_id, create an auth user
     if (!playerAccount.user_id) {
       console.log('[DEBUG] Player account has no user_id, creating auth user...');
 
-      const last4Digits = normalizedPhone.slice(-4);
+      const last4Digits = accountPhone.replace(/[^\d]/g, '').slice(-4);
       const defaultPassword = `Player${last4Digits}!`;
 
-      const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email: playerEmail,
-        password: defaultPassword,
-        email_confirm: true,
-        user_metadata: {
-          display_name: playerAccount.name || 'Player',
-          phone_number: normalizedPhone,
-        },
-      });
+      console.log('[DEBUG] Account phone:', accountPhone);
+      console.log('[DEBUG] Last 4 digits:', last4Digits);
+      console.log('[DEBUG] Default password:', defaultPassword);
 
-      if (createError) {
-        console.error('[DEBUG] Error creating auth user:', createError);
-        return new Response(
-          JSON.stringify({ error: 'Could not create auth user', details: createError.message }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      }
+      // Check if an auth user with this email already exists
+      const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
+      const existingUser = existingUsers?.users?.find(u => u.email === playerEmail);
 
-      if (newUser?.user?.id) {
+      if (existingUser) {
+        console.log('[DEBUG] Auth user already exists with this email:', existingUser.id);
+        
+        // Link the existing user
         await supabaseAdmin
           .from('player_accounts')
-          .update({ user_id: newUser.user.id })
+          .update({ user_id: existingUser.id })
           .eq('id', playerAccount.id);
+        
+        // Reset password to standard format
+        await supabaseAdmin.auth.admin.updateUserById(
+          existingUser.id,
+          { password: defaultPassword }
+        );
+        
+        console.log('[DEBUG] Linked existing auth user and reset password');
+      } else {
+        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email: playerEmail,
+          password: defaultPassword,
+          email_confirm: true,
+          user_metadata: {
+            display_name: playerAccount.name || 'Player',
+            phone_number: accountPhone,
+          },
+        });
 
-        await supabaseAdmin
-          .from('user_logo_settings')
-          .upsert({ user_id: newUser.user.id, role: 'player', logo_url: null });
+        if (createError) {
+          console.error('[DEBUG] Error creating auth user:', createError);
+          return new Response(
+            JSON.stringify({ error: 'Could not create auth user', details: createError.message }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
 
-        console.log('[DEBUG] Created auth user and updated player_account with user_id:', newUser.user.id);
+        if (newUser?.user?.id) {
+          await supabaseAdmin
+            .from('player_accounts')
+            .update({ user_id: newUser.user.id })
+            .eq('id', playerAccount.id);
+
+          await supabaseAdmin
+            .from('user_logo_settings')
+            .upsert({ user_id: newUser.user.id, role: 'player', logo_url: null }, { onConflict: 'user_id' });
+
+          console.log('[DEBUG] Created auth user:', newUser.user.id);
+          console.log('[DEBUG] Password set to:', defaultPassword);
+        }
       }
     }
 
