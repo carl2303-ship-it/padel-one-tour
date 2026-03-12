@@ -88,10 +88,7 @@ async function advanceLoserToClassificationRound(
   categoryId: string | null
 ) {
   const classificationMapping: Record<string, string> = {
-    'quarter_final': '5th_semifinal',
     'semi_final': '3rd_place',
-    '5th_semifinal': '7th_place',
-    '9th_semifinal': '11th_place',
   };
 
   const classificationRound = classificationMapping[currentRound];
@@ -142,7 +139,7 @@ async function advanceLoserToClassificationRound(
     return;
   }
 
-  if (classificationRound === '3rd_place' || classificationRound === '7th_place' || classificationRound === '11th_place') {
+  if (classificationRound === '3rd_place') {
     const match = classificationMatches[0];
     const updateField = !match.team1_id ? 'team1_id' : 'team2_id';
     console.log(`[CLASSIFICATION] Loser from ${currentRound} match ${currentMatchNumber} -> ${classificationRound}, slot: ${updateField}`);
@@ -174,8 +171,6 @@ async function advanceClassificationWinner(
   categoryId: string | null
 ) {
   const winnerMapping: Record<string, string> = {
-    '5th_semifinal': '5th_place',
-    '9th_semifinal': '9th_place',
   };
 
   const nextRound = winnerMapping[currentRound];
@@ -341,8 +336,6 @@ const PLACEMENT_TIER_CONFIG: Array<{
   thirdPlaceRound: string;
 }> = [
   { semifinalRound: '1st_semifinal', finalRound: 'final', thirdPlaceRound: '3rd_place' },
-  { semifinalRound: '5th_semifinal', finalRound: '5th_place', thirdPlaceRound: '7th_place' },
-  { semifinalRound: '9th_semifinal', finalRound: '9th_place', thirdPlaceRound: '11th_place' },
   { semifinalRound: '13th_semifinal', finalRound: '13th_place', thirdPlaceRound: '15th_place' },
   { semifinalRound: '17th_semifinal', finalRound: '17th_place', thirdPlaceRound: '19th_place' },
   { semifinalRound: '21st_semifinal', finalRound: '21st_place', thirdPlaceRound: '23rd_place' },
@@ -949,9 +942,9 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
 
         const knockoutRoundsForIndividual = [
           'semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16',
-          'final', '3rd_place', 'consolation', '5th_place', '7th_place', '9th_place', '11th_place',
+          'final', '3rd_place', 'consolation',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
-          '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal'
+          '1st_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal'
         ];
 
         if (knockoutRoundsForIndividual.includes(currentMatch.round)) {
@@ -964,7 +957,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
         }
 
         const allSemifinalRounds = [
-          'semifinal', '1st_semifinal', '5th_semifinal', '9th_semifinal',
+          'semifinal', '1st_semifinal',
           '13th_semifinal', '17th_semifinal', '21st_semifinal'
         ];
 
@@ -976,7 +969,6 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
 
         const allFinalRounds = [
           'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', 'consolation',
-          '5th_place', '7th_place', '9th_place', '11th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
           'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place',
           'crossed_r4_5th', 'crossed_r5_7th'
@@ -1025,8 +1017,8 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
     try {
       const allKnockoutRounds = [
         'semifinal', 'semi_final', 'final', 'quarter_final', 'quarterfinal', 'round_of_16',
-        '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal',
-        '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
+        '1st_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal',
+        '3rd_place', 'consolation',
         '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place'
       ];
       const isKnockoutRound = allKnockoutRounds.includes(matchData.round);
@@ -1056,8 +1048,6 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       const semifinalToFinalMap: Record<string, { final: string; third: string }> = {
         'semifinal': { final: 'final', third: '3rd_place' },
         '1st_semifinal': { final: 'final', third: '3rd_place' },
-        '5th_semifinal': { final: '5th_place', third: '7th_place' },
-        '9th_semifinal': { final: '9th_place', third: '11th_place' },
         '13th_semifinal': { final: '13th_place', third: '15th_place' },
         '17th_semifinal': { final: '17th_place', third: '19th_place' },
         '21st_semifinal': { final: '21st_place', third: '23rd_place' },
@@ -1109,7 +1099,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       }
 
       const knockoutPositionRounds = [
-        'final', '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
+        'final', '3rd_place', 'consolation',
         '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place'
       ];
       if (isKnockoutRound && knockoutPositionRounds.includes(matchData.round)) {
@@ -1148,16 +1138,16 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
               }
             }
 
-            // Clear 5th_semifinal slot
-            let sf5Query = supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('round', '5th_semifinal').order('match_number', { ascending: true });
-            if (catFilter) sf5Query = sf5Query.eq('category_id', catFilter); else sf5Query = sf5Query.is('category_id', null);
-            const { data: sf5Matches } = await sf5Query;
-            if (sf5Matches && sf5Matches[targetIdx]) {
+            // Clear consolation slot
+            let consolQuery = supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('round', 'consolation').order('match_number', { ascending: true });
+            if (catFilter) consolQuery = consolQuery.eq('category_id', catFilter); else consolQuery = consolQuery.is('category_id', null);
+            const { data: consolMatches } = await consolQuery;
+            if (consolMatches && consolMatches[0]) {
               const clearData: any = isFirst
                 ? { player1_individual_id: null, player2_individual_id: null }
                 : { player3_individual_id: null, player4_individual_id: null };
-              await supabase.from('matches').update(clearData).eq('id', sf5Matches[targetIdx].id);
-              console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared 5th_SF${targetIdx + 1} ${isFirst ? 'team1' : 'team2'}`);
+              await supabase.from('matches').update(clearData).eq('id', consolMatches[0].id);
+              console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared consolation ${isFirst ? 'team1' : 'team2'}`);
             }
           }
         }

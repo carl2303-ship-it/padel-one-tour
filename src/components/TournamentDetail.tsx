@@ -5089,12 +5089,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
             advanceKoTime();
 
-            // Create 5th_semifinal matches (for QF losers)
-            const num5thSemis = Math.max(1, Math.ceil(numQuarters / 2));
-            console.log(`[SCHEDULE] Creating ${num5thSemis} 5th_semifinal matches (for ${numQuarters} quarterfinal losers)`);
-            for (let i = 0; i < num5thSemis; i++) {
-              addKoMatch('5th_semifinal', ((i % numberOfCourts) + 1).toString());
-            }
+            // Create consolation match for QF losers (single match)
+            console.log(`[SCHEDULE] Creating 1 consolation match for QF losers`);
+            addKoMatch('consolation', ((numSemis % numberOfCourts) + 1).toString());
             advanceKoTime();
           } else if (categoryKnockoutStage === 'semifinals') {
             // Direct to semifinals (no quarters)
@@ -5115,31 +5112,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           addKoMatch('3rd_place', '1');
           addKoMatch('final', '2');
 
-          // Create 5th/7th place matches when quarterfinals exist
-          if (categoryKnockoutStage === 'quarterfinals') {
-            addKoMatch('5th_place', numberOfCourts >= 2 ? '1' : '1');
-            addKoMatch('7th_place', numberOfCourts >= 2 ? '2' : '1');
-            advanceKoTime();
-
-            // Check for non-qualified players to create 9th-12th place matches
-            const totalPlayersInTournament = individualPlayers.length;
-            const nonQualifiedCount = totalPlayersInTournament - totalQualifiedPlayers;
-            console.log(`[SCHEDULE] Non-qualified players: ${nonQualifiedCount} (total: ${totalPlayersInTournament}, qualified: ${totalQualifiedPlayers})`);
-
-            if (nonQualifiedCount >= 8) {
-              // Enough for 2 × 9th_semifinal → 9th_place + 11th_place
-              console.log(`[SCHEDULE] Creating 9th_semifinal (2 matches) + 9th_place + 11th_place`);
-              addKoMatch('9th_semifinal', '1');
-              addKoMatch('9th_semifinal', numberOfCourts >= 2 ? '2' : '1');
-              advanceKoTime();
-              addKoMatch('9th_place', '1');
-              addKoMatch('11th_place', numberOfCourts >= 2 ? '2' : '1');
-            } else if (nonQualifiedCount >= 4) {
-              // Enough for just 1 direct match (9th_place with 4 players, no semifinal needed)
-              console.log(`[SCHEDULE] Creating 9th_place match (direct, ${nonQualifiedCount} non-qualified players)`);
-              addKoMatch('9th_place', '1');
-            }
-          }
+          // No extra placement matches needed - consolation match already created above for QF losers
 
           console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}). Total: ${matchesToInsert.length}`);
         }

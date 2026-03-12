@@ -2288,14 +2288,14 @@ function exportKnockoutPhase(
   const roundOrder = [
     'round_of_16', 'quarter_final', 'quarterfinals', 'quarterfinal',
     'semi_final', 'semifinal', 'semifinals',
-    '5th_semifinal', '9th_semifinal',
+    'consolation',
     'mixed_semifinal1', 'mixed_semifinal2',
     'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
     'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_j1', 'crossed_r2_j2', 'crossed_r2_5th_place',
     'crossed_r3_3rd_place', 'crossed_r3_final',
     'crossed_r4_5th', 'crossed_r5_7th',
     'mixed_3rd_place', 'mixed_final',
-    '11th_place', '9th_place', '7th_place', '5th_place', '3rd_place', 'final'
+    '3rd_place', 'final'
   ];
 
   const roundNames: { [key: string]: string } = {
@@ -2323,12 +2323,7 @@ function exportKnockoutPhase(
     'mixed_3rd_place': '3o/4o Lugar',
     'mixed_final': 'FINAL',
     'quarterfinal': 'Quartos de Final',
-    '5th_semifinal': 'Meia-Final (5-8)',
-    '9th_semifinal': 'Meia-Final (9-12)',
-    '11th_place': '11o/12o Lugar',
-    '9th_place': '9o/10o Lugar',
-    '7th_place': '7o/8o Lugar',
-    '5th_place': '5o/6o Lugar',
+    'consolation': 'Consolacao',
     '3rd_place': '3o/4o Lugar',
     'final': 'FINAL'
   };

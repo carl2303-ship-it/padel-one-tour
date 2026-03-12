@@ -370,7 +370,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         }
 
         // Outros jogos de classificação (5th_place, 7th_place, etc.)
-        const otherPlacementRounds = ['5th_place', '7th_place', '9th_place', '11th_place'];
+        const otherPlacementRounds = ['consolation'];
         for (const roundName of otherPlacementRounds) {
           const placementMatch = knockoutMatches.find(m => m.round === roundName && m.status === 'completed');
           if (placementMatch) {
@@ -644,13 +644,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           m.round === 'semifinal' ||
           m.round === 'final' ||
           m.round === '3rd_place' ||
-          m.round === 'consolation' ||
-          m.round === '5th_semifinal' ||
-          m.round === '5th_place' ||
-          m.round === '7th_place' ||
-          m.round === '9th_semifinal' ||
-          m.round === '9th_place' ||
-          m.round === '11th_place'
+          m.round === 'consolation'
         );
 
         console.log('[STANDINGS-INDIVIDUAL-GROUPS] Knockout matches found:', knockoutMatches.length);
@@ -841,7 +835,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             });
           }
 
-          const placementRounds = ['consolation', '5th_place', '7th_place', '9th_place', '11th_place'];
+          const placementRounds = ['consolation'];
           for (const roundName of placementRounds) {
             const placementMatch = knockoutMatches.find(m => m.round === roundName);
             if (placementMatch && placementMatch.status === 'completed') {

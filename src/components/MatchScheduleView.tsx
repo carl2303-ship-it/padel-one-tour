@@ -1063,8 +1063,7 @@ export default function MatchScheduleView({
                     <div className="space-y-6">
                       {[
                         '1st_semifinal', 'semifinal', 'final', '3rd_place',
-                        '5th_semifinal', '5th_place', '7th_place',
-                        '9th_semifinal', '9th_place', '11th_place',
+                        'consolation',
                         '13th_semifinal', '13th_place', '15th_place',
                         '17th_semifinal', '17th_place', '19th_place',
                         '21st_semifinal', '21st_place', '23rd_place',

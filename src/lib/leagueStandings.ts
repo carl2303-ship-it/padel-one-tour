@@ -574,55 +574,7 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
     }
   }
 
-  // 9th/10th place match
-  const { data: ninthPlaceMatch } = await supabase
-    .from('matches')
-    .select('*')
-    .match(matchFilter)
-    .eq('round', '9th_place')
-    .maybeSingle();
-
-  if (ninthPlaceMatch) {
-    const ninthWinners = rankWithinPair(getMatchWinner(ninthPlaceMatch));
-    const ninthLosers = rankWithinPair(getMatchLoser(ninthPlaceMatch));
-    console.log('[CALCULATE_POSITIONS] 9th place winners:', ninthWinners);
-    for (let i = 0; i < ninthWinners.length; i++) {
-      await supabase.from('players').update({ final_position: nextPosition }).eq('id', ninthWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${ninthWinners[i]} (9th place winner)`);
-      nextPosition++;
-    }
-    for (let i = 0; i < ninthLosers.length; i++) {
-      await supabase.from('players').update({ final_position: nextPosition }).eq('id', ninthLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${ninthLosers[i]} (9th place loser)`);
-      nextPosition++;
-    }
-  }
-
-  // 11th/12th place match
-  const { data: eleventhPlaceMatch } = await supabase
-    .from('matches')
-    .select('*')
-    .match(matchFilter)
-    .eq('round', '11th_place')
-    .maybeSingle();
-
-  if (eleventhPlaceMatch) {
-    const eleventhWinners = rankWithinPair(getMatchWinner(eleventhPlaceMatch));
-    const eleventhLosers = rankWithinPair(getMatchLoser(eleventhPlaceMatch));
-    console.log('[CALCULATE_POSITIONS] 11th place winners:', eleventhWinners);
-    for (let i = 0; i < eleventhWinners.length; i++) {
-      await supabase.from('players').update({ final_position: nextPosition }).eq('id', eleventhWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${eleventhWinners[i]} (11th place winner)`);
-      nextPosition++;
-    }
-    for (let i = 0; i < eleventhLosers.length; i++) {
-      await supabase.from('players').update({ final_position: nextPosition }).eq('id', eleventhLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${eleventhLosers[i]} (11th place loser)`);
-      nextPosition++;
-    }
-  }
-
-  // Consolação (perdedores dos QFs - legacy)
+  // Consolação (perdedores dos QFs)
   if (consolationMatch) {
     const consolationWinners = rankWithinPair(getMatchWinner(consolationMatch));
     const consolationLosers = rankWithinPair(getMatchLoser(consolationMatch));
