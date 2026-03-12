@@ -645,8 +645,10 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           m.round === 'final' ||
           m.round === '3rd_place' ||
           m.round === 'consolation' ||
+          m.round === '5th_semifinal' ||
           m.round === '5th_place' ||
           m.round === '7th_place' ||
+          m.round === '9th_semifinal' ||
           m.round === '9th_place' ||
           m.round === '11th_place'
         );

@@ -719,6 +719,9 @@ export default function MatchScheduleView({
       '5th_semifinal': 'Meia-Final (5-8)',
       '5th_place': '5°/6° Lugar',
       '7th_place': '7°/8° Lugar',
+      '9th_semifinal': 'Meia-Final (9-12)',
+      '9th_place': '9°/10° Lugar',
+      '11th_place': '11°/12° Lugar',
       // Playoffs Cruzados - Ronda 1
       'crossed_r1_j1': 'Quarto-Final 1',
       'crossed_r1_j2': 'Quarto-Final 2',

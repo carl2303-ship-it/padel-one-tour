@@ -5081,16 +5081,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             advanceKoTime();
 
             // Create semifinals (second round)
-            // Each quarter produces 1 winner (2 players), so we have numQuarters winners (numQuarters * 2 players)
-            // Each semifinal needs 4 players (2 teams of 2), so we need numQuarters * 2 / 4 = numQuarters / 2 semifinals
-            // Round up to ensure we have enough semifinals, but minimum 1
             const numSemis = Math.max(1, Math.ceil(numQuarters / 2));
             console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (from ${numQuarters} quarterfinal winners = ${numQuarters * 2} players)`);
             
-            // Note: If numQuarters is odd (e.g., 3), we'll have 6 players which allows 1 full semifinal (4 players)
-            // The remaining 2 players will need special handling (could go to final directly or have a play-in)
             for (let i = 0; i < numSemis; i++) {
               addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+            }
+            advanceKoTime();
+
+            // Create 5th_semifinal matches (for QF losers)
+            const num5thSemis = Math.max(1, Math.ceil(numQuarters / 2));
+            console.log(`[SCHEDULE] Creating ${num5thSemis} 5th_semifinal matches (for ${numQuarters} quarterfinal losers)`);
+            for (let i = 0; i < num5thSemis; i++) {
+              addKoMatch('5th_semifinal', ((i % numberOfCourts) + 1).toString());
             }
             advanceKoTime();
           } else if (categoryKnockoutStage === 'semifinals') {
@@ -5111,6 +5114,32 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // Always create 3rd place and final matches
           addKoMatch('3rd_place', '1');
           addKoMatch('final', '2');
+
+          // Create 5th/7th place matches when quarterfinals exist
+          if (categoryKnockoutStage === 'quarterfinals') {
+            addKoMatch('5th_place', numberOfCourts >= 2 ? '1' : '1');
+            addKoMatch('7th_place', numberOfCourts >= 2 ? '2' : '1');
+            advanceKoTime();
+
+            // Check for non-qualified players to create 9th-12th place matches
+            const totalPlayersInTournament = individualPlayers.length;
+            const nonQualifiedCount = totalPlayersInTournament - totalQualifiedPlayers;
+            console.log(`[SCHEDULE] Non-qualified players: ${nonQualifiedCount} (total: ${totalPlayersInTournament}, qualified: ${totalQualifiedPlayers})`);
+
+            if (nonQualifiedCount >= 8) {
+              // Enough for 2 × 9th_semifinal → 9th_place + 11th_place
+              console.log(`[SCHEDULE] Creating 9th_semifinal (2 matches) + 9th_place + 11th_place`);
+              addKoMatch('9th_semifinal', '1');
+              addKoMatch('9th_semifinal', numberOfCourts >= 2 ? '2' : '1');
+              advanceKoTime();
+              addKoMatch('9th_place', '1');
+              addKoMatch('11th_place', numberOfCourts >= 2 ? '2' : '1');
+            } else if (nonQualifiedCount >= 4) {
+              // Enough for just 1 direct match (9th_place with 4 players, no semifinal needed)
+              console.log(`[SCHEDULE] Creating 9th_place match (direct, ${nonQualifiedCount} non-qualified players)`);
+              addKoMatch('9th_place', '1');
+            }
+          }
 
           console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}). Total: ${matchesToInsert.length}`);
         }

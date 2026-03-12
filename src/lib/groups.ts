@@ -1265,6 +1265,71 @@ export async function populatePlacementMatches(
     }
     
     console.log('[POPULATE_PLACEMENT] Quarterfinal population done');
+
+    // After populating QFs, also populate 9th_semifinal / 9th_place with non-qualified players
+    const qualifiedPlayerIds = new Set<string>();
+    // Re-fetch QFs to get all assigned players
+    const { data: finalQFs } = await supabase
+      .from('matches')
+      .select('player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
+      .eq('tournament_id', tournamentId)
+      .in('round', allQuarterfinalRounds);
+    
+    if (finalQFs) {
+      finalQFs.forEach(m => {
+        [m.player1_individual_id, m.player2_individual_id, m.player3_individual_id, m.player4_individual_id]
+          .filter(Boolean)
+          .forEach(id => qualifiedPlayerIds.add(id));
+      });
+    }
+
+    const nonQualifiedPlayers = players!.filter(p => !qualifiedPlayerIds.has(p.id));
+    console.log(`[POPULATE_PLACEMENT] Non-qualified players: ${nonQualifiedPlayers.length}`);
+
+    if (nonQualifiedPlayers.length >= 4) {
+      // Sort non-qualified by group ranking (they are typically the 5th, 6th, etc. in their groups)
+      const nonQualifiedSorted: string[] = [];
+      const maxGroupPos = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+      
+      for (let pos = 0; pos < maxGroupPos; pos++) {
+        for (const groupName of sortedGroups) {
+          const ranking = rankedByGroup.get(groupName)!;
+          if (pos < ranking.length && !qualifiedPlayerIds.has(ranking[pos])) {
+            nonQualifiedSorted.push(ranking[pos]);
+          }
+        }
+      }
+
+      const ninthSemifinals = allMatches
+        .filter(m => m.round === '9th_semifinal')
+        .sort((a, b) => a.match_number - b.match_number);
+      
+      const ninthPlaceMatch = allMatches.find(m => m.round === '9th_place' && !m.player1_individual_id);
+
+      if (ninthSemifinals.length >= 2 && nonQualifiedSorted.length >= 8) {
+        // Populate 2 × 9th_semifinal
+        for (let i = 0; i < ninthSemifinals.length && (i * 4 + 3) < nonQualifiedSorted.length; i++) {
+          const base = i * 4;
+          await supabase.from('matches').update({
+            player1_individual_id: nonQualifiedSorted[base],
+            player2_individual_id: nonQualifiedSorted[base + 1],
+            player3_individual_id: nonQualifiedSorted[base + 2],
+            player4_individual_id: nonQualifiedSorted[base + 3],
+          }).eq('id', ninthSemifinals[i].id);
+          console.log(`[POPULATE_PLACEMENT] 9th_SF${i + 1} populated with non-qualified players`);
+        }
+      } else if (ninthPlaceMatch && nonQualifiedSorted.length >= 4) {
+        // Direct 9th_place with 4 non-qualified players (no semifinal)
+        await supabase.from('matches').update({
+          player1_individual_id: nonQualifiedSorted[0],
+          player2_individual_id: nonQualifiedSorted[1],
+          player3_individual_id: nonQualifiedSorted[2],
+          player4_individual_id: nonQualifiedSorted[3],
+        }).eq('id', ninthPlaceMatch.id);
+        console.log('[POPULATE_PLACEMENT] 9th_place populated directly with 4 non-qualified players');
+      }
+    }
+
     return;
   }
 
@@ -1664,6 +1729,38 @@ export async function advanceKnockoutWinner(
           console.log('[ADVANCE_WINNER] Updated SF', targetSemifinalIndex + 1, 'with winner team from QF', matchIndex + 1);
         }
       }
+
+      // Send QF losers to 5th_semifinal matches (consolation bracket)
+      const fifthSemifinalMatches = allMatches
+        .filter(m => m.round === '5th_semifinal')
+        .sort((a, b) => a.match_number - b.match_number);
+
+      if (fifthSemifinalMatches.length > 0) {
+        const target5thSFIndex = Math.floor(matchIndex / 2);
+        if (fifthSemifinalMatches[target5thSFIndex]) {
+          if (isIndividual) {
+            const updateData: any = {};
+            if (isFirstInPair) {
+              updateData.player1_individual_id = loserIds.p1;
+              updateData.player2_individual_id = loserIds.p2;
+            } else {
+              updateData.player3_individual_id = loserIds.p1;
+              updateData.player4_individual_id = loserIds.p2;
+            }
+            await supabase.from('matches').update(updateData).eq('id', fifthSemifinalMatches[target5thSFIndex].id);
+            console.log('[ADVANCE_WINNER] Updated 5th_SF', target5thSFIndex + 1, 'with loser from QF', matchIndex + 1);
+          } else {
+            const updateData: any = {};
+            if (isFirstInPair) {
+              updateData.team1_id = loserIds.team;
+            } else {
+              updateData.team2_id = loserIds.team;
+            }
+            await supabase.from('matches').update(updateData).eq('id', fifthSemifinalMatches[target5thSFIndex].id);
+            console.log('[ADVANCE_WINNER] Updated 5th_SF', target5thSFIndex + 1, 'with loser team from QF', matchIndex + 1);
+          }
+        }
+      }
     } else {
       // Non-standard bracket (e.g. 3 QFs → 2 SFs): batch advancement
       // Wait until ALL QFs are complete before advancing
@@ -1799,24 +1896,43 @@ export async function advanceKnockoutWinner(
           console.log(`[ADVANCE_WINNER] SF${i + 1}: pair${i * 2 + 1} vs pair${i * 2 + 2}`);
         }
 
-        // Populate consolation match
-        const consolationMatch = allMatches.find(m => m.round === 'consolation');
-        if (consolationMatch && consolationPairs.length >= 2) {
-          await supabase.from('matches').update({
-            player1_individual_id: consolationPairs[0].p1,
-            player2_individual_id: consolationPairs[0].p2,
-            player3_individual_id: consolationPairs[1].p1,
-            player4_individual_id: consolationPairs[1].p2,
-          }).eq('id', consolationMatch.id);
-          console.log('[ADVANCE_WINNER] Consolation match populated');
-        } else if (consolationMatch && consolationPairs.length === 1) {
-          // If only 1 losing pair left, put them all in consolation with dummy
-          await supabase.from('matches').update({
-            player1_individual_id: consolationPairs[0].p1,
-            player2_individual_id: consolationPairs[0].p2,
-            player3_individual_id: null,
-            player4_individual_id: null,
-          }).eq('id', consolationMatch.id);
+        // Populate 5th_semifinal or consolation matches with remaining losers
+        const fifthSemiMatches = allMatches
+          .filter(m => m.round === '5th_semifinal')
+          .sort((a, b) => a.match_number - b.match_number);
+
+        if (fifthSemiMatches.length > 0 && consolationPairs.length >= 2) {
+          // Populate 5th_semifinal matches
+          for (let i = 0; i < fifthSemiMatches.length && i * 2 + 1 < consolationPairs.length; i++) {
+            const pair1 = consolationPairs[i * 2];
+            const pair2 = consolationPairs[i * 2 + 1];
+            await supabase.from('matches').update({
+              player1_individual_id: pair1.p1,
+              player2_individual_id: pair1.p2,
+              player3_individual_id: pair2.p1,
+              player4_individual_id: pair2.p2,
+            }).eq('id', fifthSemiMatches[i].id);
+            console.log(`[ADVANCE_WINNER] 5th_SF${i + 1}: pair${i * 2 + 1} vs pair${i * 2 + 2}`);
+          }
+        } else {
+          // Fallback to consolation match
+          const consolationMatch = allMatches.find(m => m.round === 'consolation');
+          if (consolationMatch && consolationPairs.length >= 2) {
+            await supabase.from('matches').update({
+              player1_individual_id: consolationPairs[0].p1,
+              player2_individual_id: consolationPairs[0].p2,
+              player3_individual_id: consolationPairs[1].p1,
+              player4_individual_id: consolationPairs[1].p2,
+            }).eq('id', consolationMatch.id);
+            console.log('[ADVANCE_WINNER] Consolation match populated');
+          } else if (consolationMatch && consolationPairs.length === 1) {
+            await supabase.from('matches').update({
+              player1_individual_id: consolationPairs[0].p1,
+              player2_individual_id: consolationPairs[0].p2,
+              player3_individual_id: null,
+              player4_individual_id: null,
+            }).eq('id', consolationMatch.id);
+          }
         }
       }
     }

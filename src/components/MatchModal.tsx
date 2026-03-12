@@ -1024,7 +1024,7 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
 
     try {
       const allKnockoutRounds = [
-        'semifinal', 'semi_final', 'final', 'quarter_final', 'round_of_16',
+        'semifinal', 'semi_final', 'final', 'quarter_final', 'quarterfinal', 'round_of_16',
         '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal',
         '3rd_place', '5th_place', '7th_place', '9th_place', '11th_place',
         '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place'
@@ -1115,6 +1115,52 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       if (isKnockoutRound && knockoutPositionRounds.includes(matchData.round)) {
         console.log('[MATCH_MODAL] Reverting knockout position match, clearing final positions');
         await clearIndividualFinalPositions(tournamentId, matchData.category_id);
+      }
+
+      // INDIVIDUAL QUARTERFINAL - Revert progression (clear SF and 5th_SF slots)
+      if (matchData.round === 'quarterfinal' || matchData.round === 'quarter_final') {
+        const qfRoundName = matchData.round;
+        const catFilter = matchData.category_id || null;
+
+        // Get all QF matches to find this one's index
+        let qfQuery = supabase.from('matches').select('id, match_number').eq('tournament_id', tournamentId).eq('round', qfRoundName).order('match_number', { ascending: true });
+        if (catFilter) qfQuery = qfQuery.eq('category_id', catFilter); else qfQuery = qfQuery.is('category_id', null);
+        const { data: qfMatches } = await qfQuery;
+
+        if (qfMatches) {
+          const matchIndex = qfMatches.findIndex(m => m.id === matchId);
+          if (matchIndex >= 0) {
+            const targetIdx = Math.floor(matchIndex / 2);
+            const isFirst = matchIndex % 2 === 0;
+
+            // Clear semifinal slot
+            const sfRounds = ['semifinal', 'semi_final'];
+            for (const sfRound of sfRounds) {
+              let sfQuery = supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('round', sfRound).order('match_number', { ascending: true });
+              if (catFilter) sfQuery = sfQuery.eq('category_id', catFilter); else sfQuery = sfQuery.is('category_id', null);
+              const { data: sfMatches } = await sfQuery;
+              if (sfMatches && sfMatches[targetIdx]) {
+                const clearData: any = isFirst
+                  ? { player1_individual_id: null, player2_individual_id: null }
+                  : { player3_individual_id: null, player4_individual_id: null };
+                await supabase.from('matches').update(clearData).eq('id', sfMatches[targetIdx].id);
+                console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared SF${targetIdx + 1} ${isFirst ? 'team1' : 'team2'}`);
+              }
+            }
+
+            // Clear 5th_semifinal slot
+            let sf5Query = supabase.from('matches').select('id').eq('tournament_id', tournamentId).eq('round', '5th_semifinal').order('match_number', { ascending: true });
+            if (catFilter) sf5Query = sf5Query.eq('category_id', catFilter); else sf5Query = sf5Query.is('category_id', null);
+            const { data: sf5Matches } = await sf5Query;
+            if (sf5Matches && sf5Matches[targetIdx]) {
+              const clearData: any = isFirst
+                ? { player1_individual_id: null, player2_individual_id: null }
+                : { player3_individual_id: null, player4_individual_id: null };
+              await supabase.from('matches').update(clearData).eq('id', sf5Matches[targetIdx].id);
+              console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared 5th_SF${targetIdx + 1} ${isFirst ? 'team1' : 'team2'}`);
+            }
+          }
+        }
       }
 
       // CROSSED PLAYOFFS TEAMS - Revert progression
