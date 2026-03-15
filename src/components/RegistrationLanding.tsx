@@ -123,6 +123,23 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [allRegistered, setAllRegistered] = useState<any[]>([]);
   const [payAtClubSelected, setPayAtClubSelected] = useState(false);
 
+  // Normalizar telefone: se não tem indicativo, adicionar +351
+  const normalizePhone = (phone: string): string => {
+    let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+    // Já tem +351 → ok
+    if (cleaned.startsWith('+351')) return cleaned;
+    // Tem 351 sem + → adicionar +
+    if (cleaned.startsWith('351') && cleaned.length >= 12) return '+' + cleaned;
+    // Começa com + mas não é +351 → outro país, manter
+    if (cleaned.startsWith('+')) return cleaned;
+    // Remove 0 inicial (ex: 0912...)
+    if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
+    // 9 dígitos → assumir PT, adicionar +351
+    if (cleaned.length === 9) return '+351' + cleaned;
+    // Fallback: adicionar +351
+    return '+351' + cleaned;
+  };
+
   const isIndividualFormat = () => {
     // Formatos que são sempre individuais
     if (tournament.format === 'mixed_american' || 
@@ -133,7 +150,11 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     if (formData.categoryId) {
       const category = categories.find(c => c.id === formData.categoryId);
       if (category) {
-        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'crossed_playoffs_teams' || category.format === 'mixed_gender') {
+        // crossed_playoffs_teams é formato de EQUIPAS, não individual
+        if (category.format === 'crossed_playoffs_teams') {
+          return false;
+        }
+        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender') {
           return true;
         }
         if (category.format === 'round_robin') {
@@ -357,9 +378,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     setLoading(true);
     setError('');
 
-    const normalizedPhone = checkPhone.replace(/\s+/g, '').startsWith('+')
-      ? checkPhone.replace(/\s+/g, '')
-      : '+' + checkPhone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(checkPhone);
 
     const { data: account } = await supabase
       .from('player_accounts')
@@ -458,9 +477,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
     setPartnerLookupLoading(true);
 
-    const normalizedPhone = phone.replace(/\s+/g, '').startsWith('+')
-      ? phone.replace(/\s+/g, '')
-      : '+' + phone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phone);
 
     const { data: account } = await supabase
       .from('player_accounts')
@@ -488,7 +505,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   };
 
   const createOrGetPlayerAccount = async (name: string, email: string, phone: string) => {
-    const normalizedPhone = phone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phone);
     const tempPassword = `Player${normalizedPhone.slice(-4)}!`;
     const userEmail = email || `${normalizedPhone}@temp.player.com`;
 

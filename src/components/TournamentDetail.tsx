@@ -1867,9 +1867,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     const isIndividualFormat = currentTournament.format === 'individual_groups_knockout' || 
                                currentTournament.format === 'crossed_playoffs' || 
-                               currentTournament.format === 'crossed_playoffs_teams' || 
                                currentTournament.format === 'mixed_gender' ||
                                currentTournament.format === 'mixed_american';
+    // crossed_playoffs_teams é formato de EQUIPAS, não individual
     const participantLabel = isIndividualFormat ? 'players' : 'teams';
 
     const confirmed = confirm(
