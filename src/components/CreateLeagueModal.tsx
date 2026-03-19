@@ -1,8 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { X } from 'lucide-react';
+import { X, Plus, Layers } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 import { useI18n } from '../lib/i18nContext';
+
+const PLAYER_CATEGORIES = [
+  { value: 'M6', label: 'M6', gender: 'M' },
+  { value: 'M5', label: 'M5', gender: 'M' },
+  { value: 'M4', label: 'M4', gender: 'M' },
+  { value: 'M3', label: 'M3', gender: 'M' },
+  { value: 'M2', label: 'M2', gender: 'M' },
+  { value: 'M1', label: 'M1', gender: 'M' },
+  { value: 'F6', label: 'F6', gender: 'F' },
+  { value: 'F5', label: 'F5', gender: 'F' },
+  { value: 'F4', label: 'F4', gender: 'F' },
+  { value: 'F3', label: 'F3', gender: 'F' },
+  { value: 'F2', label: 'F2', gender: 'F' },
+  { value: 'F1', label: 'F1', gender: 'F' },
+] as const;
 
 interface League {
   id: string;
@@ -15,6 +30,7 @@ interface League {
   allow_public_view: boolean;
   categories?: string[];
   category_scoring_systems?: Record<string, Record<string, number>>;
+  combined_player_categories?: Record<string, string[]>;
 }
 
 interface CreateLeagueModalProps {
@@ -57,6 +73,11 @@ export default function CreateLeagueModal({ league, onClose }: CreateLeagueModal
   const [categoryScoringSystemsState, setCategoryScoringSystemsState] = useState<Record<string, Record<string, number>>>({});
   const [selectedScoringCategory, setSelectedScoringCategory] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  
+  // Combined player categories (e.g., "M5-M6" → ["M5", "M6"])
+  const [combinedPlayerCategories, setCombinedPlayerCategories] = useState<Record<string, string[]>>({});
+  const [newCombinedName, setNewCombinedName] = useState('');
+  const [newCombinedSources, setNewCombinedSources] = useState<string[]>([]);
 
   useEffect(() => {
     if (league) {
@@ -69,6 +90,7 @@ export default function CreateLeagueModal({ league, onClose }: CreateLeagueModal
       setScoringSystem(league.scoring_system);
       setCategories(league.categories || []);
       setCategoryScoringSystemsState(league.category_scoring_systems || {});
+      setCombinedPlayerCategories(league.combined_player_categories || {});
       if (league.categories && league.categories.length > 0) {
         setSelectedScoringCategory(league.categories[0]);
       }
@@ -115,6 +137,7 @@ export default function CreateLeagueModal({ league, onClose }: CreateLeagueModal
       scoring_system: scoringSystem,
       categories: categories.length > 0 ? categories : [],
       category_scoring_systems: categories.length > 0 ? categoryScoringSystemsState : {},
+      combined_player_categories: Object.keys(combinedPlayerCategories).length > 0 ? combinedPlayerCategories : {},
       user_id: user?.id,
     };
 
@@ -361,6 +384,113 @@ export default function CreateLeagueModal({ league, onClose }: CreateLeagueModal
             <label htmlFor="allowPublicView" className="ml-2 text-sm text-gray-700">
               {t.league.allowPublicView}
             </label>
+          </div>
+
+          {/* Combined Player Categories */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-purple-600" />
+              Categorias Combinadas de Jogadores (opcional)
+            </label>
+            <p className="text-xs text-gray-500 mb-3">
+              Agrupe categorias de jogadores para ver rankings combinados. Ex: "M5-M6" junta jogadores de M5 e M6 num só ranking, sem alterar resultados existentes.
+            </p>
+
+            {/* Existing combined categories */}
+            {Object.entries(combinedPlayerCategories).length > 0 && (
+              <div className="space-y-2 mb-3">
+                {Object.entries(combinedPlayerCategories).map(([combinedName, sources]) => (
+                  <div
+                    key={combinedName}
+                    className="flex items-center justify-between p-3 bg-purple-50 border border-purple-200 rounded-lg"
+                  >
+                    <div>
+                      <span className="font-semibold text-purple-800">{combinedName}</span>
+                      <span className="text-purple-600 text-sm ml-2">
+                        = {sources.join(' + ')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = { ...combinedPlayerCategories };
+                        delete updated[combinedName];
+                        setCombinedPlayerCategories(updated);
+                      }}
+                      className="text-red-500 hover:text-red-700 p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new combined category */}
+            <div className="border border-gray-200 rounded-lg p-3 space-y-3 bg-gray-50">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nome da Categoria Combinada</label>
+                <input
+                  type="text"
+                  value={newCombinedName}
+                  onChange={(e) => setNewCombinedName(e.target.value)}
+                  placeholder="Ex: M5-M6"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Categorias de Jogadores a incluir</label>
+                <div className="flex flex-wrap gap-2">
+                  {PLAYER_CATEGORIES.map(cat => {
+                    const isSelected = newCombinedSources.includes(cat.value);
+                    return (
+                      <button
+                        key={cat.value}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setNewCombinedSources(newCombinedSources.filter(c => c !== cat.value));
+                          } else {
+                            setNewCombinedSources([...newCombinedSources, cat.value]);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                          isSelected
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-white border border-gray-300 text-gray-600 hover:border-purple-400'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {newCombinedSources.length > 0 && (
+                  <p className="text-xs text-purple-600 mt-1">
+                    Selecionado: {newCombinedSources.join(' + ')}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                disabled={!newCombinedName.trim() || newCombinedSources.length < 2}
+                onClick={() => {
+                  const name = newCombinedName.trim();
+                  if (name && newCombinedSources.length >= 2) {
+                    setCombinedPlayerCategories({
+                      ...combinedPlayerCategories,
+                      [name]: [...newCombinedSources]
+                    });
+                    setNewCombinedName('');
+                    setNewCombinedSources([]);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Plus className="w-4 h-4" />
+                Adicionar Categoria Combinada
+              </button>
+            </div>
           </div>
 
           <div>

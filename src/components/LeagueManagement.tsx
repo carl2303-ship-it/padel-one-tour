@@ -17,6 +17,7 @@ interface League {
   allow_public_view: boolean;
   categories?: string[];
   category_scoring_systems?: Record<string, Record<string, number>>;
+  combined_player_categories?: Record<string, string[]>;
   created_at: string;
 }
 

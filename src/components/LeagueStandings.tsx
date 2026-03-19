@@ -32,6 +32,7 @@ interface League {
   scoring_system: Record<string, number>;
   categories?: string[];
   category_scoring_systems?: Record<string, Record<string, number>>;
+  combined_player_categories?: Record<string, string[]>;
   user_id: string;
 }
 
@@ -270,12 +271,19 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     return category.startsWith('M') ? 'M' : category.startsWith('F') ? 'F' : null;
   };
 
+  // Get combined categories from the league
+  const combinedPlayerCategories = league.combined_player_categories || {};
+
   const filteredStandings = standings.filter(standing => {
-    // Filter by category
+    // Filter by category (including combined categories)
     let categoryMatch = true;
     if (selectedPlayerCategory !== 'all') {
       if (selectedPlayerCategory === 'none') {
         categoryMatch = !standing.player_category;
+      } else if (combinedPlayerCategories[selectedPlayerCategory]) {
+        // Combined category: match any of the source categories
+        const sourceCats = combinedPlayerCategories[selectedPlayerCategory];
+        categoryMatch = standing.player_category != null && sourceCats.includes(standing.player_category);
       } else {
         categoryMatch = standing.player_category === selectedPlayerCategory;
       }
@@ -411,6 +419,20 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                       >
                         <option value="all">Todas</option>
                         <option value="none">Sem categoria ({categoryCounts['none'] || 0})</option>
+                        {Object.keys(combinedPlayerCategories).length > 0 && (
+                          <optgroup label="Combinadas">
+                            {Object.entries(combinedPlayerCategories).map(([name, sources]) => {
+                              const count = standings.filter(s => 
+                                s.player_category && sources.includes(s.player_category)
+                              ).length;
+                              return (
+                                <option key={`combined-${name}`} value={name}>
+                                  {name} ({count})
+                                </option>
+                              );
+                            })}
+                          </optgroup>
+                        )}
                         <optgroup label="Masculino">
                           {PLAYER_CATEGORIES.filter(c => c.gender === 'M').map(c => (
                             <option key={c.value} value={c.value}>
@@ -635,6 +657,32 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                 Categorias de Jogadores
               </h3>
               <div className="space-y-2">
+                {/* Combined categories first */}
+                {Object.entries(combinedPlayerCategories).map(([name, sources]) => {
+                  const count = standings.filter(s => 
+                    s.player_category && sources.includes(s.player_category)
+                  ).length;
+                  if (count === 0) return null;
+                  return (
+                    <button
+                      key={`combined-${name}`}
+                      onClick={() => setSelectedPlayerCategory(name)}
+                      className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                        selectedPlayerCategory === name
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'hover:bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      <span className="px-2 py-0.5 rounded font-medium bg-purple-100 text-purple-700 border border-purple-300">
+                        {name}
+                      </span>
+                      <span className="font-semibold">{count} jogadores</span>
+                    </button>
+                  );
+                })}
+                {Object.keys(combinedPlayerCategories).length > 0 && (
+                  <div className="border-b border-gray-200 my-1" />
+                )}
                 {PLAYER_CATEGORIES.map(cat => {
                   const count = categoryCounts[cat.value] || 0;
                   if (count === 0) return null;
