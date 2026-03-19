@@ -389,6 +389,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
   if (result.team1 && result.team2) {
     const allUpdatedPlayers = [result.team1.p1, result.team1.p2, result.team2.p3, result.team2.p4]
+    let updateErrors = 0
 
     for (const rp of allUpdatedPlayers) {
       const formulaReliability = calculateReliability(rp.matches)
@@ -396,17 +397,6 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       const acctData = Array.from(accountsMap.values()).find((a: any) => a.id === rp.id)
       const currentReliability = cache?.get(rp.id)?.currentReliability ?? acctData?.level_reliability_percent ?? 0
       const protectedReliability = calculateProtectedReliability(formulaReliability, currentReliability)
-
-      if (cache) {
-        cache.set(rp.id, {
-          id: rp.id,
-          user_id: rp.user_id,
-          name: rp.name,
-          rating: rp.rating,
-          matchCount: rp.matches,
-          currentReliability: protectedReliability,
-        })
-      }
 
       const { error } = await supabase.rpc('update_player_rating', {
         p_player_account_id: rp.id,
@@ -417,17 +407,34 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
       if (error) {
         console.error('[RatingEngine] Error updating player:', rp.id, error)
+        updateErrors++
+      } else {
+        // Only update cache if DB update succeeded
+        if (cache) {
+          cache.set(rp.id, {
+            id: rp.id,
+            user_id: rp.user_id,
+            name: rp.name,
+            rating: rp.rating,
+            matchCount: rp.matches,
+            currentReliability: protectedReliability,
+          })
+        }
       }
     }
 
-    const { error: markError } = await supabase.rpc('mark_match_rating_processed', {
-      p_match_id: matchId,
-    })
-    if (markError) {
-      console.error('[RatingEngine] Error marking match as processed:', matchId, markError)
+    // Only mark match as processed if ALL player updates succeeded
+    if (updateErrors === 0) {
+      const { error: markError } = await supabase.rpc('mark_match_rating_processed', {
+        p_match_id: matchId,
+      })
+      if (markError) {
+        console.error('[RatingEngine] Error marking match as processed:', matchId, markError)
+      }
+      console.log('[RatingEngine] Updated ratings for match:', matchId)
+    } else {
+      console.error(`[RatingEngine] Match ${matchId}: ${updateErrors}/4 player updates FAILED — match NOT marked as processed (will retry next time)`)
     }
-
-    console.log('[RatingEngine] Updated ratings for match:', matchId)
     const logPlayer = (before: PlayerRating, after: PlayerRating & { delta: number }) => {
       const K = getKFactorForLog(after.matches)
       console.log(`  ${after.name}: ${before.rating.toFixed(2)} → ${after.rating.toFixed(2)} (Δ${after.delta >= 0 ? '+' : ''}${after.delta.toFixed(4)}) | K=${K} | jogos: ${after.matches} | fiab: ${calculateReliability(after.matches)}%`)
