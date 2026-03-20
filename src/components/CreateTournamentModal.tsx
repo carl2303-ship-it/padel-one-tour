@@ -33,6 +33,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     member_price: 0,
     non_member_price: 0,
     allow_club_payment: false,
+    has_dinner_option: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -247,6 +248,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
+        has_dinner_option: formData.has_dinner_option,
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
         status: 'draft',
         user_id: user?.id,
@@ -727,6 +729,22 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             </div>
             <p className="text-xs text-gray-500 mt-1 ml-7">
               Se ativo, os jogadores podem escolher pagar no clube em vez de pagar online. O gestor do clube marca o pagamento na app Manager.
+            </p>
+
+            <div className="flex items-center gap-3 mt-3">
+              <input
+                type="checkbox"
+                id="has_dinner_option"
+                checked={formData.has_dinner_option}
+                onChange={(e) => setFormData({ ...formData, has_dinner_option: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="has_dinner_option" className="text-sm font-medium text-gray-700">
+                🍽️ Opção de jantar
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem indicar na inscrição se querem jantar.
             </p>
           </div>
 

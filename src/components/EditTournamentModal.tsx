@@ -39,6 +39,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     member_price: (tournament as any).member_price || 0,
     non_member_price: (tournament as any).non_member_price || 0,
     allow_club_payment: (tournament as any).allow_club_payment || false,
+    has_dinner_option: (tournament as any).has_dinner_option || false,
     allow_public_registration: (tournament as any).allow_public_registration || false,
     registration_deadline: (tournament as any).registration_deadline ? new Date((tournament as any).registration_deadline).toISOString().split('T')[0] : '',
     registration_redirect_url: (tournament as any).registration_redirect_url || '',
@@ -309,6 +310,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
+        has_dinner_option: formData.has_dinner_option,
         allow_public_registration: formData.allow_public_registration,
         registration_deadline: formData.registration_deadline ? new Date(formData.registration_deadline).toISOString() : null,
         registration_redirect_url: formData.registration_redirect_url || null,
@@ -986,6 +988,22 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             </div>
             <p className="text-xs text-gray-500 mt-1 ml-7">
               Se ativo, os jogadores podem escolher pagar no clube em vez de pagar online. O gestor do clube marca o pagamento na app Manager.
+            </p>
+
+            <div className="flex items-center gap-3 mt-3">
+              <input
+                type="checkbox"
+                id="edit_has_dinner_option"
+                checked={formData.has_dinner_option}
+                onChange={(e) => setFormData({ ...formData, has_dinner_option: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="edit_has_dinner_option" className="text-sm font-medium text-gray-700">
+                🍽️ Opção de jantar
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem indicar na inscrição se querem jantar.
             </p>
           </div>
 

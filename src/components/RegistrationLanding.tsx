@@ -103,9 +103,11 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     player1Name: '',
     player1Email: '',
     player1Phone: '',
+    player1WantsDinner: false,
     player2Name: '',
     player2Email: '',
     player2Phone: '',
+    player2WantsDinner: false,
     categoryId: '',
   });
   const [loading, setLoading] = useState(false);
@@ -658,6 +660,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               email: formData.player1Email,
               phone_number: formData.player1Phone,
               user_id: null,
+              wants_dinner: formData.player1WantsDinner,
             },
           ]);
 
@@ -690,6 +693,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               email: formData.player1Email,
               phone_number: formData.player1Phone,
               user_id: null,
+              wants_dinner: formData.player1WantsDinner,
             },
             {
               tournament_id: tournament.id,
@@ -697,6 +701,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               email: formData.player2Email,
               phone_number: formData.player2Phone,
               user_id: null,
+              wants_dinner: formData.player2WantsDinner,
             },
           ])
           .select();
@@ -1405,6 +1410,23 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   </p>
                 </div>
               )}
+
+              {(tournament as any).has_dinner_option && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.player1WantsDinner}
+                      onChange={(e) => setFormData({ ...formData, player1WantsDinner: e.target.checked })}
+                      className="w-5 h-5 text-amber-600 border-gray-300 rounded focus:ring-2 focus:ring-amber-500"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">🍽️ Quero jantar</p>
+                      <p className="text-xs text-amber-700">Marque se pretende jantar no evento</p>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1477,6 +1499,23 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                     </p>
                   )}
                 </div>
+
+                {(tournament as any).has_dinner_option && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.player2WantsDinner}
+                        onChange={(e) => setFormData({ ...formData, player2WantsDinner: e.target.checked })}
+                        className="w-5 h-5 text-amber-600 border-gray-300 rounded focus:ring-2 focus:ring-amber-500"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-amber-900">🍽️ Quero jantar</p>
+                        <p className="text-xs text-amber-700">Marque se o parceiro pretende jantar no evento</p>
+                      </div>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
           )}

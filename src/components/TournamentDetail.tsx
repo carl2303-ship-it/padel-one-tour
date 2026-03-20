@@ -1051,7 +1051,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1353,12 +1353,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number), player2:players!teams_player2_id_fkey(id, name, email, phone_number)')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner)')
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -6541,6 +6541,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 )}
               </div>
 
+              {/* Resumo de Jantares */}
+              {(currentTournament as any).has_dinner_option && (() => {
+                const allPlayers = isIndividualFormat() 
+                  ? filteredIndividualPlayers 
+                  : filteredTeams.flatMap(t => [t.player1, t.player2].filter(Boolean));
+                const dinnerCount = allPlayers.filter((p: any) => p?.wants_dinner).length;
+                const totalCount = allPlayers.length;
+                return dinnerCount > 0 || totalCount > 0 ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center gap-3">
+                    <span className="text-2xl">🍽️</span>
+                    <div>
+                      <p className="font-semibold text-amber-900">
+                        Jantares: {dinnerCount} de {totalCount} jogadores
+                      </p>
+                      <p className="text-sm text-amber-700">
+                        {dinnerCount === 0 ? 'Nenhum jogador quer jantar' : `${dinnerCount} jogador${dinnerCount > 1 ? 'es' : ''} confirmado${dinnerCount > 1 ? 's' : ''} para jantar`}
+                      </p>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
               {/* Group Assignments - grupos lado a lado */}
               {isIndividualFormat() && groupedPlayers.size > 0 && (
                 <div className="space-y-4">
@@ -6578,7 +6600,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                 {player.name.charAt(0).toUpperCase()}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="font-medium text-gray-900 truncate">{player.name}</p>
+                                <p className="font-medium text-gray-900 truncate">
+                                  {player.name}
+                                  {(player as any).wants_dinner && ' 🍽️'}
+                                </p>
                                 {player.email && (
                                   <p className="text-xs text-gray-500 truncate">{player.email}</p>
                                 )}
@@ -6639,6 +6664,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               {player.group_name && (
                                 <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
                                   Grupo {player.group_name}
+                                </span>
+                              )}
+                              {(player as any).wants_dinner && (
+                                <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">
+                                  🍽️ Jantar
                                 </span>
                               )}
                             </div>
@@ -6737,11 +6767,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           <div>
                             <p className="font-semibold text-gray-900">{team.name}</p>
                             <p className="text-sm text-gray-600">
-                              {team.player1?.name} / {team.player2?.name}
+                              {team.player1?.name}{(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''} / {team.player2?.name}{(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
-                            {team.group_name && (
-                              <span className="text-xs text-blue-600">Grupo {team.group_name}</span>
-                            )}
+                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                              {team.group_name && (
+                                <span className="text-xs text-blue-600">Grupo {team.group_name}</span>
+                              )}
+                              {((team.player1 as any)?.wants_dinner || (team.player2 as any)?.wants_dinner) && (
+                                <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">
+                                  🍽️ {[(team.player1 as any)?.wants_dinner && team.player1?.name, (team.player2 as any)?.wants_dinner && team.player2?.name].filter(Boolean).join(', ')}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <button
                             onClick={() => {

@@ -44,6 +44,7 @@ export type Tournament = {
   mixed_knockout?: boolean;
   club_id?: string;
   court_names?: string[];
+  has_dinner_option?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -63,6 +64,7 @@ export type Player = {
   final_position?: number | null;
   group_name?: string | null;
   seed?: number | null;
+  wants_dinner?: boolean;
   created_at: string;
 };
 
