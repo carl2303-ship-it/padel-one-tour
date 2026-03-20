@@ -5118,30 +5118,174 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         
       } else if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'teams') {
-        // Equipas Round Robin - todas as equipas jogam contra todas
+        // Equipas Round Robin - por categoria se existirem categorias
         console.log('[SCHEDULE] Using Teams Round Robin scheduler with', teams.length, 'teams');
         
-        const teamMatches = generateTournamentSchedule(
-          teams,
-          numberOfCourts,
-          startDate,
-          'round_robin',
-          startTime,
-          endTime,
-          matchDuration,
-          dailySchedules
-        );
+        // Verificar se há categorias com equipas
+        const teamsWithCategory = teams.filter(t => t.category_id);
+        const hasCategories = categories.length > 0 && teamsWithCategory.length > 0;
         
-        matchesToInsert = teamMatches.map(m => ({
-          tournament_id: currentTournament.id,
-          round: m.round,
-          match_number: m.match_number,
-          team1_id: m.team1_id,
-          team2_id: m.team2_id,
-          scheduled_time: m.scheduled_time,
-          court: m.court,
-          status: 'scheduled'
-        }));
+        if (hasCategories) {
+          // Round Robin POR CATEGORIA - cada categoria joga entre si
+          console.log('[SCHEDULE] Categories detected! Generating round robin per category');
+          let globalMatchNumber = 1;
+          
+          // Agendar jogos de todas as categorias em paralelo nos courts disponíveis
+          const allCategoryMatches: Array<{team1_id: string; team2_id: string; category_id: string; category_name: string}> = [];
+          
+          for (const category of categories) {
+            const categoryTeams = teams.filter(t => t.category_id === category.id);
+            console.log(`[SCHEDULE] Category "${category.name}": ${categoryTeams.length} teams`);
+            
+            if (categoryTeams.length < 2) {
+              console.warn(`[SCHEDULE] Category "${category.name}" has fewer than 2 teams, skipping`);
+              continue;
+            }
+            
+            // Gerar todos os pares round-robin para esta categoria
+            for (let i = 0; i < categoryTeams.length; i++) {
+              for (let j = i + 1; j < categoryTeams.length; j++) {
+                allCategoryMatches.push({
+                  team1_id: categoryTeams[i].id,
+                  team2_id: categoryTeams[j].id,
+                  category_id: category.id,
+                  category_name: category.name
+                });
+              }
+            }
+          }
+          
+          console.log(`[SCHEDULE] Total round robin matches across all categories: ${allCategoryMatches.length}`);
+          
+          // Agendar os jogos respeitando conflitos (equipas não podem jogar ao mesmo tempo)
+          const [startHour, startMinute] = startTime.split(':').map(Number);
+          const [endHour, endMinute] = endTime.split(':').map(Number);
+          const startTotalMinutes = startHour * 60 + startMinute;
+          const endTotalMinutes = endHour * 60 + (endMinute || 0);
+          let availableMinutesPerDay = endTotalMinutes - startTotalMinutes;
+          if (availableMinutesPerDay <= 0) {
+            availableMinutesPerDay = (24 * 60 - startTotalMinutes) + endTotalMinutes;
+          }
+          const slotsPerDay = Math.floor(availableMinutesPerDay / matchDuration);
+          
+          const scheduled = new Array(allCategoryMatches.length).fill(false);
+          let scheduledCount = 0;
+          let timeSlotIndex = 0;
+          const teamLastPlayed = new Map<string, number>();
+          
+          while (scheduledCount < allCategoryMatches.length) {
+            const teamsPlayingThisSlot = new Set<string>();
+            let courtCounter = 0;
+            
+            // Tentar preencher todos os campos neste time slot
+            for (let i = 0; i < allCategoryMatches.length && courtCounter < numberOfCourts; i++) {
+              if (scheduled[i]) continue;
+              
+              const match = allCategoryMatches[i];
+              
+              // Verificar conflitos
+              if (teamsPlayingThisSlot.has(match.team1_id) || teamsPlayingThisSlot.has(match.team2_id)) continue;
+              
+              // Verificar descanso mínimo
+              const t1Last = teamLastPlayed.get(match.team1_id) ?? -2;
+              const t2Last = teamLastPlayed.get(match.team2_id) ?? -2;
+              if (timeSlotIndex - t1Last <= 1 && t1Last >= 0) continue;
+              if (timeSlotIndex - t2Last <= 1 && t2Last >= 0) continue;
+              
+              // Agendar
+              const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDuration;
+              const hourOffset = Math.floor(totalMinutesFromStart / 60);
+              const minuteOffset = totalMinutesFromStart % 60;
+              const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
+              const [year, month, day] = startDate.split('-').map(Number);
+              const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0));
+              
+              matchesToInsert.push({
+                tournament_id: currentTournament.id,
+                round: 'round_robin',
+                match_number: globalMatchNumber++,
+                team1_id: match.team1_id,
+                team2_id: match.team2_id,
+                category_id: match.category_id,
+                scheduled_time: scheduledTime.toISOString(),
+                court: (courtCounter + 1).toString(),
+                status: 'scheduled'
+              });
+              
+              teamsPlayingThisSlot.add(match.team1_id);
+              teamsPlayingThisSlot.add(match.team2_id);
+              teamLastPlayed.set(match.team1_id, timeSlotIndex);
+              teamLastPlayed.set(match.team2_id, timeSlotIndex);
+              scheduled[i] = true;
+              scheduledCount++;
+              courtCounter++;
+            }
+            
+            // Forçar sem descanso se não agendou nenhum
+            if (courtCounter === 0 && scheduledCount < allCategoryMatches.length) {
+              for (let i = 0; i < allCategoryMatches.length && courtCounter < numberOfCourts; i++) {
+                if (scheduled[i]) continue;
+                const match = allCategoryMatches[i];
+                if (teamsPlayingThisSlot.has(match.team1_id) || teamsPlayingThisSlot.has(match.team2_id)) continue;
+                
+                const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDuration;
+                const hourOffset = Math.floor(totalMinutesFromStart / 60);
+                const minuteOffset = totalMinutesFromStart % 60;
+                const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
+                const [year, month, day] = startDate.split('-').map(Number);
+                const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0));
+                
+                matchesToInsert.push({
+                  tournament_id: currentTournament.id,
+                  round: 'round_robin',
+                  match_number: globalMatchNumber++,
+                  team1_id: match.team1_id,
+                  team2_id: match.team2_id,
+                  category_id: match.category_id,
+                  scheduled_time: scheduledTime.toISOString(),
+                  court: (courtCounter + 1).toString(),
+                  status: 'scheduled'
+                });
+                
+                teamsPlayingThisSlot.add(match.team1_id);
+                teamsPlayingThisSlot.add(match.team2_id);
+                teamLastPlayed.set(match.team1_id, timeSlotIndex);
+                teamLastPlayed.set(match.team2_id, timeSlotIndex);
+                scheduled[i] = true;
+                scheduledCount++;
+                courtCounter++;
+              }
+            }
+            
+            timeSlotIndex++;
+          }
+          
+          console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} matches across categories`);
+          
+        } else {
+          // Sem categorias - round robin normal (todas vs todas)
+          const teamMatches = generateTournamentSchedule(
+            teams,
+            numberOfCourts,
+            startDate,
+            'round_robin',
+            startTime,
+            endTime,
+            matchDuration,
+            dailySchedules
+          );
+          
+          matchesToInsert = teamMatches.map(m => ({
+            tournament_id: currentTournament.id,
+            round: m.round,
+            match_number: m.match_number,
+            team1_id: m.team1_id,
+            team2_id: m.team2_id,
+            scheduled_time: m.scheduled_time,
+            court: m.court,
+            status: 'scheduled'
+          }));
+        }
         
       } else if (currentTournament.format === 'crossed_playoffs_teams') {
         // PLAYOFFS CRUZADOS PARA EQUIPAS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
