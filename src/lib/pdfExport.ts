@@ -348,7 +348,7 @@ export async function exportTournamentPDF(
   const timestamp = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   doc.setFontSize(8);
   doc.setTextColor(128, 128, 128);
-  doc.text(`Gerado em ${timestamp} (v5)`, pageWidth - 14, doc.internal.pageSize.getHeight() - 10, { align: 'right' });
+  doc.text(`Gerado em ${timestamp} (v6)`, pageWidth - 14, doc.internal.pageSize.getHeight() - 10, { align: 'right' });
   doc.text('Padel One Tour', 14, doc.internal.pageSize.getHeight() - 10);
 
   // Save
@@ -1216,13 +1216,16 @@ function exportCrossedPlayoffsTeamsTournament(
       catTeams.some(t => t.id === m.team1_id || t.id === m.team2_id)
     );
 
-    // Calculate stats
+    // Calculate stats - SEM final_position para classificação de GRUPO
+    // (final_position é do knockout, não deve influenciar a classificação do grupo)
+    // Exactamente como Standings.tsx line 1222-1244
     const teamStats: PlayerStats[] = catTeams.map(team => {
       const stats: PlayerStats = {
         id: team.id, name: team.name,
         matchesPlayed: 0, wins: 0, draws: 0, losses: 0,
         gamesWon: 0, gamesLost: 0,
-        final_position: team.final_position, group_name: team.group_name
+        final_position: undefined, // NÃO usar final_position do knockout para grupo!
+        group_name: team.group_name
       };
       catGroupMatches.forEach(m => {
         if (m.team1_id !== team.id && m.team2_id !== team.id) return;
@@ -1243,9 +1246,21 @@ function exportCrossedPlayoffsTeamsTournament(
       return stats;
     });
 
-    // Sort
+    // Sort usando sortTeamsByTiebreaker DIRECTAMENTE como o Standings.tsx (line 1247-1257)
     const teamOrder = new Map(catTeams.map((t, i) => [t.id, i]));
-    const sortedTeamStats = sortTeamStatsForPDF(teamStats, catGroupMatches, teamOrder);
+    const teamStatsForSort: TeamStats[] = teamStats.map(s => ({
+      id: s.id, name: s.name || '', group_name: cat.name,
+      wins: s.wins, draws: s.draws ?? 0, gamesWon: s.gamesWon, gamesLost: s.gamesLost
+    }));
+    const matchDataForSort: MatchData[] = catGroupMatches.map(m => ({
+      team1_id: m.team1_id!, team2_id: m.team2_id!, winner_id: m.winner_id,
+      team1_score_set1: m.team1_score_set1, team2_score_set1: m.team2_score_set1,
+      team1_score_set2: m.team1_score_set2, team2_score_set2: m.team2_score_set2,
+      team1_score_set3: m.team1_score_set3, team2_score_set3: m.team2_score_set3
+    }));
+    const sortedOrder = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrder);
+    const orderMap = new Map(sortedOrder.map((s, i) => [s.id, i]));
+    const sortedTeamStats = [...teamStats].sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
 
     // Group standings table
     const standingsData = sortedTeamStats.map((s, idx) => {
