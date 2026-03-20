@@ -321,7 +321,7 @@ export async function exportTournamentPDF(
   if (format === 'crossed_playoffs_teams') {
     yPos = exportCrossedPlayoffsTeamsTournament(doc, yPos, tournament, teams, completedMatches, categories);
   } else if (format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender') {
-    yPos = exportIndividualTournament(doc, yPos, tournament, players, groupMatches, knockoutMatches, categories);
+    yPos = await exportIndividualTournament(doc, yPos, tournament, players, groupMatches, knockoutMatches, categories);
   } else if (format === 'round_robin') {
     if (roundRobinType === 'individual' || roundRobinType === 'american') {
       // Se tem equipas, usa exportAmericanTournament; senão, usa exportação individual
@@ -343,12 +343,12 @@ export async function exportTournamentPDF(
     yPos = exportNonStopTournament(doc, yPos, tournament, teams ?? [], completedMatches, categories);
   }
 
-  // Footer
+  // Footer com versão para debug
   const now = new Date();
   const timestamp = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   doc.setFontSize(8);
   doc.setTextColor(128, 128, 128);
-  doc.text(`Gerado em ${timestamp}`, pageWidth - 14, doc.internal.pageSize.getHeight() - 10, { align: 'right' });
+  doc.text(`Gerado em ${timestamp} (v4)`, pageWidth - 14, doc.internal.pageSize.getHeight() - 10, { align: 'right' });
   doc.text('Padel One Tour', 14, doc.internal.pageSize.getHeight() - 10);
 
   // Save
@@ -358,86 +358,91 @@ export async function exportTournamentPDF(
 }
 
 // ============================================================
-// INDIVIDUAL TOURNAMENT EXPORT
+// INDIVIDUAL TOURNAMENT EXPORT (v4)
+// Busca dados directamente do Supabase por categoria,
+// exactamente como faz o Standings.tsx
 // ============================================================
-function exportIndividualTournament(
+async function exportIndividualTournament(
   doc: jsPDF,
   yPos: number,
   tournament: Tournament,
   players: Player[],
-  groupMatches: MatchWithTeams[],
+  _groupMatches: MatchWithTeams[],
   knockoutMatches: MatchWithTeams[],
   categories: TournamentCategory[]
-): number {
+): Promise<number> {
   const pageWidth = doc.internal.pageSize.getWidth();
   
-  console.log('[PDF-INDIVIDUAL] Players:', players.length);
-  console.log('[PDF-INDIVIDUAL] Group matches:', groupMatches.length);
-  console.log('[PDF-INDIVIDUAL] Categories:', categories.length, categories.map(c => c.name));
+  console.log('[PDF-INDIVIDUAL-v4] ====================================');
+  console.log('[PDF-INDIVIDUAL-v4] Players:', players.length);
+  console.log('[PDF-INDIVIDUAL-v4] Categories:', categories.length, categories.map(c => `${c.name}(${c.id})`));
+  console.log('[PDF-INDIVIDUAL-v4] Player categories:', [...new Set(players.map(p => p.category_id))]);
 
   // ═══════════════════════════════════════════════════════════════
-  // SEPARAR POR CATEGORIA primeiro, depois por grupo
-  // Isto é crítico para crossed_playoffs onde M3 e M4 têm ambos
-  // grupo A e grupo B — sem separação, os jogadores misturam-se
+  // BUSCAR DADOS POR CATEGORIA - exactamente como Standings.tsx
+  // Cada categoria tem os seus próprios matches filtrados por category_id
   // ═══════════════════════════════════════════════════════════════
   
-  // Determinar categorias distintas dos jogadores
-  const playerCategoryIds = [...new Set(players.map(p => p.category_id).filter(Boolean))];
-  const hasMultipleCategories = playerCategoryIds.length > 1;
+  const categoryIds = [...new Set(players.map(p => p.category_id).filter(Boolean))] as string[];
+  const hasCategories = categoryIds.length > 0 && categories.length > 0;
   
-  console.log('[PDF-INDIVIDUAL] Player category IDs:', playerCategoryIds);
-  console.log('[PDF-INDIVIDUAL] Has multiple categories:', hasMultipleCategories);
+  console.log('[PDF-INDIVIDUAL-v4] Category IDs from players:', categoryIds);
+  console.log('[PDF-INDIVIDUAL-v4] Has categories:', hasCategories);
 
-  // Construir lista de secções: se há categorias, uma por categoria; senão, uma única secção
-  interface CategorySection {
-    categoryId: string | null;
-    categoryName: string;
-    categoryPlayers: Player[];
-    categoryMatches: MatchWithTeams[];
-  }
-  
-  const sections: CategorySection[] = [];
-  
-  if (hasMultipleCategories && categories.length > 0) {
-    // Uma secção por categoria
-    for (const cat of categories) {
-      const catPlayers = players.filter(p => p.category_id === cat.id);
-      const catMatches = groupMatches.filter(m => (m as any).category_id === cat.id);
-      if (catPlayers.length > 0) {
-        sections.push({
-          categoryId: cat.id,
-          categoryName: cat.name,
-          categoryPlayers: catPlayers,
-          categoryMatches: catMatches
-        });
-      }
+  // Para cada categoria (ou todos se não há categorias)
+  const categoriesToProcess = hasCategories 
+    ? categories.filter(c => categoryIds.includes(c.id))
+    : [{ id: null as string | null, name: '' }];
+
+  for (const cat of categoriesToProcess) {
+    // ═══════════════════════════════════════════════════════════════
+    // FETCH MATCHES PER CATEGORY - mesma query que Standings.tsx (line 90-95)
+    // ═══════════════════════════════════════════════════════════════
+    let matchQuery = supabase
+      .from('matches')
+      .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id, category_id')
+      .eq('tournament_id', tournament.id)
+      .eq('status', 'completed');
+    
+    if (cat.id) {
+      matchQuery = matchQuery.eq('category_id', cat.id);
     }
-    // Jogadores sem categoria (se houver)
-    const noCatPlayers = players.filter(p => !p.category_id);
-    if (noCatPlayers.length > 0) {
-      sections.push({
-        categoryId: null,
-        categoryName: 'Sem Categoria',
-        categoryPlayers: noCatPlayers,
-        categoryMatches: groupMatches.filter(m => !(m as any).category_id)
-      });
+    
+    const { data: categoryMatches, error: matchError } = await matchQuery;
+    
+    if (matchError) {
+      console.error(`[PDF-INDIVIDUAL-v4] Error fetching matches for category ${cat.name}:`, matchError);
+      continue;
     }
-  } else {
-    // Uma única secção com todos os jogadores
-    sections.push({
-      categoryId: null,
-      categoryName: '',
-      categoryPlayers: players,
-      categoryMatches: groupMatches
-    });
-  }
+    
+    let completedMatches = categoryMatches || [];
+    const catPlayers = cat.id ? players.filter(p => p.category_id === cat.id) : players;
+    const catPlayerIds = new Set(catPlayers.map(p => p.id));
+    
+    console.log(`[PDF-INDIVIDUAL-v4] Category ${cat.name || 'ALL'}: ${catPlayers.length} players, ${completedMatches.length} completed matches (filtered by category_id)`);
 
-  console.log('[PDF-INDIVIDUAL] Sections:', sections.map(s => `${s.categoryName || 'All'}: ${s.categoryPlayers.length} players, ${s.categoryMatches.length} matches`));
+    // FALLBACK: se filtrar por category_id retorna 0 matches mas há jogadores,
+    // os matches podem não ter category_id → buscar TODOS e filtrar por presença de jogador
+    if (completedMatches.length === 0 && catPlayers.length > 0 && cat.id) {
+      console.log(`[PDF-INDIVIDUAL-v4] FALLBACK: category_id filter returned 0 matches, trying without category filter...`);
+      const { data: allMatches } = await supabase
+        .from('matches')
+        .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id, category_id')
+        .eq('tournament_id', tournament.id)
+        .eq('status', 'completed');
+      
+      // Filtrar matches que envolvem jogadores desta categoria
+      completedMatches = (allMatches || []).filter(m =>
+        catPlayerIds.has(m.player1_individual_id) ||
+        catPlayerIds.has(m.player2_individual_id) ||
+        catPlayerIds.has(m.player3_individual_id) ||
+        catPlayerIds.has(m.player4_individual_id)
+      );
+      console.log(`[PDF-INDIVIDUAL-v4] FALLBACK result: ${completedMatches.length} matches involve category players`);
+    }
 
-  // Para cada secção (categoria)
-  for (const section of sections) {
     // Título da categoria
-    if (section.categoryName) {
+    if (cat.name) {
       if (yPos > 240) {
         doc.addPage();
         yPos = 20;
@@ -445,14 +450,14 @@ function exportIndividualTournament(
       doc.setFontSize(16);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(139, 92, 246);
-      doc.text(`Categoria ${section.categoryName}`, pageWidth / 2, yPos, { align: 'center' });
+      doc.text(`Categoria ${cat.name}`, pageWidth / 2, yPos, { align: 'center' });
       doc.setTextColor(0, 0, 0);
       yPos += 10;
     }
 
-    // Agrupar jogadores desta categoria por grupo
+    // Agrupar jogadores por grupo
     const playersByGroup = new Map<string, Player[]>();
-    section.categoryPlayers.forEach(player => {
+    catPlayers.forEach(player => {
       const groupKey = player.group_name || 'Sem Grupo';
       if (!playersByGroup.has(groupKey)) {
         playersByGroup.set(groupKey, []);
@@ -461,9 +466,8 @@ function exportIndividualTournament(
     });
 
     const sortedGroups = Array.from(playersByGroup.keys()).sort();
-    console.log(`[PDF-INDIVIDUAL] Category ${section.categoryName || 'All'}: Groups found:`, sortedGroups);
+    console.log(`[PDF-INDIVIDUAL-v4] Category ${cat.name || 'ALL'}: Groups:`, sortedGroups);
 
-    // Para cada grupo dentro desta categoria
     for (const groupName of sortedGroups) {
       if (yPos > 240) {
         doc.addPage();
@@ -480,23 +484,23 @@ function exportIndividualTournament(
       doc.setTextColor(0, 0, 0);
       yPos += 8;
 
-      // Filtrar matches para este grupo - mesma lógica do Standings:
-      // round.startsWith('group_') E jogador do grupo está no match
-      const matchesForStats = section.categoryMatches.filter(m =>
+      // Filtrar matches para este grupo - MESMA lógica do Standings.tsx (line 459-466)
+      const groupMatchesFiltered = completedMatches.filter(m =>
         (m.round || '').startsWith('group_') &&
         groupPlayers.some(p =>
-          p.id === (m as any).player1_individual_id ||
-          p.id === (m as any).player2_individual_id ||
-          p.id === (m as any).player3_individual_id ||
-          p.id === (m as any).player4_individual_id
+          p.id === m.player1_individual_id ||
+          p.id === m.player2_individual_id ||
+          p.id === m.player3_individual_id ||
+          p.id === m.player4_individual_id
         )
       );
       
-      console.log(`[PDF-INDIVIDUAL] Cat ${section.categoryName || 'All'} Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches`);
+      console.log(`[PDF-INDIVIDUAL-v4] Group ${groupName}: ${groupPlayers.length} players, ${groupMatchesFiltered.length} group matches`);
 
-      // Calcular stats para cada jogador neste grupo
-      const playerStats: PlayerStats[] = groupPlayers.map(player => {
-        const stats: PlayerStats = {
+      // Calcular stats - MESMA lógica do Standings.tsx (line 469-503)
+      const playerStatsMap = new Map<string, PlayerStats>();
+      groupPlayers.forEach(player => {
+        playerStatsMap.set(player.id, {
           id: player.id,
           name: player.name,
           matchesPlayed: 0,
@@ -508,62 +512,70 @@ function exportIndividualTournament(
           final_position: player.final_position,
           group_name: player.group_name,
           category_id: player.category_id
-        };
+        });
+      });
 
-        matchesForStats.forEach(match => {
-          const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
-          const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
-          
-          if (!isTeam1 && !isTeam2) return;
+      groupMatchesFiltered.forEach(match => {
+        const player1Id = match.player1_individual_id;
+        const player2Id = match.player2_individual_id;
+        const player3Id = match.player3_individual_id;
+        const player4Id = match.player4_individual_id;
 
-          const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-          const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-          const t1Won = t1Games > t2Games;
-          const isDraw = t1Games === t2Games;
+        const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        const isDraw = team1Games === team2Games;
+        const team1Won = team1Games > team2Games;
 
-          stats.matchesPlayed++;
-          
-          if (isTeam1) {
-            stats.gamesWon += t1Games;
-            stats.gamesLost += t2Games;
+        // Team 1 players
+        [player1Id, player2Id].forEach(playerId => {
+          if (playerId && playerStatsMap.has(playerId)) {
+            const stats = playerStatsMap.get(playerId)!;
+            stats.matchesPlayed++;
+            stats.gamesWon += team1Games;
+            stats.gamesLost += team2Games;
             if (isDraw) stats.draws++;
-            else if (t1Won) stats.wins++;
-            else stats.losses++;
-          } else {
-            stats.gamesWon += t2Games;
-            stats.gamesLost += t1Games;
-            if (isDraw) stats.draws++;
-            else if (!t1Won) stats.wins++;
+            else if (team1Won) stats.wins++;
             else stats.losses++;
           }
         });
 
-        return stats;
+        // Team 2 players
+        [player3Id, player4Id].forEach(playerId => {
+          if (playerId && playerStatsMap.has(playerId)) {
+            const stats = playerStatsMap.get(playerId)!;
+            stats.matchesPlayed++;
+            stats.gamesWon += team2Games;
+            stats.gamesLost += team1Games;
+            if (isDraw) stats.draws++;
+            else if (!team1Won) stats.wins++;
+            else stats.losses++;
+          }
+        });
       });
 
-      // Ordenar com a MESMA lógica do Standings.tsx:
-      // 1° Vitórias, 2° Pontos (V=2,E=1), 3° Diferença jogos, 4° Jogos ganhos
-      const sortedPlayerStats = [...playerStats].sort((a, b) => {
+      // Ordenar - MESMA lógica do Standings.tsx (line 507-516)
+      const playerStats = Array.from(playerStatsMap.values());
+      playerStats.sort((a, b) => {
         if (b.wins !== a.wins) return b.wins - a.wins;
-        const ptsA = a.wins * 2 + (a.draws || 0);
-        const ptsB = b.wins * 2 + (b.draws || 0);
+        const ptsA = a.wins * 2 + a.draws;
+        const ptsB = b.wins * 2 + b.draws;
         if (ptsB !== ptsA) return ptsB - ptsA;
-        const diffA = a.gamesWon - a.gamesLost;
-        const diffB = b.gamesWon - b.gamesLost;
-        if (diffB !== diffA) return diffB - diffA;
+        const aDiff = a.gamesWon - a.gamesLost;
+        const bDiff = b.gamesWon - b.gamesLost;
+        if (bDiff !== aDiff) return bDiff - aDiff;
         return b.gamesWon - a.gamesWon;
       });
 
-      // Debug: classificação para comparação com Standings
-      console.log(`[PDF-INDIVIDUAL] Cat ${section.categoryName || 'All'} Group ${groupName} CLASSIFICATION:`);
-      sortedPlayerStats.forEach((s, idx) => {
-        const pts = s.wins * 2 + (s.draws || 0);
+      // Debug: classificação
+      console.log(`[PDF-INDIVIDUAL-v4] Group ${groupName} CLASSIFICATION:`);
+      playerStats.forEach((s, idx) => {
+        const pts = s.wins * 2 + s.draws;
         const diff = s.gamesWon - s.gamesLost;
-        console.log(`[PDF-INDIVIDUAL]   ${idx + 1}° ${s.name} | V:${s.wins} E:${s.draws} D:${s.losses} | JG:${s.gamesWon} JP:${s.gamesLost} Dif:${diff > 0 ? '+' : ''}${diff} | Pts:${pts}`);
+        console.log(`[PDF-INDIVIDUAL-v4]   ${idx + 1}° ${s.name} | J:${s.matchesPlayed} V:${s.wins} E:${s.draws} D:${s.losses} | JG:${s.gamesWon} JP:${s.gamesLost} Dif:${diff > 0 ? '+' : ''}${diff} | Pts:${pts}`);
       });
 
       // Tabela classificação do grupo
-      const standingsData = sortedPlayerStats.map((s, idx) => {
+      const standingsData = playerStats.map((s, idx) => {
         const pts = s.wins * 2 + s.draws;
         const diff = s.gamesWon - s.gamesLost;
         return [
@@ -604,18 +616,18 @@ function exportIndividualTournament(
 
       yPos = (doc as any).lastAutoTable.finalY + 5;
 
-      // Resultados dos jogos deste grupo
-      if (matchesForStats.length > 0) {
+      // Resultados dos jogos
+      if (groupMatchesFiltered.length > 0) {
         doc.setFontSize(10);
         doc.setFont('helvetica', 'bold');
         doc.text('Jogos:', 14, yPos);
         yPos += 4;
 
-        const matchData = matchesForStats.map(match => {
+        const matchData = groupMatchesFiltered.map(match => {
           const p1 = players.find(p => p.id === match.player1_individual_id);
           const p2 = players.find(p => p.id === match.player2_individual_id);
-          const p3 = players.find(p => p.id === (match as any).player3_individual_id);
-          const p4 = players.find(p => p.id === (match as any).player4_individual_id);
+          const p3 = players.find(p => p.id === match.player3_individual_id);
+          const p4 = players.find(p => p.id === match.player4_individual_id);
           const team1Name = p1 && p2 ? `${p1.name} / ${p2.name}` : (p1?.name || '-');
           const team2Name = p3 && p4 ? `${p3.name} / ${p4.name}` : (p3?.name || '-');
           const scores: string[] = [];
@@ -653,7 +665,16 @@ function exportIndividualTournament(
     yPos = exportKnockoutPhase(doc, yPos, knockoutMatches, players, null, true);
   }
 
-  // Classificação final individual com detalhe (V, E, D, JG, JP, Dif)
+  // Classificação final individual
+  // Buscar TODOS os group matches completed para stats finais
+  const { data: allGroupMatches } = await supabase
+    .from('matches')
+    .select('id, round, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
+    .eq('tournament_id', tournament.id)
+    .eq('status', 'completed');
+
+  const allCompletedGroupMatches = (allGroupMatches || []).filter(m => (m.round || '').startsWith('group_'));
+
   const allPlayerStats: Array<PlayerStats & { final_position?: number | null }> = players.map(player => {
     const stats: PlayerStats & { final_position?: number | null } = {
       id: player.id,
@@ -668,10 +689,9 @@ function exportIndividualTournament(
       group_name: player.group_name,
       category_id: player.category_id
     };
-    // Para stats finais, usar TODOS os group matches que envolvem este jogador
-    groupMatches.forEach(match => {
+    allCompletedGroupMatches.forEach(match => {
       const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
-      const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
+      const isTeam2 = match.player3_individual_id === player.id || match.player4_individual_id === player.id;
       if (!isTeam1 && !isTeam2) return;
       const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
       const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
