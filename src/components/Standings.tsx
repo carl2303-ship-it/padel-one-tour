@@ -60,6 +60,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const [knockoutRankings, setKnockoutRankings] = useState<KnockoutRanking[]>([]);
   const [individualFinalRankings, setIndividualFinalRankings] = useState<IndividualFinalRanking[]>([]);
   const [crossedPlayoffResults, setCrossedPlayoffResults] = useState<any[]>([]);
+  const [categoryGroupedTeams, setCategoryGroupedTeams] = useState<Map<string, TeamWithPlayers[]>>(new Map());
   const [loading, setLoading] = useState(true);
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
@@ -1584,6 +1585,92 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         return { ...team, ...stats };
       });
 
+      // Verificar se há equipas com category_id (round robin por categorias)
+      const teamsWithCategory = teamsWithStats.filter(t => (t as any).category_id);
+      const isRoundRobinByCategory = format === 'round_robin' && roundRobinType === 'teams' && !categoryId && teamsWithCategory.length > 0;
+
+      if (isRoundRobinByCategory) {
+        // Buscar nomes das categorias
+        const categoryIds = [...new Set(teamsWithCategory.map(t => (t as any).category_id as string))];
+        const { data: categoriesData } = await supabase
+          .from('tournament_categories')
+          .select('id, name')
+          .in('id', categoryIds);
+        
+        const categoryNameMap = new Map<string, string>();
+        categoriesData?.forEach((cat: any) => categoryNameMap.set(cat.id, cat.name));
+        
+        // Agrupar por categoria
+        const grouped = new Map<string, TeamWithPlayers[]>();
+        const roundRobinMatches = matches?.filter(m => m.round === 'round_robin' || !m.round) ?? [];
+        
+        for (const catId of categoryIds) {
+          const catName = categoryNameMap.get(catId) || catId;
+          const catTeams = teamsWithStats.filter(t => (t as any).category_id === catId);
+          
+          // Re-calcular stats apenas com jogos da mesma categoria
+          const catTeamsWithCategoryStats = catTeams.map(team => {
+            const categoryMatches = roundRobinMatches.filter(m => m.category_id === catId);
+            let wins = 0, draws = 0, losses = 0, matchesPlayed = 0;
+            let setsWon = 0, setsLost = 0, gamesWon = 0, gamesLost = 0;
+            
+            categoryMatches.forEach(match => {
+              if (match.team1_id === team.id || match.team2_id === team.id) {
+                matchesPlayed++;
+                const isTeam1 = match.team1_id === team.id;
+                const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+                const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+                const isDraw = t1Games === t2Games;
+                const t1Won = t1Games > t2Games;
+                const t2Won = t2Games > t1Games;
+                
+                let t1Sets = 0, t2Sets = 0;
+                if ((match.team1_score_set1 || 0) > (match.team2_score_set1 || 0)) t1Sets++; else if ((match.team1_score_set1 || 0) < (match.team2_score_set1 || 0)) t2Sets++;
+                if ((match.team1_score_set2 || 0) > (match.team2_score_set2 || 0)) t1Sets++; else if ((match.team1_score_set2 || 0) < (match.team2_score_set2 || 0)) t2Sets++;
+                if ((match.team1_score_set3 || 0) > (match.team2_score_set3 || 0)) t1Sets++; else if ((match.team1_score_set3 || 0) < (match.team2_score_set3 || 0)) t2Sets++;
+                
+                if (isDraw) draws++;
+                else if ((isTeam1 && t1Won) || (!isTeam1 && t2Won)) wins++;
+                else losses++;
+                
+                if (isTeam1) { setsWon += t1Sets; setsLost += t2Sets; gamesWon += t1Games; gamesLost += t2Games; }
+                else { setsWon += t2Sets; setsLost += t1Sets; gamesWon += t2Games; gamesLost += t1Games; }
+              }
+            });
+            
+            return { ...team, wins, draws, losses, matchesPlayed, setsWon, setsLost, gamesWon, gamesLost };
+          });
+          
+          // Ordenar por tiebreaker
+          const teamStatsForSort: TeamStats[] = catTeamsWithCategoryStats.map(t => ({
+            id: t.id, name: t.name, group_name: catName,
+            wins: t.wins, draws: t.draws, gamesWon: t.gamesWon, gamesLost: t.gamesLost
+          }));
+          const matchDataForSort: MatchData[] = roundRobinMatches.filter(m => m.category_id === catId).map(m => ({
+            team1_id: m.team1_id, team2_id: m.team2_id,
+            team1_score_set1: m.team1_score_set1, team2_score_set1: m.team2_score_set1,
+            team1_score_set2: m.team1_score_set2, team2_score_set2: m.team2_score_set2,
+            team1_score_set3: m.team1_score_set3, team2_score_set3: m.team2_score_set3
+          }));
+          const teamOrderMap = new Map(catTeamsWithCategoryStats.map((t, i) => [t.id, i]));
+          const sortedStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrderMap);
+          const sortedTeams = sortedStats.map(s => catTeamsWithCategoryStats.find(t => t.id === s.id)!);
+          
+          grouped.set(catName, sortedTeams);
+        }
+        
+        // Equipas sem categoria
+        const teamsWithoutCategory = teamsWithStats.filter(t => !(t as any).category_id);
+        if (teamsWithoutCategory.length > 0) {
+          grouped.set('Sem Categoria', teamsWithoutCategory);
+        }
+        
+        setCategoryGroupedTeams(grouped);
+        setTeams([]);
+        setLoading(false);
+        return;
+      }
+
       const allHaveFinalPosition = teamsWithStats.every(t => t.final_position != null);
       if (allHaveFinalPosition) {
         teamsWithStats.sort((a, b) => (a.final_position || 999) - (b.final_position || 999));
@@ -1612,11 +1699,13 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         const teamOrderMap = new Map(teamsWithStats.map((t, i) => [t.id, i]));
         const sortedStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrderMap);
         const sortedTeams = sortedStats.map(s => teamsWithStats.find(t => t.id === s.id)!);
+        setCategoryGroupedTeams(new Map());
         setTeams(sortedTeams);
         setLoading(false);
         return;
       }
 
+      setCategoryGroupedTeams(new Map());
       setTeams(teamsWithStats);
     }
 
@@ -1648,7 +1737,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
-  if (format !== 'groups_knockout' && !isCrossedPlayoffsTeams && teams.length === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
+  if (format !== 'groups_knockout' && !isCrossedPlayoffsTeams && teams.length === 0 && categoryGroupedTeams.size === 0 && !isIndividualRoundRobin && !isIndividualGroupsKnockout) {
     return (
       <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
         <Trophy className="w-16 h-16 text-gray-300 mx-auto mb-4" />
@@ -2298,6 +2387,82 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             </table>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Round Robin por Categorias (ex: Pai-Filho, Pai-Filha)
+  if (categoryGroupedTeams.size > 0) {
+    const sortedCategoryNames = Array.from(categoryGroupedTeams.keys()).sort();
+    
+    return (
+      <div className="space-y-6">
+        {sortedCategoryNames.map(categoryName => {
+          const catTeams = categoryGroupedTeams.get(categoryName)!;
+          return (
+            <div key={categoryName} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Trophy className="w-5 h-5" />
+                  {categoryName}
+                </h2>
+              </div>
+
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+                    <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {catTeams.map((team, index) => {
+                    const gameDiff = team.gamesWon - team.gamesLost;
+                    const pts = team.wins * 2 + (team.draws || 0);
+                    return (
+                      <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
+                        <td className="pl-3 pr-1 py-2">
+                          <div className="flex items-center gap-1">
+                            {getMedalIcon(index + 1)}
+                            <span className="font-bold text-gray-700">{index + 1}</span>
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                          <div className="text-xs text-gray-500 leading-tight">{team.player1?.name} / {team.player2?.name}</div>
+                        </td>
+                        <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
+                        <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                        <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                        <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                        <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                        <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                        <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                          {gameDiff > 0 ? '+' : ''}{gameDiff}
+                        </td>
+                        <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+                <p className="text-xs text-gray-500">
+                  <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
+                </p>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
