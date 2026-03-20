@@ -441,20 +441,57 @@ function exportIndividualTournament(
       return stats;
     });
 
-    // Sort by: 1) Wins, 2) Points (V=2, E=1, D=0), 3) Game difference, 4) Games won
-    playerStats.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      const ptsA = a.wins * 2 + a.draws;
-      const ptsB = b.wins * 2 + b.draws;
-      if (ptsB !== ptsA) return ptsB - ptsA;
-      const diffA = a.gamesWon - a.gamesLost;
-      const diffB = b.gamesWon - b.gamesLost;
-      if (diffB !== diffA) return diffB - diffA;
-      return b.gamesWon - a.gamesWon;
+    // Use sortTeamsByTiebreaker to match Standings.tsx logic (includes head-to-head)
+    // For individual players, we need to convert player IDs to "team" format for head-to-head comparison
+    const teamStatsForSort: TeamStats[] = playerStats.map(s => ({
+      id: s.id,
+      name: s.name,
+      group_name: s.group_name || 'Geral',
+      wins: s.wins,
+      draws: s.draws ?? 0,
+      gamesWon: s.gamesWon,
+      gamesLost: s.gamesLost,
+      created_at: groupPlayers.find(p => p.id === s.id)?.created_at
+    }));
+    
+    // Convert individual matches to MatchData format for head-to-head comparison
+    // For individual players, head-to-head means: when player A and B played against each other, who won?
+    // We create MatchData entries only for direct confrontations (players on opposite teams)
+    const matchDataForSort: MatchData[] = [];
+    const playerIds = new Set(groupPlayers.map(p => p.id));
+    
+    matchesForStats.forEach(m => {
+      const t1Players = [m.player1_individual_id, m.player2_individual_id].filter(Boolean) as string[];
+      const t2Players = [m.player3_individual_id, m.player4_individual_id].filter(Boolean) as string[];
+      
+      // Create MatchData for each player pair (one from team1, one from team2)
+      // This represents a direct confrontation between two players
+      t1Players.forEach(p1 => {
+        if (!playerIds.has(p1)) return;
+        t2Players.forEach(p2 => {
+          if (!playerIds.has(p2)) return;
+          // p1 (team1) vs p2 (team2)
+          matchDataForSort.push({
+            team1_id: p1,
+            team2_id: p2,
+            team1_score_set1: m.team1_score_set1,
+            team2_score_set1: m.team2_score_set1,
+            team1_score_set2: m.team1_score_set2,
+            team2_score_set2: m.team2_score_set2,
+            team1_score_set3: m.team1_score_set3,
+            team2_score_set3: m.team2_score_set3
+          });
+        });
+      });
     });
+    
+    const playerOrder = new Map(groupPlayers.map((p, i) => [p.id, i]));
+    const sorted = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, playerOrder);
+    const orderMap = new Map(sorted.map((s, i) => [s.id, i]));
+    const sortedPlayerStats = [...playerStats].sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
 
     // Group standings table (com E = empates e Pts)
-    const standingsData = playerStats.map((s, idx) => {
+    const standingsData = sortedPlayerStats.map((s, idx) => {
       const pts = s.wins * 2 + s.draws;
       const diff = s.gamesWon - s.gamesLost;
       return [
