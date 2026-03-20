@@ -373,204 +373,278 @@ function exportIndividualTournament(
   
   console.log('[PDF-INDIVIDUAL] Players:', players.length);
   console.log('[PDF-INDIVIDUAL] Group matches:', groupMatches.length);
+  console.log('[PDF-INDIVIDUAL] Categories:', categories.length, categories.map(c => c.name));
 
-  // Group players by group
-  const playersByGroup = new Map<string, Player[]>();
-  players.forEach(player => {
-    const groupKey = player.group_name || 'Sem Grupo';
-    if (!playersByGroup.has(groupKey)) {
-      playersByGroup.set(groupKey, []);
+  // ═══════════════════════════════════════════════════════════════
+  // SEPARAR POR CATEGORIA primeiro, depois por grupo
+  // Isto é crítico para crossed_playoffs onde M3 e M4 têm ambos
+  // grupo A e grupo B — sem separação, os jogadores misturam-se
+  // ═══════════════════════════════════════════════════════════════
+  
+  // Determinar categorias distintas dos jogadores
+  const playerCategoryIds = [...new Set(players.map(p => p.category_id).filter(Boolean))];
+  const hasMultipleCategories = playerCategoryIds.length > 1;
+  
+  console.log('[PDF-INDIVIDUAL] Player category IDs:', playerCategoryIds);
+  console.log('[PDF-INDIVIDUAL] Has multiple categories:', hasMultipleCategories);
+
+  // Construir lista de secções: se há categorias, uma por categoria; senão, uma única secção
+  interface CategorySection {
+    categoryId: string | null;
+    categoryName: string;
+    categoryPlayers: Player[];
+    categoryMatches: MatchWithTeams[];
+  }
+  
+  const sections: CategorySection[] = [];
+  
+  if (hasMultipleCategories && categories.length > 0) {
+    // Uma secção por categoria
+    for (const cat of categories) {
+      const catPlayers = players.filter(p => p.category_id === cat.id);
+      const catMatches = groupMatches.filter(m => (m as any).category_id === cat.id);
+      if (catPlayers.length > 0) {
+        sections.push({
+          categoryId: cat.id,
+          categoryName: cat.name,
+          categoryPlayers: catPlayers,
+          categoryMatches: catMatches
+        });
+      }
     }
-    playersByGroup.get(groupKey)!.push(player);
-  });
+    // Jogadores sem categoria (se houver)
+    const noCatPlayers = players.filter(p => !p.category_id);
+    if (noCatPlayers.length > 0) {
+      sections.push({
+        categoryId: null,
+        categoryName: 'Sem Categoria',
+        categoryPlayers: noCatPlayers,
+        categoryMatches: groupMatches.filter(m => !(m as any).category_id)
+      });
+    }
+  } else {
+    // Uma única secção com todos os jogadores
+    sections.push({
+      categoryId: null,
+      categoryName: '',
+      categoryPlayers: players,
+      categoryMatches: groupMatches
+    });
+  }
 
-  const sortedGroups = Array.from(playersByGroup.keys()).sort();
-  console.log('[PDF-INDIVIDUAL] Groups found:', sortedGroups);
+  console.log('[PDF-INDIVIDUAL] Sections:', sections.map(s => `${s.categoryName || 'All'}: ${s.categoryPlayers.length} players, ${s.categoryMatches.length} matches`));
 
-  // For each group
-  for (const groupName of sortedGroups) {
-    if (yPos > 240) {
-      doc.addPage();
-      yPos = 20;
+  // Para cada secção (categoria)
+  for (const section of sections) {
+    // Título da categoria
+    if (section.categoryName) {
+      if (yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(139, 92, 246);
+      doc.text(`Categoria ${section.categoryName}`, pageWidth / 2, yPos, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+      yPos += 10;
     }
 
-    const groupPlayers = playersByGroup.get(groupName) || [];
-    
-    // Group title
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(59, 130, 246);
-    doc.text(`Grupo ${groupName}`, 14, yPos);
-    doc.setTextColor(0, 0, 0);
-    yPos += 8;
-
-    // Get matches for this group - mesma lógica do Standings:
-    // round.startsWith('group_') E jogador do grupo está no match
-    const matchesForStats = groupMatches.filter(m =>
-      (m.round || '').startsWith('group_') &&
-      groupPlayers.some(p =>
-        p.id === (m as any).player1_individual_id ||
-        p.id === (m as any).player2_individual_id ||
-        p.id === (m as any).player3_individual_id ||
-        p.id === (m as any).player4_individual_id
-      )
-    );
-    
-    console.log(`[PDF-INDIVIDUAL] Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches`);
-    matchesForStats.forEach(m => {
-      console.log(`[PDF-INDIVIDUAL]   Match: p1=${(m as any).player1_individual_id?.slice(0,8)} p2=${(m as any).player2_individual_id?.slice(0,8)} vs p3=${(m as any).player3_individual_id?.slice(0,8)} p4=${(m as any).player4_individual_id?.slice(0,8)} | ${m.team1_score_set1}-${m.team2_score_set1} ${m.team1_score_set2}-${m.team2_score_set2} ${m.team1_score_set3 ?? ''}-${m.team2_score_set3 ?? ''} | round=${m.round} status=${m.status}`);
+    // Agrupar jogadores desta categoria por grupo
+    const playersByGroup = new Map<string, Player[]>();
+    section.categoryPlayers.forEach(player => {
+      const groupKey = player.group_name || 'Sem Grupo';
+      if (!playersByGroup.has(groupKey)) {
+        playersByGroup.set(groupKey, []);
+      }
+      playersByGroup.get(groupKey)!.push(player);
     });
 
-    // Calculate stats for each player in this group
-    const playerStats: PlayerStats[] = groupPlayers.map(player => {
-      const stats: PlayerStats = {
-        id: player.id,
-        name: player.name,
-        matchesPlayed: 0,
-        wins: 0,
-        draws: 0,
-        losses: 0,
-        gamesWon: 0,
-        gamesLost: 0,
-        final_position: player.final_position,
-        group_name: player.group_name,
-        category_id: player.category_id
-      };
+    const sortedGroups = Array.from(playersByGroup.keys()).sort();
+    console.log(`[PDF-INDIVIDUAL] Category ${section.categoryName || 'All'}: Groups found:`, sortedGroups);
 
-      matchesForStats.forEach(match => {
-        const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
-        const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
-        
-        if (!isTeam1 && !isTeam2) return;
+    // Para cada grupo dentro desta categoria
+    for (const groupName of sortedGroups) {
+      if (yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
 
-        const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-        const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-        const t1Won = t1Games > t2Games;
-        const isDraw = t1Games === t2Games;
+      const groupPlayers = playersByGroup.get(groupName) || [];
+      
+      // Título do grupo
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(59, 130, 246);
+      doc.text(`Grupo ${groupName}`, 14, yPos);
+      doc.setTextColor(0, 0, 0);
+      yPos += 8;
 
-        stats.matchesPlayed++;
-        
-        if (isTeam1) {
-          stats.gamesWon += t1Games;
-          stats.gamesLost += t2Games;
-          if (isDraw) stats.draws++;
-          else if (t1Won) stats.wins++;
-          else stats.losses++;
-        } else {
-          stats.gamesWon += t2Games;
-          stats.gamesLost += t1Games;
-          if (isDraw) stats.draws++;
-          else if (!t1Won) stats.wins++;
-          else stats.losses++;
-        }
+      // Filtrar matches para este grupo - mesma lógica do Standings:
+      // round.startsWith('group_') E jogador do grupo está no match
+      const matchesForStats = section.categoryMatches.filter(m =>
+        (m.round || '').startsWith('group_') &&
+        groupPlayers.some(p =>
+          p.id === (m as any).player1_individual_id ||
+          p.id === (m as any).player2_individual_id ||
+          p.id === (m as any).player3_individual_id ||
+          p.id === (m as any).player4_individual_id
+        )
+      );
+      
+      console.log(`[PDF-INDIVIDUAL] Cat ${section.categoryName || 'All'} Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches`);
+
+      // Calcular stats para cada jogador neste grupo
+      const playerStats: PlayerStats[] = groupPlayers.map(player => {
+        const stats: PlayerStats = {
+          id: player.id,
+          name: player.name,
+          matchesPlayed: 0,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          gamesWon: 0,
+          gamesLost: 0,
+          final_position: player.final_position,
+          group_name: player.group_name,
+          category_id: player.category_id
+        };
+
+        matchesForStats.forEach(match => {
+          const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
+          const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
+          
+          if (!isTeam1 && !isTeam2) return;
+
+          const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+          const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+          const t1Won = t1Games > t2Games;
+          const isDraw = t1Games === t2Games;
+
+          stats.matchesPlayed++;
+          
+          if (isTeam1) {
+            stats.gamesWon += t1Games;
+            stats.gamesLost += t2Games;
+            if (isDraw) stats.draws++;
+            else if (t1Won) stats.wins++;
+            else stats.losses++;
+          } else {
+            stats.gamesWon += t2Games;
+            stats.gamesLost += t1Games;
+            if (isDraw) stats.draws++;
+            else if (!t1Won) stats.wins++;
+            else stats.losses++;
+          }
+        });
+
+        return stats;
       });
 
-      return stats;
-    });
+      // Ordenar com a MESMA lógica do Standings.tsx:
+      // 1° Vitórias, 2° Pontos (V=2,E=1), 3° Diferença jogos, 4° Jogos ganhos
+      const sortedPlayerStats = [...playerStats].sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        const ptsA = a.wins * 2 + (a.draws || 0);
+        const ptsB = b.wins * 2 + (b.draws || 0);
+        if (ptsB !== ptsA) return ptsB - ptsA;
+        const diffA = a.gamesWon - a.gamesLost;
+        const diffB = b.gamesWon - b.gamesLost;
+        if (diffB !== diffA) return diffB - diffA;
+        return b.gamesWon - a.gamesWon;
+      });
 
-    // Ordenar com a MESMA lógica do Standings.tsx (sem confronto direto):
-    // 1° Vitórias, 2° Pontos, 3° Diferença jogos, 4° Jogos ganhos
-    const sortedPlayerStats = [...playerStats].sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      const ptsA = a.wins * 2 + (a.draws || 0);
-      const ptsB = b.wins * 2 + (b.draws || 0);
-      if (ptsB !== ptsA) return ptsB - ptsA;
-      const diffA = a.gamesWon - a.gamesLost;
-      const diffB = b.gamesWon - b.gamesLost;
-      if (diffB !== diffA) return diffB - diffA;
-      return b.gamesWon - a.gamesWon;
-    });
+      // Debug: classificação para comparação com Standings
+      console.log(`[PDF-INDIVIDUAL] Cat ${section.categoryName || 'All'} Group ${groupName} CLASSIFICATION:`);
+      sortedPlayerStats.forEach((s, idx) => {
+        const pts = s.wins * 2 + (s.draws || 0);
+        const diff = s.gamesWon - s.gamesLost;
+        console.log(`[PDF-INDIVIDUAL]   ${idx + 1}° ${s.name} | V:${s.wins} E:${s.draws} D:${s.losses} | JG:${s.gamesWon} JP:${s.gamesLost} Dif:${diff > 0 ? '+' : ''}${diff} | Pts:${pts}`);
+      });
 
-    // Debug: show final classification for comparison with Standings
-    console.log(`[PDF-INDIVIDUAL] Group ${groupName} CLASSIFICATION:`);
-    sortedPlayerStats.forEach((s, idx) => {
-      const pts = s.wins * 2 + (s.draws || 0);
-      const diff = s.gamesWon - s.gamesLost;
-      console.log(`[PDF-INDIVIDUAL]   ${idx + 1}° ${s.name} | V:${s.wins} E:${s.draws} D:${s.losses} | JG:${s.gamesWon} JP:${s.gamesLost} Dif:${diff > 0 ? '+' : ''}${diff} | Pts:${pts}`);
-    });
-
-    // Group standings table (com E = empates e Pts)
-    const standingsData = sortedPlayerStats.map((s, idx) => {
-      const pts = s.wins * 2 + s.draws;
-      const diff = s.gamesWon - s.gamesLost;
-      return [
-        (idx + 1).toString(),
-        s.name,
-        s.matchesPlayed.toString(),
-        s.wins.toString(),
-        s.draws.toString(),
-        s.losses.toString(),
-        s.gamesWon.toString(),
-        s.gamesLost.toString(),
-        (diff >= 0 ? '+' : '') + diff.toString(),
-        pts.toString()
-      ];
-    });
-
-    autoTable(doc, {
-      startY: yPos,
-      head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
-      body: standingsData,
-      theme: 'striped',
-      headStyles: { fillColor: [34, 197, 94], fontSize: 9 },
-      bodyStyles: { fontSize: 8 },
-      columnStyles: {
-        0: { cellWidth: 10, halign: 'center' },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 10, halign: 'center' },
-        3: { cellWidth: 10, halign: 'center' },
-        4: { cellWidth: 10, halign: 'center' },
-        5: { cellWidth: 10, halign: 'center' },
-        6: { cellWidth: 10, halign: 'center' },
-        7: { cellWidth: 10, halign: 'center' },
-        8: { cellWidth: 12, halign: 'center' },
-        9: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
-      },
-      margin: { left: 14, right: 14 }
-    });
-
-    yPos = (doc as any).lastAutoTable.finalY + 5;
-
-    // Group matches (resultados dos jogos)
-    if (matchesForStats.length > 0) {
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Jogos:', 14, yPos);
-      yPos += 4;
-
-      const matchData = matchesForStats.map(match => {
-        const p1 = players.find(p => p.id === match.player1_individual_id);
-        const p2 = players.find(p => p.id === match.player2_individual_id);
-        const p3 = players.find(p => p.id === match.player3_individual_id);
-        const p4 = players.find(p => p.id === match.player4_individual_id);
-        const team1Name = p1 && p2 ? `${p1.name} / ${p2.name}` : (p1?.name || '-');
-        const team2Name = p3 && p4 ? `${p3.name} / ${p4.name}` : (p3?.name || '-');
-        const scores: string[] = [];
-        if (match.team1_score_set1 != null && match.team2_score_set1 != null)
-          scores.push(`${match.team1_score_set1}-${match.team2_score_set1}`);
-        if (match.team1_score_set2 != null && match.team2_score_set2 != null)
-          scores.push(`${match.team1_score_set2}-${match.team2_score_set2}`);
-        if (match.team1_score_set3 != null && match.team2_score_set3 != null)
-          scores.push(`${match.team1_score_set3}-${match.team2_score_set3}`);
-        return [team1Name, scores.join(' / ') || '-', team2Name];
+      // Tabela classificação do grupo
+      const standingsData = sortedPlayerStats.map((s, idx) => {
+        const pts = s.wins * 2 + s.draws;
+        const diff = s.gamesWon - s.gamesLost;
+        return [
+          (idx + 1).toString(),
+          s.name,
+          s.matchesPlayed.toString(),
+          s.wins.toString(),
+          s.draws.toString(),
+          s.losses.toString(),
+          s.gamesWon.toString(),
+          s.gamesLost.toString(),
+          (diff >= 0 ? '+' : '') + diff.toString(),
+          pts.toString()
+        ];
       });
 
       autoTable(doc, {
         startY: yPos,
-        head: [['Dupla 1', 'Resultado', 'Dupla 2']],
-        body: matchData,
-        theme: 'grid',
-        headStyles: { fillColor: [59, 130, 246], fontSize: 8 },
-        bodyStyles: { fontSize: 7 },
+        head: [['#', 'Jogador', 'J', 'V', 'E', 'D', 'JG', 'JP', 'Dif', 'Pts']],
+        body: standingsData,
+        theme: 'striped',
+        headStyles: { fillColor: [34, 197, 94], fontSize: 9 },
+        bodyStyles: { fontSize: 8 },
         columnStyles: {
-          0: { cellWidth: 55 },
-          1: { cellWidth: 30, halign: 'center' },
-          2: { cellWidth: 55 }
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 40 },
+          2: { cellWidth: 10, halign: 'center' },
+          3: { cellWidth: 10, halign: 'center' },
+          4: { cellWidth: 10, halign: 'center' },
+          5: { cellWidth: 10, halign: 'center' },
+          6: { cellWidth: 10, halign: 'center' },
+          7: { cellWidth: 10, halign: 'center' },
+          8: { cellWidth: 12, halign: 'center' },
+          9: { cellWidth: 10, halign: 'center', fontStyle: 'bold' }
         },
         margin: { left: 14, right: 14 }
       });
 
-      yPos = (doc as any).lastAutoTable.finalY + 10;
+      yPos = (doc as any).lastAutoTable.finalY + 5;
+
+      // Resultados dos jogos deste grupo
+      if (matchesForStats.length > 0) {
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Jogos:', 14, yPos);
+        yPos += 4;
+
+        const matchData = matchesForStats.map(match => {
+          const p1 = players.find(p => p.id === match.player1_individual_id);
+          const p2 = players.find(p => p.id === match.player2_individual_id);
+          const p3 = players.find(p => p.id === (match as any).player3_individual_id);
+          const p4 = players.find(p => p.id === (match as any).player4_individual_id);
+          const team1Name = p1 && p2 ? `${p1.name} / ${p2.name}` : (p1?.name || '-');
+          const team2Name = p3 && p4 ? `${p3.name} / ${p4.name}` : (p3?.name || '-');
+          const scores: string[] = [];
+          if (match.team1_score_set1 != null && match.team2_score_set1 != null)
+            scores.push(`${match.team1_score_set1}-${match.team2_score_set1}`);
+          if (match.team1_score_set2 != null && match.team2_score_set2 != null)
+            scores.push(`${match.team1_score_set2}-${match.team2_score_set2}`);
+          if (match.team1_score_set3 != null && match.team2_score_set3 != null)
+            scores.push(`${match.team1_score_set3}-${match.team2_score_set3}`);
+          return [team1Name, scores.join(' / ') || '-', team2Name];
+        });
+
+        autoTable(doc, {
+          startY: yPos,
+          head: [['Dupla 1', 'Resultado', 'Dupla 2']],
+          body: matchData,
+          theme: 'grid',
+          headStyles: { fillColor: [59, 130, 246], fontSize: 8 },
+          bodyStyles: { fontSize: 7 },
+          columnStyles: {
+            0: { cellWidth: 55 },
+            1: { cellWidth: 30, halign: 'center' },
+            2: { cellWidth: 55 }
+          },
+          margin: { left: 14, right: 14 }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 10;
+      }
     }
   }
 
@@ -594,6 +668,7 @@ function exportIndividualTournament(
       group_name: player.group_name,
       category_id: player.category_id
     };
+    // Para stats finais, usar TODOS os group matches que envolvem este jogador
     groupMatches.forEach(match => {
       const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
       const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
