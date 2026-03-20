@@ -370,29 +370,19 @@ function exportIndividualTournament(
     doc.setTextColor(0, 0, 0);
     yPos += 8;
 
-    // Get matches for this group - handle different round formats
-    const thisGroupMatches = groupMatches.filter(m => {
-      const round = m.round || '';
-      return round === `group_${groupName}` || 
-             round === `group ${groupName}` || 
-             round === groupName ||
-             round === 'round_robin';  // For round robin tournaments all matches count
-    });
+    // Get matches for this group - mesma lógica do Standings:
+    // round.startsWith('group_') E jogador do grupo está no match
+    const matchesForStats = groupMatches.filter(m =>
+      (m.round || '').startsWith('group_') &&
+      groupPlayers.some(p =>
+        p.id === (m as any).player1_individual_id ||
+        p.id === (m as any).player2_individual_id ||
+        p.id === (m as any).player3_individual_id ||
+        p.id === (m as any).player4_individual_id
+      )
+    );
     
-    // If still no matches, try to find by player IDs
-    let matchesForStats = thisGroupMatches;
-    if (matchesForStats.length === 0 && groupPlayers.length > 0) {
-      console.log(`[PDF-INDIVIDUAL] No matches found by round, trying by player IDs`);
-      const playerIds = new Set(groupPlayers.map(p => p.id));
-      matchesForStats = groupMatches.filter(m => 
-        playerIds.has(m.player1_individual_id || '') ||
-        playerIds.has(m.player2_individual_id || '') ||
-        playerIds.has(m.player3_individual_id || '') ||
-        playerIds.has(m.player4_individual_id || '')
-      );
-    }
-    
-    console.log(`[PDF-INDIVIDUAL] Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches (round formats tried: group_${groupName}, group ${groupName}, ${groupName})`);
+    console.log(`[PDF-INDIVIDUAL] Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches`);
 
     // Calculate stats for each player in this group
     const playerStats: PlayerStats[] = groupPlayers.map(player => {
@@ -412,7 +402,7 @@ function exportIndividualTournament(
 
       matchesForStats.forEach(match => {
         const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
-        const isTeam2 = match.player3_individual_id === player.id || match.player4_individual_id === player.id;
+        const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
         
         if (!isTeam1 && !isTeam2) return;
 
@@ -441,54 +431,18 @@ function exportIndividualTournament(
       return stats;
     });
 
-    // Use sortTeamsByTiebreaker to match Standings.tsx logic (includes head-to-head)
-    // For individual players, we need to convert player IDs to "team" format for head-to-head comparison
-    const teamStatsForSort: TeamStats[] = playerStats.map(s => ({
-      id: s.id,
-      name: s.name,
-      group_name: s.group_name || 'Geral',
-      wins: s.wins,
-      draws: s.draws ?? 0,
-      gamesWon: s.gamesWon,
-      gamesLost: s.gamesLost,
-      created_at: groupPlayers.find(p => p.id === s.id)?.created_at
-    }));
-    
-    // Convert individual matches to MatchData format for head-to-head comparison
-    // For individual players, head-to-head means: when player A and B played against each other, who won?
-    // We create MatchData entries only for direct confrontations (players on opposite teams)
-    const matchDataForSort: MatchData[] = [];
-    const playerIds = new Set(groupPlayers.map(p => p.id));
-    
-    matchesForStats.forEach(m => {
-      const t1Players = [m.player1_individual_id, m.player2_individual_id].filter(Boolean) as string[];
-      const t2Players = [m.player3_individual_id, m.player4_individual_id].filter(Boolean) as string[];
-      
-      // Create MatchData for each player pair (one from team1, one from team2)
-      // This represents a direct confrontation between two players
-      t1Players.forEach(p1 => {
-        if (!playerIds.has(p1)) return;
-        t2Players.forEach(p2 => {
-          if (!playerIds.has(p2)) return;
-          // p1 (team1) vs p2 (team2)
-          matchDataForSort.push({
-            team1_id: p1,
-            team2_id: p2,
-            team1_score_set1: m.team1_score_set1,
-            team2_score_set1: m.team2_score_set1,
-            team1_score_set2: m.team1_score_set2,
-            team2_score_set2: m.team2_score_set2,
-            team1_score_set3: m.team1_score_set3,
-            team2_score_set3: m.team2_score_set3
-          });
-        });
-      });
+    // Ordenar com a MESMA lógica do Standings.tsx (sem confronto direto):
+    // 1° Vitórias, 2° Pontos, 3° Diferença jogos, 4° Jogos ganhos
+    const sortedPlayerStats = [...playerStats].sort((a, b) => {
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      const ptsA = a.wins * 2 + (a.draws || 0);
+      const ptsB = b.wins * 2 + (b.draws || 0);
+      if (ptsB !== ptsA) return ptsB - ptsA;
+      const diffA = a.gamesWon - a.gamesLost;
+      const diffB = b.gamesWon - b.gamesLost;
+      if (diffB !== diffA) return diffB - diffA;
+      return b.gamesWon - a.gamesWon;
     });
-    
-    const playerOrder = new Map(groupPlayers.map((p, i) => [p.id, i]));
-    const sorted = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, playerOrder);
-    const orderMap = new Map(sorted.map((s, i) => [s.id, i]));
-    const sortedPlayerStats = [...playerStats].sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
 
     // Group standings table (com E = empates e Pts)
     const standingsData = sortedPlayerStats.map((s, idx) => {
@@ -597,7 +551,7 @@ function exportIndividualTournament(
     };
     groupMatches.forEach(match => {
       const isTeam1 = match.player1_individual_id === player.id || match.player2_individual_id === player.id;
-      const isTeam2 = match.player3_individual_id === player.id || match.player4_individual_id === player.id;
+      const isTeam2 = (match as any).player3_individual_id === player.id || (match as any).player4_individual_id === player.id;
       if (!isTeam1 && !isTeam2) return;
       const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
       const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
