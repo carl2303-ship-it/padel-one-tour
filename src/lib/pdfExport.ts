@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Tournament, Player, Match, TournamentCategory, Team } from './supabase';
+import { supabase, Tournament, Player, Match, TournamentCategory, Team } from './supabase';
 import { sortTeamsByTiebreaker } from './groups';
 import type { TeamStats, MatchData } from './groups';
 
@@ -177,36 +177,72 @@ function sortTeamStatsForPDF(
   return [...teamStats].sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
 }
 
-// Main export function that receives data directly
+// Main export function - fetches fresh data from DB to ensure consistency with Standings
 export async function exportTournamentPDF(
   tournament: Tournament,
-  teams: TeamWithPlayers[],
-  players: Player[],
-  matches: MatchWithTeams[],
-  categories: TournamentCategory[],
+  _teams: TeamWithPlayers[],
+  _players: Player[],
+  _matches: MatchWithTeams[],
+  _categories: TournamentCategory[],
   t: any
 ): Promise<void> {
   console.log('[PDF] ====================================');
   console.log('[PDF] Starting export for tournament:', tournament.name);
   console.log('[PDF] Format:', tournament.format);
   console.log('[PDF] Round Robin Type:', tournament.round_robin_type);
-  console.log('[PDF] Teams:', teams?.length || 0);
-  console.log('[PDF] Players:', players?.length || 0);
-  console.log('[PDF] Matches (total):', matches?.length || 0);
-  console.log('[PDF] Categories:', categories?.length || 0);
+
+  // ═══════════════════════════════════════════════════════════════
+  // FETCH FRESH DATA from DB (same source as Standings.tsx)
+  // This ensures the PDF always matches the Standings component
+  // ═══════════════════════════════════════════════════════════════
+  const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
+    supabase
+      .from('teams')
+      .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)')
+      .eq('tournament_id', tournament.id),
+    supabase
+      .from('players')
+      .select('*')
+      .eq('tournament_id', tournament.id),
+    supabase
+      .from('matches')
+      .select('*, team1:teams!matches_team1_id_fkey(id, name, group_name, player1:players!teams_player1_id_fkey(id, name), player2:players!teams_player2_id_fkey(id, name)), team2:teams!matches_team2_id_fkey(id, name, group_name, player1:players!teams_player1_id_fkey(id, name), player2:players!teams_player2_id_fkey(id, name))')
+      .eq('tournament_id', tournament.id)
+      .order('match_number', { ascending: true }),
+    supabase
+      .from('tournament_categories')
+      .select('*')
+      .eq('tournament_id', tournament.id)
+  ]);
+
+  if (teamsResult.error) console.error('[PDF] Error fetching teams:', teamsResult.error);
+  if (playersResult.error) console.error('[PDF] Error fetching players:', playersResult.error);
+  if (matchesResult.error) console.error('[PDF] Error fetching matches:', matchesResult.error);
+  if (categoriesResult.error) console.error('[PDF] Error fetching categories:', categoriesResult.error);
+
+  const teams = (teamsResult.data || []) as TeamWithPlayers[];
+  const players = (playersResult.data || []) as Player[];
+  const matches = (matchesResult.data || []) as MatchWithTeams[];
+  const categories = (categoriesResult.data || []) as TournamentCategory[];
+
+  console.log('[PDF] Fresh data from DB:');
+  console.log('[PDF] Teams:', teams.length);
+  console.log('[PDF] Players:', players.length);
+  console.log('[PDF] Matches:', matches.length);
+  console.log('[PDF] Categories:', categories.length);
   
   // Debug: show team/player groups
-  if (teams?.length > 0) {
+  if (teams.length > 0) {
     const teamGroups = [...new Set(teams.map(t => t.group_name || 'null'))];
     console.log('[PDF] Team groups:', teamGroups);
   }
-  if (players?.length > 0) {
+  if (players.length > 0) {
     const playerGroups = [...new Set(players.map(p => p.group_name || 'null'))];
     console.log('[PDF] Player groups:', playerGroups);
   }
   
   // Debug: show match statuses
-  const matchStatuses = matches?.reduce((acc, m) => {
+  const matchStatuses = matches.reduce((acc, m) => {
     acc[m.status || 'undefined'] = (acc[m.status || 'undefined'] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
@@ -255,10 +291,8 @@ export async function exportTournamentPDF(
   doc.setTextColor(0, 0, 0);
   yPos += 12;
 
-  // Get completed matches (incluir jogos com resultados mesmo que status não seja 'completed' - dados antigos)
-  const completedMatches = matches.filter(m =>
-    m.status === 'completed' || (m.team1_score_set1 != null && m.team2_score_set1 != null)
-  );
+  // Get completed matches - usar MESMA lógica do Standings.tsx: apenas status === 'completed'
+  const completedMatches = matches.filter(m => m.status === 'completed');
 
   // Usar a mesma lógica de rondas para separar grupos vs eliminatórias (compatível com dados antigos)
   const isGroupRoundFn = (r: string) => {
@@ -383,6 +417,9 @@ function exportIndividualTournament(
     );
     
     console.log(`[PDF-INDIVIDUAL] Group ${groupName}: ${groupPlayers.length} players, ${matchesForStats.length} matches`);
+    matchesForStats.forEach(m => {
+      console.log(`[PDF-INDIVIDUAL]   Match: p1=${(m as any).player1_individual_id?.slice(0,8)} p2=${(m as any).player2_individual_id?.slice(0,8)} vs p3=${(m as any).player3_individual_id?.slice(0,8)} p4=${(m as any).player4_individual_id?.slice(0,8)} | ${m.team1_score_set1}-${m.team2_score_set1} ${m.team1_score_set2}-${m.team2_score_set2} ${m.team1_score_set3 ?? ''}-${m.team2_score_set3 ?? ''} | round=${m.round} status=${m.status}`);
+    });
 
     // Calculate stats for each player in this group
     const playerStats: PlayerStats[] = groupPlayers.map(player => {
@@ -442,6 +479,14 @@ function exportIndividualTournament(
       const diffB = b.gamesWon - b.gamesLost;
       if (diffB !== diffA) return diffB - diffA;
       return b.gamesWon - a.gamesWon;
+    });
+
+    // Debug: show final classification for comparison with Standings
+    console.log(`[PDF-INDIVIDUAL] Group ${groupName} CLASSIFICATION:`);
+    sortedPlayerStats.forEach((s, idx) => {
+      const pts = s.wins * 2 + (s.draws || 0);
+      const diff = s.gamesWon - s.gamesLost;
+      console.log(`[PDF-INDIVIDUAL]   ${idx + 1}° ${s.name} | V:${s.wins} E:${s.draws} D:${s.losses} | JG:${s.gamesWon} JP:${s.gamesLost} Dif:${diff > 0 ? '+' : ''}${diff} | Pts:${pts}`);
     });
 
     // Group standings table (com E = empates e Pts)
