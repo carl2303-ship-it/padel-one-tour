@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, Tournament, Team, Player, Match, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp } from 'lucide-react';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
 import MatchModal from './MatchModal';
@@ -6303,6 +6303,48 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 Reprocessar Ratings & Rewards
               </button>
             )}
+            <button
+              onClick={async () => {
+                if (!confirm('⚠️ ATENÇÃO: Isto vai recalcular os ratings de TODOS os torneios!\n\n1. Reset de todos os contadores (rated_matches, wins, losses)\n2. Reprocessar todos os jogos por ordem cronológica\n\nOs níveis base que definiste serão mantidos.\n\nContinuar?')) return;
+                setLoading(true);
+                try {
+                  // 1. Reset player counters (keep level as user set it)
+                  const { error: resetPlayersErr } = await supabase
+                    .from('player_accounts')
+                    .update({ rated_matches: 0, wins: 0, losses: 0 })
+                    .gte('id', '00000000-0000-0000-0000-000000000000');
+                  if (resetPlayersErr) console.error('[REPROCESS-ALL] Error resetting player counters:', resetPlayersErr);
+
+                  // 2. Reset rating_processed flag on ALL completed matches
+                  const { error: resetMatchesErr } = await supabase
+                    .from('matches')
+                    .update({ rating_processed: false })
+                    .eq('status', 'completed');
+                  if (resetMatchesErr) console.error('[REPROCESS-ALL] Error resetting match flags:', resetMatchesErr);
+
+                  // 3. Process ALL unrated matches (chronologically)
+                  const ratingResult = await processAllUnratedMatches(undefined, (current, total, info) => {
+                    console.log(`[REPROCESS-ALL] ${current}/${total}: ${info}`);
+                  });
+                  
+                  let msg = `📊 Recálculo GLOBAL concluído!\n\n`;
+                  msg += `Jogos processados: ${ratingResult.processed}\n`;
+                  msg += `Jogos saltados: ${ratingResult.skipped}\n`;
+                  msg += `Erros: ${ratingResult.errors}\n`;
+                  msg += `Total de jogos: ${ratingResult.total}`;
+                  alert(msg);
+                } catch (err) {
+                  console.error('[REPROCESS-ALL] Error:', err);
+                  alert('Erro ao recalcular. Ver consola para detalhes.');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+            >
+              <TrendingUp className="w-4 h-4" />
+              Recalcular TODOS os Torneios
+            </button>
           </div>
         </div>
       </div>
