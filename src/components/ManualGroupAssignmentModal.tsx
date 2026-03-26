@@ -91,7 +91,9 @@ export function ManualGroupAssignmentModal({
   };
 
   const getParticipantsInGroup = (groupName: string) => {
-    return filteredParticipants.filter((p: any) => assignments.get(p.id) === groupName);
+    return filteredParticipants
+      .filter((p: any) => assignments.get(p.id) === groupName)
+      .sort((a: any, b: any) => (a.seed ?? Infinity) - (b.seed ?? Infinity));
   };
 
   const getUnassignedParticipants = () => {
@@ -110,21 +112,31 @@ export function ManualGroupAssignmentModal({
     });
   };
 
+  const serpentineAssign = (items: any[], numGroups: number): Map<string, string> => {
+    const seeded = items.filter((p: any) => p.seed != null && p.seed > 0)
+      .sort((a: any, b: any) => a.seed - b.seed);
+    const unseeded = items.filter((p: any) => !p.seed || p.seed <= 0)
+      .sort(() => Math.random() - 0.5);
+    const ordered = [...seeded, ...unseeded];
+
+    const result = new Map<string, string>();
+    ordered.forEach((p: any, index) => {
+      const row = Math.floor(index / numGroups);
+      const posInRow = index % numGroups;
+      const groupIndex = row % 2 === 0 ? posInRow : (numGroups - 1 - posInRow);
+      result.set(p.id, groupNames[groupIndex]);
+    });
+    return result;
+  };
+
   const handleRandomAssign = () => {
     const unassigned = getUnassignedParticipants();
     if (unassigned.length === 0) {
       const confirmReassign = confirm('All participants are already assigned. Reassign everyone randomly?');
       if (!confirmReassign) return;
 
-      const shuffled = [...filteredParticipants].sort(() => Math.random() - 0.5);
-      const newAssignments = new Map<string, string>();
-      shuffled.forEach((p: any, index) => {
-        const groupIndex = index % categoryNumberOfGroups;
-        newAssignments.set(p.id, groupNames[groupIndex]);
-      });
-      setAssignments(newAssignments);
+      setAssignments(serpentineAssign(filteredParticipants, categoryNumberOfGroups));
     } else {
-      const shuffled = [...unassigned].sort(() => Math.random() - 0.5);
       const newAssignments = new Map(assignments);
 
       const groupCounts = new Map<string, number>();
@@ -132,7 +144,13 @@ export function ManualGroupAssignmentModal({
         groupCounts.set(g, getParticipantsInGroup(g).length);
       });
 
-      shuffled.forEach((p: any) => {
+      const seeded = unassigned.filter((p: any) => p.seed != null && p.seed > 0)
+        .sort((a: any, b: any) => a.seed - b.seed);
+      const unseeded = unassigned.filter((p: any) => !p.seed || p.seed <= 0)
+        .sort(() => Math.random() - 0.5);
+      const ordered = [...seeded, ...unseeded];
+
+      ordered.forEach((p: any) => {
         let minGroup = groupNames[0];
         let minCount = groupCounts.get(minGroup) || 0;
 
@@ -375,6 +393,7 @@ export function ManualGroupAssignmentModal({
                           <GripVertical className="w-3 h-3 text-gray-400 group-hover:text-gray-600" />
                           <span className="text-gray-400 text-xs w-4">{idx + 1}.</span>
                           <span className="flex-1 font-medium text-gray-900 truncate">
+                            {p.seed ? <span className="text-xs text-blue-500 mr-1">CS{p.seed}</span> : null}
                             {getParticipantName(p)}
                           </span>
                           <button

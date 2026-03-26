@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { supabase, TournamentCategory } from '../lib/supabase';
+import { supabase, TournamentCategory, CategoryScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { X, Plus, Trash2, Edit2 } from 'lucide-react';
+import { X, Plus, Trash2, Edit2, Calendar, Clock } from 'lucide-react';
 
 type ManageCategoriesModalProps = {
   tournamentId: string;
@@ -15,6 +15,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [loading, setLoading] = useState(false);
   const [editingCategory, setEditingCategory] = useState<TournamentCategory | null>(null);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string }>>([]);
+  const [tournamentDates, setTournamentDates] = useState<{ start_date: string; end_date: string }>({ start_date: '', end_date: '' });
   const [newCategory, setNewCategory] = useState({
     name: '',
     format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'round_robin_teams' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'crossed_playoffs_teams' | 'mixed_gender' | 'mixed_american',
@@ -22,7 +23,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
     qualified_per_group: 2,
-    court_names: [] as string[]
+    court_names: [] as string[],
+    category_schedule: [] as CategoryScheduleEntry[],
+    match_duration_minutes: null as number | null
   });
 
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
@@ -36,12 +39,38 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const fetchTournamentType = async () => {
     const { data } = await supabase
       .from('tournaments')
-      .select('round_robin_type')
+      .select('round_robin_type, start_date, end_date')
       .eq('id', tournamentId)
       .single();
     if (data) {
       setTournamentRoundRobinType((data as any).round_robin_type);
+      setTournamentDates({
+        start_date: (data as any).start_date || '',
+        end_date: (data as any).end_date || ''
+      });
     }
+  };
+
+  // Helper to get all dates between start and end
+  const getTournamentDateRange = (): string[] => {
+    if (!tournamentDates.start_date || !tournamentDates.end_date) return [];
+    const dates: string[] = [];
+    const start = new Date(tournamentDates.start_date);
+    const end = new Date(tournamentDates.end_date);
+    const current = new Date(start);
+    while (current <= end) {
+      dates.push(current.toISOString().split('T')[0]);
+      current.setDate(current.getDate() + 1);
+    }
+    return dates;
+  };
+
+  const formatDateLabel = (dateStr: string): string => {
+    const date = new Date(dateStr + 'T00:00:00');
+    const dayNames = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    return `${dayNames[date.getDay()]} ${day}/${month}`;
   };
 
   const fetchClubCourts = async () => {
@@ -108,7 +137,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           max_teams: newCategory.max_teams,
           knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
           qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
-          court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null
+          court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
+          category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
+          match_duration_minutes: newCategory.match_duration_minutes || null
         });
 
       if (error) throw error;
@@ -120,7 +151,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         max_teams: 16,
         knockout_stage: 'quarterfinals',
         qualified_per_group: 2,
-        court_names: []
+        court_names: [],
+        category_schedule: [],
+        match_duration_minutes: null
       });
 
       await loadCategories();
@@ -150,7 +183,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           max_teams: editingCategory.max_teams,
           knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
           qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
-          court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null
+          court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
+          category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
+          match_duration_minutes: editingCategory.match_duration_minutes || null
         })
         .eq('id', editingCategory.id);
 
@@ -358,6 +393,110 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
               </div>
             )}
 
+            {/* Schedule por Categoria */}
+            <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                <Calendar className="w-4 h-4" />
+                Horário da Categoria
+              </label>
+              <div className="border border-gray-300 rounded-lg p-3 bg-gray-50 space-y-3">
+                <div className="text-xs text-gray-600">
+                  Defina os dias e horários em que esta categoria joga. Se não definir, usa o horário geral do torneio.
+                </div>
+
+                {/* Duração do jogo por categoria */}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Duração do jogo (min) — opcional, sobrepõe o valor do torneio
+                  </label>
+                  <input
+                    type="number"
+                    min="10"
+                    max="180"
+                    step="5"
+                    value={newCategory.match_duration_minutes || ''}
+                    onChange={(e) => setNewCategory({ ...newCategory, match_duration_minutes: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Ex: 30, 60, 90"
+                    className="w-32 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                {/* Lista de slots de schedule */}
+                {newCategory.category_schedule.map((entry, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200">
+                    <div className="flex-1">
+                      <select
+                        value={entry.date}
+                        onChange={(e) => {
+                          const updated = [...newCategory.category_schedule];
+                          updated[idx] = { ...updated[idx], date: e.target.value };
+                          setNewCategory({ ...newCategory, category_schedule: updated });
+                        }}
+                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">Selecionar dia...</option>
+                        {getTournamentDateRange().map(d => (
+                          <option key={d} value={d}>{formatDateLabel(d)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-gray-400" />
+                      <input
+                        type="time"
+                        value={entry.start_time}
+                        onChange={(e) => {
+                          const updated = [...newCategory.category_schedule];
+                          updated[idx] = { ...updated[idx], start_time: e.target.value };
+                          setNewCategory({ ...newCategory, category_schedule: updated });
+                        }}
+                        className="px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <span className="text-gray-400 text-sm">–</span>
+                      <input
+                        type="time"
+                        value={entry.end_time}
+                        onChange={(e) => {
+                          const updated = [...newCategory.category_schedule];
+                          updated[idx] = { ...updated[idx], end_time: e.target.value };
+                          setNewCategory({ ...newCategory, category_schedule: updated });
+                        }}
+                        className="px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = newCategory.category_schedule.filter((_, i) => i !== idx);
+                        setNewCategory({ ...newCategory, category_schedule: updated });
+                      }}
+                      className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const defaultDate = getTournamentDateRange()[0] || '';
+                    setNewCategory({
+                      ...newCategory,
+                      category_schedule: [
+                        ...newCategory.category_schedule,
+                        { date: defaultDate, start_time: '09:00', end_time: '13:00' }
+                      ]
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors font-medium"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Adicionar Dia/Horário
+                </button>
+              </div>
+            </div>
+
             <button
               onClick={handleAddCategory}
               disabled={loading}
@@ -528,6 +667,109 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                           </div>
                         )}
 
+                        {/* Schedule por Categoria (edição) */}
+                        <div>
+                          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2">
+                            <Calendar className="w-4 h-4" />
+                            Horário da Categoria
+                          </label>
+                          <div className="border border-gray-300 rounded-lg p-3 bg-gray-50 space-y-3">
+                            <div className="text-xs text-gray-600">
+                              Defina os dias e horários em que esta categoria joga.
+                            </div>
+
+                            {/* Duração do jogo por categoria */}
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-1">
+                                Duração do jogo (min) — opcional
+                              </label>
+                              <input
+                                type="number"
+                                min="10"
+                                max="180"
+                                step="5"
+                                value={editingCategory.match_duration_minutes || ''}
+                                onChange={(e) => setEditingCategory({ ...editingCategory, match_duration_minutes: e.target.value ? parseInt(e.target.value) : null })}
+                                placeholder="Ex: 30, 60, 90"
+                                className="w-32 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                            </div>
+
+                            {(editingCategory.category_schedule || []).map((entry, idx) => (
+                              <div key={idx} className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200">
+                                <div className="flex-1">
+                                  <select
+                                    value={entry.date}
+                                    onChange={(e) => {
+                                      const updated = [...(editingCategory.category_schedule || [])];
+                                      updated[idx] = { ...updated[idx], date: e.target.value };
+                                      setEditingCategory({ ...editingCategory, category_schedule: updated });
+                                    }}
+                                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  >
+                                    <option value="">Selecionar dia...</option>
+                                    {getTournamentDateRange().map(d => (
+                                      <option key={d} value={d}>{formatDateLabel(d)}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-gray-400" />
+                                  <input
+                                    type="time"
+                                    value={entry.start_time}
+                                    onChange={(e) => {
+                                      const updated = [...(editingCategory.category_schedule || [])];
+                                      updated[idx] = { ...updated[idx], start_time: e.target.value };
+                                      setEditingCategory({ ...editingCategory, category_schedule: updated });
+                                    }}
+                                    className="px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  />
+                                  <span className="text-gray-400 text-sm">–</span>
+                                  <input
+                                    type="time"
+                                    value={entry.end_time}
+                                    onChange={(e) => {
+                                      const updated = [...(editingCategory.category_schedule || [])];
+                                      updated[idx] = { ...updated[idx], end_time: e.target.value };
+                                      setEditingCategory({ ...editingCategory, category_schedule: updated });
+                                    }}
+                                    className="px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = (editingCategory.category_schedule || []).filter((_, i) => i !== idx);
+                                    setEditingCategory({ ...editingCategory, category_schedule: updated });
+                                  }}
+                                  className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const defaultDate = getTournamentDateRange()[0] || '';
+                                setEditingCategory({
+                                  ...editingCategory,
+                                  category_schedule: [
+                                    ...(editingCategory.category_schedule || []),
+                                    { date: defaultDate, start_time: '09:00', end_time: '13:00' }
+                                  ]
+                                });
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors font-medium"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Adicionar Dia/Horário
+                            </button>
+                          </div>
+                        </div>
+
                         <div className="flex gap-2">
                           <button
                             onClick={handleUpdateCategory}
@@ -564,7 +806,20 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             {category.court_names && category.court_names.length > 0 && (
                               <> • {category.court_names.length} campo{category.court_names.length !== 1 ? 's' : ''}</>
                             )}
+                            {category.match_duration_minutes && (
+                              <> • {category.match_duration_minutes}min</>
+                            )}
                           </div>
+                          {category.category_schedule && category.category_schedule.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {category.category_schedule.map((entry, idx) => (
+                                <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full font-medium">
+                                  <Calendar className="w-3 h-3" />
+                                  {formatDateLabel(entry.date)} {entry.start_time}–{entry.end_time}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="flex gap-2">
                           <button

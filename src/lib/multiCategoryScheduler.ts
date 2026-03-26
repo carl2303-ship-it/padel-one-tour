@@ -1,5 +1,6 @@
 import { Team, ScheduledMatch, DailySchedule } from './scheduler';
 import { generateAmericanSchedule } from './americanScheduler';
+import { CategoryScheduleEntry } from './supabase';
 
 interface CategoryScheduleRequest {
   categoryId: string;
@@ -11,6 +12,8 @@ interface CategoryScheduleRequest {
   isIndividualFormat?: boolean;
   knockoutStage?: 'final' | 'semifinals' | 'quarterfinals' | 'round_of_16';
   courtNames?: string[];
+  categorySchedule?: CategoryScheduleEntry[] | null; // Per-category day/time schedule
+  matchDurationMinutes?: number | null; // Per-category match duration
 }
 
 function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string } {
@@ -40,7 +43,8 @@ function calculateSlotsForDay(dateStr: string, dailySchedules: DailySchedule[], 
 function getDateForSlot(startDate: string, slotIndex: number, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string, matchDurationMinutes: number): { dateStr: string; slotInDay: number; startHour: number; startMinute: number } {
   const [year, month, day] = startDate.split('-').map(Number);
   let remainingSlots = slotIndex;
-  let currentDate = new Date(year, month - 1, day);
+  // Use UTC noon to avoid timezone shifts when converting to ISO string
+  let currentDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
 
   while (true) {
     const dateStr = currentDate.toISOString().split('T')[0];
@@ -51,8 +55,61 @@ function getDateForSlot(startDate: string, slotIndex: number, dailySchedules: Da
     }
 
     remainingSlots -= dayInfo.slotsPerDay;
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
+}
+
+// ===========================
+// Per-Category Schedule Slots
+// ===========================
+
+interface TimeSlot {
+  time: string; // ISO string
+  dateStr: string;
+}
+
+/**
+ * Generate all available time slots for a category based on its own schedule.
+ * Each slot is a match start time within the category's configured dates/times.
+ */
+function generateCategoryTimeSlots(
+  categorySchedule: CategoryScheduleEntry[],
+  matchDurationMinutes: number
+): TimeSlot[] {
+  const slots: TimeSlot[] = [];
+
+  // Sort entries by date, then start_time
+  const sortedEntries = [...categorySchedule].sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.start_time.localeCompare(b.start_time);
+  });
+
+  for (const entry of sortedEntries) {
+    const [startHour, startMinute] = entry.start_time.split(':').map(Number);
+    const [endHour, endMinute] = entry.end_time.split(':').map(Number);
+    const startTotalMinutes = startHour * 60 + startMinute;
+    const endTotalMinutes = endHour * 60 + (endMinute || 0);
+    let availableMinutes = endTotalMinutes - startTotalMinutes;
+    if (availableMinutes <= 0) {
+      availableMinutes = (24 * 60 - startTotalMinutes) + endTotalMinutes;
+    }
+    const slotsCount = Math.floor(availableMinutes / matchDurationMinutes);
+
+    const [year, month, day] = entry.date.split('-').map(Number);
+
+    for (let i = 0; i < slotsCount; i++) {
+      const totalMinutes = startTotalMinutes + i * matchDurationMinutes;
+      const h = Math.floor(totalMinutes / 60) % 24;
+      const m = totalMinutes % 60;
+      const slotTime = new Date(Date.UTC(year, month - 1, day, h, m, 0, 0));
+      slots.push({
+        time: slotTime.toISOString(),
+        dateStr: entry.date
+      });
+    }
+  }
+
+  return slots;
 }
 
 export function scheduleMultipleCategories(
@@ -66,13 +123,26 @@ export function scheduleMultipleCategories(
   dailySchedules: DailySchedule[] = [],
   allCourtNames: string[] = []
 ): Map<string, ScheduledMatch[]> {
-  console.log('[MULTI-CAT V5] Starting with category-specific courts');
-  console.log('[MULTI-CAT V5] All court names:', allCourtNames);
+  console.log('[MULTI-CAT V6] Starting with category-specific courts + schedules');
+  console.log('[MULTI-CAT V6] All court names:', allCourtNames);
+  
+  // Check if any category has its own schedule
+  const hasCategorySchedules = categories.some(cat => cat.categorySchedule && cat.categorySchedule.length > 0);
+  console.log('[MULTI-CAT V6] Has per-category schedules:', hasCategorySchedules);
   
   // Build a map of category -> allowed court numbers and names
   const categoryCourtMap = new Map<string, { courtNumbers: number[]; courtNames: string[] }>();
   
+  // Build a map of category -> own time slots (if has categorySchedule)
+  const categoryTimeSlotsMap = new Map<string, TimeSlot[]>();
+  // Per-category match duration
+  const categoryDurationMap = new Map<string, number>();
+  
   categories.forEach(cat => {
+    // Match duration: per-category overrides global
+    const catDuration = cat.matchDurationMinutes || matchDurationMinutes;
+    categoryDurationMap.set(cat.categoryId, catDuration);
+    
     if (cat.courtNames && cat.courtNames.length > 0) {
       // Category has specific courts assigned
       const courtNumbers: number[] = [];
@@ -87,12 +157,22 @@ export function scheduleMultipleCategories(
       });
       
       categoryCourtMap.set(cat.categoryId, { courtNumbers, courtNames });
-      console.log(`[MULTI-CAT V5] Category ${cat.categoryId}: using courts ${courtNames.join(', ')} (${courtNumbers.join(', ')})`);
+      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: using courts ${courtNames.join(', ')} (${courtNumbers.join(', ')})`);
     } else {
       // Category uses all courts
       const allNumbers = Array.from({ length: numberOfCourts }, (_, i) => i + 1);
       categoryCourtMap.set(cat.categoryId, { courtNumbers: allNumbers, courtNames: allCourtNames });
-      console.log(`[MULTI-CAT V5] Category ${cat.categoryId}: using all ${numberOfCourts} courts`);
+      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: using all ${numberOfCourts} courts`);
+    }
+    
+    // Generate time slots if category has its own schedule
+    if (cat.categorySchedule && cat.categorySchedule.length > 0) {
+      const slots = generateCategoryTimeSlots(cat.categorySchedule, catDuration);
+      categoryTimeSlotsMap.set(cat.categoryId, slots);
+      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: ${slots.length} own time slots across ${cat.categorySchedule.length} day(s)`);
+      cat.categorySchedule.forEach(entry => {
+        console.log(`[MULTI-CAT V6]   ${entry.date}: ${entry.start_time} – ${entry.end_time}`);
+      });
     }
   });
 
@@ -185,155 +265,171 @@ export function scheduleMultipleCategories(
   const groupMatches = allMatches.filter(m => m.round === 'group_stage' || m.round.startsWith('group_'));
   const knockoutMatches = allMatches.filter(m => m.round !== 'group_stage' && !m.round.startsWith('group_'));
 
-  const uniqueCategories = [...new Set(groupMatches.map(m => m.categoryId))].sort();
+  // Include ALL categories (not just those with group matches) so knockout-only categories are also tracked
+  const uniqueCategories = [...new Set(allMatches.map(m => m.categoryId))].sort();
   console.log('[MULTI-CAT V3] Categories:', uniqueCategories);
   console.log('[MULTI-CAT V3] Starting scheduler with', allMatches.length, 'matches across', categories.length, 'categories');
   console.log(`[MULTI-CAT V3] ${groupMatches.length} group matches, ${knockoutMatches.length} knockout matches`);
   console.log(`[MULTI-CAT V3] Courts available: ${numberOfCourts}`);
 
-  // PHASE 1: Schedule group stage matches - fill ALL courts per slot
-  while (iterations < maxIterations && scheduledMatchIds.size < groupMatches.length) {
-    iterations++;
+  // PHASE 1: Schedule group stage matches
+  // If categories have their own schedules, schedule each category independently
+  // Otherwise, use the shared global schedule with court rotation
+  
+  if (hasCategorySchedules) {
+    // ============================
+    // MODE A: Per-Category Schedule
+    // Each category has its own time window(s) and is scheduled independently
+    // ============================
+    console.log('[MULTI-CAT V6] MODE A: Scheduling each category in its own time window');
 
-    const slotIndex = currentTimeSlot;
-    const slotInfo = getDateForSlot(startDate, slotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
-    const totalMinutesFromStart = slotInfo.slotInDay * matchDurationMinutes;
-    const hourOffset = Math.floor(totalMinutesFromStart / 60);
-    const minuteOffset = totalMinutesFromStart % 60;
+    for (const categoryId of uniqueCategories) {
+      const catGroupMatches = groupMatches.filter(m => m.categoryId === categoryId);
+      if (catGroupMatches.length === 0) continue;
 
-    const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-    const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
-    const timeStr = scheduledTime.toISOString();
-    console.log(`[MULTI-CAT V4] Slot ${slotIndex} -> ${slotInfo.dateStr} slot ${slotInfo.slotInDay} -> ${timeStr}`);
+      const catSlots = categoryTimeSlotsMap.get(categoryId);
+      const catDuration = categoryDurationMap.get(categoryId) || matchDurationMinutes;
+      const categoryInfo = categoryCourtMap.get(categoryId);
+      const catCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+      const catCourtNames = categoryInfo ? categoryInfo.courtNames : allCourtNames;
 
-    // Check if ANY category still has unscheduled matches
-    const anyRemaining = groupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
-    if (!anyRemaining) break;
+      if (!catSlots || catSlots.length === 0) {
+        // Fallback: use global schedule for this category
+        console.log(`[MULTI-CAT V6] Category ${categoryId.substring(0, 8)}: no own schedule, using global slots`);
+        let catSlotIndex = currentTimeSlot;
+        const catPlayersThisSlot = new Set<string>();
+        let catIter = 0;
+        
+        while (catIter < maxIterations) {
+          catIter++;
+          const anyRemaining = catGroupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
+          if (!anyRemaining) break;
 
-    let matchesScheduledThisSlot = 0;
-    const playersPlayingThisSlot = new Set<string>();
+          const slotInfo = getDateForSlot(startDate, catSlotIndex, dailySchedules, dailyStartTime, dailyEndTime, catDuration);
+          const totalMinutesFromStart = slotInfo.slotInDay * catDuration;
+          const hourOffset = Math.floor(totalMinutesFromStart / 60);
+          const minuteOffset = totalMinutesFromStart % 60;
+          const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
+          const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+          const timeStr = scheduledTime.toISOString();
 
-    // Try to fill courts - each category only uses its assigned courts
-    for (let court = 1; court <= numberOfCourts; court++) {
-      const slotKey = `${timeStr}_${court}`;
-      if (occupiedSlots.has(slotKey)) {
+          catPlayersThisSlot.clear();
+          let matchesThisSlot = 0;
+
+          for (const court of catCourts) {
+            const slotKey = `${timeStr}_${court}`;
+            if (occupiedSlots.has(slotKey)) continue;
+
+            let matchToSchedule: typeof catGroupMatches[0] | undefined;
+            for (const match of catGroupMatches) {
+              const matchId = `${match.categoryId}_${match.match_number}`;
+              if (scheduledMatchIds.has(matchId)) continue;
+              const playerIds = getMatchPlayerIds(match);
+              if (playerIds.some(id => catPlayersThisSlot.has(id))) continue;
+              matchToSchedule = match;
+              break;
+            }
+
+            if (matchToSchedule) {
+              const { categoryId: cId, duration, ...matchData } = matchToSchedule;
+              const courtIdx = categoryInfo ? categoryInfo.courtNumbers.indexOf(court) : court - 1;
+              const courtName = catCourtNames[courtIdx] || court.toString();
+              const scheduledMatch = { ...matchData, scheduled_time: timeStr, court: courtName };
+
+              scheduledMatches.get(cId)!.push(scheduledMatch);
+              scheduledMatchIds.add(`${cId}_${matchToSchedule.match_number}`);
+              occupiedSlots.add(slotKey);
+
+              const matchPlayerIds = getMatchPlayerIds(scheduledMatch);
+              matchPlayerIds.forEach(id => catPlayersThisSlot.add(id));
+              matchesThisSlot++;
+            }
+          }
+
+          catSlotIndex++;
+          if (catSlotIndex > currentTimeSlot) currentTimeSlot = catSlotIndex;
+        }
+
         continue;
       }
 
-      // Find which category can use this court
-      let matchToSchedule: typeof groupMatches[0] | undefined;
+      // Category has its own time slots
+      console.log(`[MULTI-CAT V6] Category ${categoryId.substring(0, 8)}: scheduling ${catGroupMatches.length} matches in ${catSlots.length} time slots across ${catCourts.length} courts`);
 
-      // Rotate through categories based on slot to maintain some alternation
-      const startCategoryIdx = slotIndex % uniqueCategories.length;
-      for (let catOffset = 0; catOffset < uniqueCategories.length; catOffset++) {
-        const catIdx = (startCategoryIdx + catOffset) % uniqueCategories.length;
-        const categoryId = uniqueCategories[catIdx];
-        
-        // Check if this category can use this court number
-        const categoryInfo = categoryCourtMap.get(categoryId);
-        if (!categoryInfo || !categoryInfo.courtNumbers.includes(court)) {
-          continue; // This category doesn't use this court
-        }
+      let slotIdx = 0;
+      let catIter = 0;
+      const catPlayersThisSlot = new Set<string>();
 
-        for (const match of groupMatches) {
-          if (match.categoryId !== categoryId) continue;
-          const matchId = `${match.categoryId}_${match.match_number}`;
-          if (scheduledMatchIds.has(matchId)) continue;
+      while (catIter < maxIterations && slotIdx < catSlots.length) {
+        catIter++;
+        const anyRemaining = catGroupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
+        if (!anyRemaining) break;
 
-          const playerIds = getMatchPlayerIds(match);
-          const anyPlayerBusy = playerIds.some(id => playersPlayingThisSlot.has(id));
+        const slot = catSlots[slotIdx];
+        const timeStr = slot.time;
 
-          if (!anyPlayerBusy) {
+        catPlayersThisSlot.clear();
+        let matchesThisSlot = 0;
+
+        for (const court of catCourts) {
+          const slotKey = `${timeStr}_${court}`;
+          if (occupiedSlots.has(slotKey)) continue;
+
+          let matchToSchedule: typeof catGroupMatches[0] | undefined;
+          for (const match of catGroupMatches) {
+            const matchId = `${match.categoryId}_${match.match_number}`;
+            if (scheduledMatchIds.has(matchId)) continue;
+            const playerIds = getMatchPlayerIds(match);
+            if (playerIds.some(id => catPlayersThisSlot.has(id))) continue;
             matchToSchedule = match;
             break;
           }
+
+          if (matchToSchedule) {
+            const { categoryId: cId, duration, ...matchData } = matchToSchedule;
+            const courtIdx = categoryInfo ? categoryInfo.courtNumbers.indexOf(court) : court - 1;
+            const courtName = catCourtNames[courtIdx] || court.toString();
+            const scheduledMatch = { ...matchData, scheduled_time: timeStr, court: courtName };
+
+            scheduledMatches.get(cId)!.push(scheduledMatch);
+            scheduledMatchIds.add(`${cId}_${matchToSchedule.match_number}`);
+            occupiedSlots.add(slotKey);
+
+            if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
+            const matchPlayerIds = getMatchPlayerIds(scheduledMatch);
+            matchPlayerIds.forEach(id => {
+              busyPlayers.get(timeStr)!.add(id);
+              catPlayersThisSlot.add(id);
+            });
+
+            console.log(`[MULTI-CAT V6] Cat ${cId.substring(0, 8)} Slot ${slotIdx} Court ${courtName}: Match ${matchToSchedule.match_number}`);
+            matchesThisSlot++;
+          }
         }
 
-        if (matchToSchedule) break;
+        console.log(`[MULTI-CAT V6] Cat ${categoryId.substring(0, 8)} Slot ${slotIdx}: ${matchesThisSlot}/${catCourts.length} courts filled`);
+        slotIdx++;
       }
 
-      if (matchToSchedule) {
-        const matchDuration = matchToSchedule.duration || matchDurationMinutes;
-        const { categoryId, duration, ...matchData } = matchToSchedule;
-        
-        // Get the court name for this court number
-        const categoryInfo = categoryCourtMap.get(categoryId);
-        const courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
-          ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
-          : court.toString();
-        
-        const scheduledMatch = {
-          ...matchData,
-          scheduled_time: timeStr,
-          court: courtName
-        };
-
-        const categoryScheduled = scheduledMatches.get(categoryId)!;
-        categoryScheduled.push(scheduledMatch);
-
-        const matchId = `${matchToSchedule.categoryId}_${matchToSchedule.match_number}`;
-        scheduledMatchIds.add(matchId);
-        occupiedSlots.add(slotKey);
-
-        const slotsToOccupy = Math.ceil(matchDuration / matchDurationMinutes);
-        for (let futureSlot = 1; futureSlot < slotsToOccupy; futureSlot++) {
-          const futureSlotIndex = slotIndex + futureSlot;
-          const futureSlotInfo = getDateForSlot(startDate, futureSlotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
-          const futureTotalMinutes = futureSlotInfo.slotInDay * matchDurationMinutes;
-          const futureHourOffset = Math.floor(futureTotalMinutes / 60);
-          const futureMinuteOffset = futureTotalMinutes % 60;
-          const [yr, mo, dy] = futureSlotInfo.dateStr.split('-').map(Number);
-          const futureTime = new Date(Date.UTC(yr, mo - 1, dy, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
-          occupiedSlots.add(`${futureTime.toISOString()}_${court}`);
-        }
-
-        if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
-        const matchPlayerIds = getMatchPlayerIds(scheduledMatch);
-        matchPlayerIds.forEach(playerId => {
-          busyPlayers.get(timeStr)!.add(playerId);
-          playerLastPlayed.set(playerId, slotIndex);
-          playersPlayingThisSlot.add(playerId);
-        });
-
-        const catShort = matchToSchedule.categoryId.substring(0, 8);
-        console.log(`[MULTI-CAT V3] Slot ${slotIndex} Court ${court}: Match ${matchToSchedule.match_number} Cat ${catShort}`);
-        matchesScheduledThisSlot++;
+      // Check if all matches were scheduled
+      const unscheduled = catGroupMatches.filter(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
+      if (unscheduled.length > 0) {
+        console.warn(`[MULTI-CAT V6] ⚠️ Category ${categoryId.substring(0, 8)}: ${unscheduled.length} matches could not be scheduled (not enough time slots!)`);
       }
     }
 
-    console.log(`[MULTI-CAT V3] Slot ${slotIndex}: ${matchesScheduledThisSlot}/${numberOfCourts} courts filled`);
+    console.log('[MULTI-CAT V6] Per-category group stage complete!', scheduledMatchIds.size, 'group matches scheduled');
 
-    currentTimeSlot++;
-  }
+  } else {
+    // ============================
+    // MODE B: Shared Global Schedule (original behavior)
+    // All categories share the same time slots
+    // ============================
+    console.log('[MULTI-CAT V6] MODE B: Shared global schedule');
 
-  console.log('[MULTI-CAT V3] Group stage complete!', scheduledMatchIds.size, 'group matches scheduled');
+    while (iterations < maxIterations && scheduledMatchIds.size < groupMatches.length) {
+      iterations++;
 
-  // PHASE 2: Schedule knockout matches with known teams/players (not TBD placeholders)
-  const knockoutWithTeams = knockoutMatches.filter(m => {
-    const isTeamTBD = m.team1_id === null && m.team2_id === null;
-    const p1Individual = (m as any).player1_individual_id;
-    const hasNoPlayers = p1Individual === null || p1Individual === undefined;
-    return !(isTeamTBD && hasNoPlayers);
-  });
-  console.log(`[MULTI-CAT V2] Scheduling ${knockoutWithTeams.length} knockout matches with TBD teams`);
-
-  // Group knockout matches by round so same-round matches can be scheduled in parallel
-  const matchesByRound = new Map<string, typeof knockoutWithTeams>();
-  knockoutWithTeams.forEach(match => {
-    if (!matchesByRound.has(match.round)) {
-      matchesByRound.set(match.round, []);
-    }
-    matchesByRound.get(match.round)!.push(match);
-  });
-
-  // Schedule each round (e.g., all semifinals at same time on different courts)
-  for (const [round, roundMatches] of matchesByRound) {
-    console.log(`[MULTI-CAT V2] Scheduling ${roundMatches.length} matches for round: ${round}`);
-
-    // Schedule all matches of this round, using multiple time slots if needed
-    const matchesToSchedule = [...roundMatches];
-
-    while (matchesToSchedule.length > 0) {
       const slotIndex = currentTimeSlot;
       const slotInfo = getDateForSlot(startDate, slotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
       const totalMinutesFromStart = slotInfo.slotInDay * matchDurationMinutes;
@@ -344,75 +440,314 @@ export function scheduleMultipleCategories(
       const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
       const timeStr = scheduledTime.toISOString();
 
-      let scheduledInThisSlot = 0;
-      const remainingMatches: typeof matchesToSchedule = [];
+      const anyRemaining = groupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
+      if (!anyRemaining) break;
 
-      for (const koMatch of matchesToSchedule) {
-        const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
-        if (scheduledMatchIds.has(matchId)) continue;
+      let matchesScheduledThisSlot = 0;
+      const playersPlayingThisSlot = new Set<string>();
 
-        // Get allowed courts for this category
-        const categoryInfo = categoryCourtMap.get(koMatch.categoryId);
-        const allowedCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
-
-        // Find first available court at this time (from category's allowed courts)
-        let assignedCourt = 0;
-        let courtName = '';
-        for (const court of allowedCourts) {
-          const slotKey = `${timeStr}_${court}`;
-          if (!occupiedSlots.has(slotKey)) {
-            assignedCourt = court;
-            courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
-              ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
-              : court.toString();
-            occupiedSlots.add(slotKey);
-            break;
-          }
-        }
-
-        if (assignedCourt === 0) {
-          remainingMatches.push(koMatch);
+      for (let court = 1; court <= numberOfCourts; court++) {
+        const slotKey = `${timeStr}_${court}`;
+        if (occupiedSlots.has(slotKey)) {
           continue;
         }
 
-        const matchDuration = koMatch.duration || matchDurationMinutes;
-        const { categoryId, duration, ...matchData } = koMatch;
-        const scheduledMatch = {
-          ...matchData,
-          scheduled_time: timeStr,
-          court: courtName || assignedCourt.toString()
-        };
+        let matchToSchedule: typeof groupMatches[0] | undefined;
 
-        const categoryScheduled = scheduledMatches.get(categoryId)!;
-        categoryScheduled.push(scheduledMatch);
-        scheduledMatchIds.add(matchId);
-        scheduledInThisSlot++;
+        const startCategoryIdx = slotIndex % uniqueCategories.length;
+        for (let catOffset = 0; catOffset < uniqueCategories.length; catOffset++) {
+          const catIdx = (startCategoryIdx + catOffset) % uniqueCategories.length;
+          const categoryId = uniqueCategories[catIdx];
+          
+          const categoryInfo = categoryCourtMap.get(categoryId);
+          if (!categoryInfo || !categoryInfo.courtNumbers.includes(court)) {
+            continue;
+          }
 
-        // Mark future slots as occupied based on match duration
-        const slotsToOccupy = Math.ceil(matchDuration / matchDurationMinutes);
-        for (let futureSlot = 1; futureSlot < slotsToOccupy; futureSlot++) {
-          const futureSlotIndex = slotIndex + futureSlot;
-          const futureSlotInfo = getDateForSlot(startDate, futureSlotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
-          const futureTotalMinutes = futureSlotInfo.slotInDay * matchDurationMinutes;
-          const futureHourOffset = Math.floor(futureTotalMinutes / 60);
-          const futureMinuteOffset = futureTotalMinutes % 60;
-          const [y, m, d] = futureSlotInfo.dateStr.split('-').map(Number);
-          const futureTime = new Date(Date.UTC(y, m - 1, d, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
-          occupiedSlots.add(`${futureTime.toISOString()}_${assignedCourt}`);
+          for (const match of groupMatches) {
+            if (match.categoryId !== categoryId) continue;
+            const matchId = `${match.categoryId}_${match.match_number}`;
+            if (scheduledMatchIds.has(matchId)) continue;
+
+            const playerIds = getMatchPlayerIds(match);
+            const anyPlayerBusy = playerIds.some(id => playersPlayingThisSlot.has(id));
+
+            if (!anyPlayerBusy) {
+              matchToSchedule = match;
+              break;
+            }
+          }
+
+          if (matchToSchedule) break;
         }
 
-        console.log(`[MULTI-CAT V2] ✅ Knockout Match ${koMatch.match_number} (${koMatch.round}) scheduled at ${timeStr} on court ${assignedCourt}`);
+        if (matchToSchedule) {
+          const matchDuration = matchToSchedule.duration || matchDurationMinutes;
+          const { categoryId, duration, ...matchData } = matchToSchedule;
+          
+          const categoryInfo = categoryCourtMap.get(categoryId);
+          const courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+            ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+            : court.toString();
+          
+          const scheduledMatch = {
+            ...matchData,
+            scheduled_time: timeStr,
+            court: courtName
+          };
+
+          const categoryScheduled = scheduledMatches.get(categoryId)!;
+          categoryScheduled.push(scheduledMatch);
+
+          const matchId = `${matchToSchedule.categoryId}_${matchToSchedule.match_number}`;
+          scheduledMatchIds.add(matchId);
+          occupiedSlots.add(slotKey);
+
+          const slotsToOccupy = Math.ceil(matchDuration / matchDurationMinutes);
+          for (let futureSlot = 1; futureSlot < slotsToOccupy; futureSlot++) {
+            const futureSlotIndex = slotIndex + futureSlot;
+            const futureSlotInfo = getDateForSlot(startDate, futureSlotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
+            const futureTotalMinutes = futureSlotInfo.slotInDay * matchDurationMinutes;
+            const futureHourOffset = Math.floor(futureTotalMinutes / 60);
+            const futureMinuteOffset = futureTotalMinutes % 60;
+            const [yr, mo, dy] = futureSlotInfo.dateStr.split('-').map(Number);
+            const futureTime = new Date(Date.UTC(yr, mo - 1, dy, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
+            occupiedSlots.add(`${futureTime.toISOString()}_${court}`);
+          }
+
+          if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
+          const matchPlayerIds = getMatchPlayerIds(scheduledMatch);
+          matchPlayerIds.forEach(playerId => {
+            busyPlayers.get(timeStr)!.add(playerId);
+            playerLastPlayed.set(playerId, slotIndex);
+            playersPlayingThisSlot.add(playerId);
+          });
+
+          const catShort = matchToSchedule.categoryId.substring(0, 8);
+          console.log(`[MULTI-CAT V6] Slot ${slotIndex} Court ${court}: Match ${matchToSchedule.match_number} Cat ${catShort}`);
+          matchesScheduledThisSlot++;
+        }
       }
 
-      // Move remaining matches to next iteration
-      matchesToSchedule.length = 0;
-      matchesToSchedule.push(...remainingMatches);
+      console.log(`[MULTI-CAT V6] Slot ${slotIndex}: ${matchesScheduledThisSlot}/${numberOfCourts} courts filled`);
 
-      // Move to next time slot
       currentTimeSlot++;
+    }
 
-      if (remainingMatches.length > 0) {
-        console.log(`[MULTI-CAT V2] ${remainingMatches.length} matches overflow to next slot`);
+    console.log('[MULTI-CAT V6] Group stage complete!', scheduledMatchIds.size, 'group matches scheduled');
+  }
+
+  // PHASE 2: Schedule ALL knockout matches (including TBD placeholders)
+  // TBD matches are scheduled with null team IDs and filled in after group stage completes
+  console.log(`[MULTI-CAT V6] Scheduling ${knockoutMatches.length} knockout matches (including TBD)`);
+
+  // Group knockout matches by round so same-round matches can be scheduled in parallel
+  const matchesByRound = new Map<string, typeof knockoutMatches>();
+  knockoutMatches.forEach(match => {
+    if (!matchesByRound.has(match.round)) {
+      matchesByRound.set(match.round, []);
+    }
+    matchesByRound.get(match.round)!.push(match);
+  });
+
+  // For per-category schedules, track each category's current slot index for knockouts
+  const categoryKnockoutSlotIdx = new Map<string, number>();
+  if (hasCategorySchedules) {
+    // Start knockout slots after the last used group slot for each category
+    for (const categoryId of uniqueCategories) {
+      const catSlots = categoryTimeSlotsMap.get(categoryId);
+      if (catSlots) {
+        // Find the last used slot index for this category
+        const catScheduledMatches = scheduledMatches.get(categoryId) || [];
+        if (catScheduledMatches.length > 0) {
+          const lastTime = catScheduledMatches[catScheduledMatches.length - 1].scheduled_time;
+          const lastIdx = catSlots.findIndex(s => s.time === lastTime);
+          categoryKnockoutSlotIdx.set(categoryId, lastIdx >= 0 ? lastIdx + 1 : catSlots.length);
+        } else {
+          categoryKnockoutSlotIdx.set(categoryId, 0);
+        }
+      }
+    }
+  }
+
+  // Schedule each round (e.g., all semifinals at same time on different courts)
+  for (const [round, roundMatches] of matchesByRound) {
+    console.log(`[MULTI-CAT V6] Scheduling ${roundMatches.length} matches for round: ${round}`);
+
+    const matchesToSchedule = [...roundMatches];
+
+    while (matchesToSchedule.length > 0) {
+      const remainingMatches: typeof matchesToSchedule = [];
+
+      if (hasCategorySchedules) {
+        // Per-category knockout scheduling
+        for (const koMatch of matchesToSchedule) {
+          const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
+          if (scheduledMatchIds.has(matchId)) continue;
+
+          const catSlots = categoryTimeSlotsMap.get(koMatch.categoryId);
+          const catDuration = categoryDurationMap.get(koMatch.categoryId) || matchDurationMinutes;
+          const categoryInfo = categoryCourtMap.get(koMatch.categoryId);
+          const catCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+
+          if (catSlots && catSlots.length > 0) {
+            let slotIdx = categoryKnockoutSlotIdx.get(koMatch.categoryId) || 0;
+            let scheduled = false;
+
+            while (slotIdx < catSlots.length) {
+              const timeStr = catSlots[slotIdx].time;
+
+              for (const court of catCourts) {
+                const slotKey = `${timeStr}_${court}`;
+                if (!occupiedSlots.has(slotKey)) {
+                  const courtIdx = categoryInfo ? categoryInfo.courtNumbers.indexOf(court) : court - 1;
+                  const courtName = categoryInfo ? (categoryInfo.courtNames[courtIdx] || court.toString()) : court.toString();
+                  const { categoryId, duration, ...matchData } = koMatch;
+                  const scheduledMatch = { ...matchData, scheduled_time: timeStr, court: courtName };
+                  
+                  scheduledMatches.get(categoryId)!.push(scheduledMatch);
+                  scheduledMatchIds.add(matchId);
+                  occupiedSlots.add(slotKey);
+                  categoryKnockoutSlotIdx.set(categoryId, slotIdx + 1);
+                  scheduled = true;
+                  console.log(`[MULTI-CAT V6] ✅ Knockout Match ${koMatch.match_number} (${koMatch.round}) -> ${timeStr} court ${courtName}`);
+                  break;
+                }
+              }
+              if (scheduled) break;
+              slotIdx++;
+            }
+
+            if (!scheduled) {
+              console.warn(`[MULTI-CAT V6] ⚠️ Knockout Match ${koMatch.match_number} could not fit in category schedule`);
+              remainingMatches.push(koMatch);
+            }
+          } else {
+            // Fallback to global slots
+            remainingMatches.push(koMatch);
+          }
+        }
+
+        // Handle remaining matches with global slots
+        if (remainingMatches.length > 0) {
+          const globalRemaining = [...remainingMatches];
+          remainingMatches.length = 0;
+
+          for (const koMatch of globalRemaining) {
+            const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
+            if (scheduledMatchIds.has(matchId)) continue;
+
+            const slotInfo = getDateForSlot(startDate, currentTimeSlot, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
+            const totalMinutesFromStart = slotInfo.slotInDay * matchDurationMinutes;
+            const hourOffset = Math.floor(totalMinutesFromStart / 60);
+            const minuteOffset = totalMinutesFromStart % 60;
+            const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
+            const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+            const timeStr = scheduledTime.toISOString();
+
+            let assignedCourt = 0;
+            let courtName = '';
+            for (let court = 1; court <= numberOfCourts; court++) {
+              const slotKey = `${timeStr}_${court}`;
+              if (!occupiedSlots.has(slotKey)) {
+                assignedCourt = court;
+                courtName = court.toString();
+                occupiedSlots.add(slotKey);
+                break;
+              }
+            }
+
+            if (assignedCourt === 0) {
+              currentTimeSlot++;
+              remainingMatches.push(koMatch);
+              continue;
+            }
+
+            const { categoryId, duration, ...matchData } = koMatch;
+            const scheduledMatch = { ...matchData, scheduled_time: timeStr, court: courtName };
+            scheduledMatches.get(categoryId)!.push(scheduledMatch);
+            scheduledMatchIds.add(matchId);
+            console.log(`[MULTI-CAT V6] ✅ Knockout Match ${koMatch.match_number} (fallback) -> ${timeStr} court ${courtName}`);
+          }
+        }
+
+        // Break out - per-category scheduling handles its own iteration
+        break;
+
+      } else {
+        // Global schedule knockout (original)
+        const slotIndex = currentTimeSlot;
+        const slotInfo = getDateForSlot(startDate, slotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
+        const totalMinutesFromStart = slotInfo.slotInDay * matchDurationMinutes;
+        const hourOffset = Math.floor(totalMinutesFromStart / 60);
+        const minuteOffset = totalMinutesFromStart % 60;
+
+        const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
+        const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+        const timeStr = scheduledTime.toISOString();
+
+        let scheduledInThisSlot = 0;
+
+        for (const koMatch of matchesToSchedule) {
+          const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
+          if (scheduledMatchIds.has(matchId)) continue;
+
+          const categoryInfo = categoryCourtMap.get(koMatch.categoryId);
+          const allowedCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+
+          let assignedCourt = 0;
+          let courtName = '';
+          for (const court of allowedCourts) {
+            const slotKey = `${timeStr}_${court}`;
+            if (!occupiedSlots.has(slotKey)) {
+              assignedCourt = court;
+              courtName = categoryInfo && categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+                ? categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)]
+                : court.toString();
+              occupiedSlots.add(slotKey);
+              break;
+            }
+          }
+
+          if (assignedCourt === 0) {
+            remainingMatches.push(koMatch);
+            continue;
+          }
+
+          const matchDuration = koMatch.duration || matchDurationMinutes;
+          const { categoryId, duration, ...matchData } = koMatch;
+          const scheduledMatch = {
+            ...matchData,
+            scheduled_time: timeStr,
+            court: courtName || assignedCourt.toString()
+          };
+
+          scheduledMatches.get(categoryId)!.push(scheduledMatch);
+          scheduledMatchIds.add(matchId);
+          scheduledInThisSlot++;
+
+          const slotsToOccupy = Math.ceil(matchDuration / matchDurationMinutes);
+          for (let futureSlot = 1; futureSlot < slotsToOccupy; futureSlot++) {
+            const futureSlotIndex = slotIndex + futureSlot;
+            const futureSlotInfo = getDateForSlot(startDate, futureSlotIndex, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
+            const futureTotalMinutes = futureSlotInfo.slotInDay * matchDurationMinutes;
+            const futureHourOffset = Math.floor(futureTotalMinutes / 60);
+            const futureMinuteOffset = futureTotalMinutes % 60;
+            const [y, m, d] = futureSlotInfo.dateStr.split('-').map(Number);
+            const futureTime = new Date(Date.UTC(y, m - 1, d, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
+            occupiedSlots.add(`${futureTime.toISOString()}_${assignedCourt}`);
+          }
+
+          console.log(`[MULTI-CAT V6] ✅ Knockout Match ${koMatch.match_number} (${koMatch.round}) scheduled at ${timeStr} on court ${assignedCourt}`);
+        }
+
+        matchesToSchedule.length = 0;
+        matchesToSchedule.push(...remainingMatches);
+        currentTimeSlot++;
+
+        if (remainingMatches.length > 0) {
+          console.log(`[MULTI-CAT V6] ${remainingMatches.length} matches overflow to next slot`);
+        }
       }
     }
   }
@@ -865,6 +1200,19 @@ function generateSingleEliminationMatchesWithOptions(
           court: ''
         });
       }
+    }
+
+    // Add 3rd/4th place match for team format (when we have semifinals or more)
+    if (rounds >= 2) {
+      matches.push({
+        round: '3rd_place',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      console.log(`[KNOCKOUT_OPTIONS] Added 3rd/4th place match`);
     }
   }
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Trophy, Calendar, Edit, Trash2, Eye, ArrowLeft, Filter } from 'lucide-react';
+import { Plus, Trophy, Calendar, Edit, Trash2, Eye, ArrowLeft, Filter, Copy } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 import { useI18n } from '../lib/i18nContext';
 import CreateLeagueModal from './CreateLeagueModal';
@@ -8,6 +8,7 @@ import LeagueStandings from './LeagueStandings';
 
 interface League {
   id: string;
+  user_id?: string;
   name: string;
   description: string;
   start_date: string;
@@ -105,6 +106,35 @@ export default function LeagueManagement({ onBack }: LeagueManagementProps) {
   const handleEdit = (league: League) => {
     setEditingLeague(league);
     setShowCreateModal(true);
+  };
+
+  const handleDuplicate = async (league: League) => {
+    if (!user) return;
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const { error } = await supabase
+      .from('leagues')
+      .insert([{
+        name: `${league.name} (cópia)`,
+        description: league.description,
+        start_date: today,
+        end_date: null,
+        status: 'draft' as const,
+        scoring_system: league.scoring_system,
+        allow_public_view: league.allow_public_view,
+        categories: league.categories || [],
+        category_scoring_systems: league.category_scoring_systems || {},
+        combined_player_categories: league.combined_player_categories || {},
+        user_id: user.id,
+      }]);
+
+    if (error) {
+      console.error('Error duplicating league:', error);
+      alert('Erro ao duplicar liga');
+    } else {
+      fetchLeagues();
+    }
   };
 
   const handleCloseModal = () => {
@@ -296,6 +326,13 @@ export default function LeagueManagement({ onBack }: LeagueManagementProps) {
                   </button>
                   {league.user_id === user?.id && (
                     <>
+                      <button
+                        onClick={() => handleDuplicate(league)}
+                        className="flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                        title="Duplicar liga"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => handleEdit(league)}
                         className="flex items-center justify-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors text-sm"

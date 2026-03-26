@@ -192,7 +192,7 @@ export default function AddIndividualPlayerModal({
         name: selectedPlayer.name,
         phone_number: selectedPlayer.phone_number,
         seed: seed === '' ? null : seed,
-        user_id: null, // Jogadores criados pelo organizador não devem ter user_id do organizador
+        user_id: null,
       };
 
       console.log('[PLAYER INSERT - EXISTING] Inserindo jogador existente:', insertData);
@@ -250,7 +250,7 @@ export default function AddIndividualPlayerModal({
         category_id: selectedCategoryId,
         name: formData.name.trim(),
         seed: seed === '' ? null : seed,
-        user_id: null, // Jogadores criados pelo organizador não devem ter user_id do organizador
+        user_id: null,
       };
 
       if (formData.email.trim()) {

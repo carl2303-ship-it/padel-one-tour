@@ -4,6 +4,7 @@ export type Team = {
   id: string;
   name: string;
   group_name?: string;
+  seed?: number | null;
   wins?: number;
   losses?: number;
   points_for?: number;
@@ -104,25 +105,27 @@ export function sortTeamsByTiebreaker(
 export function assignTeamsToGroups(teams: Team[], numberOfGroups: number): Team[] {
   console.log('[ASSIGN GROUPS] Input - Teams:', teams.length, 'Number of groups:', numberOfGroups);
 
-  // Shuffle teams randomly
-  const shuffled = [...teams].sort(() => Math.random() - 0.5);
-
   const groupNames = Array.from({ length: numberOfGroups }, (_, i) =>
-    String.fromCharCode(65 + i) // A, B, C, D, etc.
+    String.fromCharCode(65 + i)
   );
 
-  console.log('[ASSIGN GROUPS] Group names created:', groupNames);
+  const seeded = teams.filter(t => t.seed != null && t.seed > 0).sort((a, b) => a.seed! - b.seed!);
+  const unseeded = teams.filter(t => !t.seed || t.seed <= 0).sort(() => Math.random() - 0.5);
+  const ordered = [...seeded, ...unseeded];
 
-  // Distribute teams round-robin to ensure balance
-  // Example: 12 teams, 3 groups -> 4,4,4 (perfect balance)
-  // Example: 13 teams, 3 groups -> 5,4,4 (as balanced as possible)
-  const result = shuffled.map((team, index) => ({
-    ...team,
-    group_name: groupNames[index % numberOfGroups]
-  }));
+  console.log('[ASSIGN GROUPS] Seeded teams:', seeded.map(t => ({ name: t.name, seed: t.seed })));
+  console.log('[ASSIGN GROUPS] Unseeded teams:', unseeded.length);
+
+  const result = ordered.map((team, index) => {
+    const row = Math.floor(index / numberOfGroups);
+    const posInRow = index % numberOfGroups;
+    const groupIndex = row % 2 === 0 ? posInRow : (numberOfGroups - 1 - posInRow);
+    return { ...team, group_name: groupNames[groupIndex] };
+  });
 
   console.log('[ASSIGN GROUPS] Result - Groups distribution:',
-    groupNames.map(g => ({ group: g, count: result.filter(t => t.group_name === g).length }))
+    groupNames.map(g => ({ group: g, count: result.filter(t => t.group_name === g).length, 
+      teams: result.filter(t => t.group_name === g).map(t => ({ name: t.name, seed: t.seed })) }))
   );
 
   return result;
@@ -160,6 +163,14 @@ export function getTeamsByGroup(teams: Team[]): Map<string, Team[]> {
     }
   });
 
+  grouped.forEach((groupTeams, key) => {
+    grouped.set(key, groupTeams.sort((a, b) => {
+      const seedA = a.seed ?? Infinity;
+      const seedB = b.seed ?? Infinity;
+      return seedA - seedB;
+    }));
+  });
+
   return grouped;
 }
 
@@ -176,6 +187,14 @@ export function getPlayersByGroup(players: IndividualPlayer[]): Map<string, Indi
       }
       grouped.get(player.group_name)!.push(player);
     }
+  });
+
+  grouped.forEach((groupPlayers, key) => {
+    grouped.set(key, groupPlayers.sort((a, b) => {
+      const seedA = a.seed ?? Infinity;
+      const seedB = b.seed ?? Infinity;
+      return seedA - seedB;
+    }));
   });
 
   return grouped;
@@ -500,26 +519,33 @@ export type IndividualPlayer = {
   id: string;
   name: string;
   group_name?: string;
+  seed?: number | null;
 };
 
 export function assignPlayersToGroups(players: IndividualPlayer[], numberOfGroups: number): IndividualPlayer[] {
   console.log('[ASSIGN PLAYERS TO GROUPS] Input - Players:', players.length, 'Number of groups:', numberOfGroups);
 
-  const shuffled = [...players].sort(() => Math.random() - 0.5);
-
   const groupNames = Array.from({ length: numberOfGroups }, (_, i) =>
     String.fromCharCode(65 + i)
   );
 
-  console.log('[ASSIGN PLAYERS TO GROUPS] Group names created:', groupNames);
+  const seeded = players.filter(p => p.seed != null && p.seed > 0).sort((a, b) => a.seed! - b.seed!);
+  const unseeded = players.filter(p => !p.seed || p.seed <= 0).sort(() => Math.random() - 0.5);
+  const ordered = [...seeded, ...unseeded];
 
-  const result = shuffled.map((player, index) => ({
-    ...player,
-    group_name: groupNames[index % numberOfGroups]
-  }));
+  console.log('[ASSIGN PLAYERS TO GROUPS] Seeded players:', seeded.map(p => ({ name: p.name, seed: p.seed })));
+  console.log('[ASSIGN PLAYERS TO GROUPS] Unseeded players:', unseeded.length);
+
+  const result = ordered.map((player, index) => {
+    const row = Math.floor(index / numberOfGroups);
+    const posInRow = index % numberOfGroups;
+    const groupIndex = row % 2 === 0 ? posInRow : (numberOfGroups - 1 - posInRow);
+    return { ...player, group_name: groupNames[groupIndex] };
+  });
 
   console.log('[ASSIGN PLAYERS TO GROUPS] Result - Groups distribution:',
-    groupNames.map(g => ({ group: g, count: result.filter(p => p.group_name === g).length }))
+    groupNames.map(g => ({ group: g, count: result.filter(p => p.group_name === g).length,
+      players: result.filter(p => p.group_name === g).map(p => ({ name: p.name, seed: p.seed })) }))
   );
 
   return result;
@@ -976,6 +1002,20 @@ export async function populatePlacementMatches(
   }
 
   // ====================================================================
+  // ROUND OF 16: Check if there are round_of_16 matches to populate
+  // ====================================================================
+  const allRo16Rounds = ['round_of_16'];
+  const allRo16 = allMatches
+    .filter(m => allRo16Rounds.includes(m.round))
+    .sort((a, b) => a.match_number - b.match_number);
+
+  const hasUnpopulatedRo16 = allRo16.some(m =>
+    !m.player1_individual_id && !m.player3_individual_id
+  );
+
+  console.log(`[POPULATE_PLACEMENT] Found ${allRo16.length} round_of_16 matches, unpopulated: ${hasUnpopulatedRo16}`);
+
+  // ====================================================================
   // QUARTERFINALS: Check if there are quarterfinal matches to populate
   // ====================================================================
   const allQuarterfinalRounds = ['quarterfinal', 'quarter_final'];
@@ -1001,8 +1041,8 @@ export async function populatePlacementMatches(
 
   console.log('[POPULATE_PLACEMENT] Found', allSemis.length, 'total semifinal matches across all tiers');
 
-  if (allSemis.length === 0 && allQuarterfinals.length === 0) {
-    console.log('[POPULATE_PLACEMENT] No semifinal or quarterfinal matches found, checking for direct finals/placement matches');
+  if (allSemis.length === 0 && allQuarterfinals.length === 0 && allRo16.length === 0) {
+    console.log('[POPULATE_PLACEMENT] No semifinal, quarterfinal or round_of_16 matches found, checking for direct finals/placement matches');
     await populateDirectFinals(tournamentId, allMatches, categoryId);
     return;
   }
@@ -1120,6 +1160,89 @@ export async function populatePlacementMatches(
   const totalPlayers = players.length;
 
   console.log(`[POPULATE_PLACEMENT] ${sortedGroups.length} groups, max ${maxPlayersPerGroup} per group, ${totalPlayers} total`);
+
+  // ====================================================================
+  // ROUND OF 16 POPULATION: If round_of_16 exist and are unpopulated
+  // ====================================================================
+  if (allRo16.length > 0 && hasUnpopulatedRo16) {
+    console.log('[POPULATE_PLACEMENT] Populating round_of_16 matches...');
+
+    const unpopulatedRo16 = allRo16
+      .filter(m => !m.player1_individual_id && !m.player3_individual_id)
+      .sort((a, b) => a.match_number - b.match_number);
+
+    // Build global seeding by interleaving positions across groups
+    const globalSeeding: string[] = [];
+    const maxPos = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+
+    for (let pos = 0; pos < maxPos; pos++) {
+      const playersAtPos: Array<{ id: string; wins: number; gamesWon: number; gamesLost: number }> = [];
+      for (const groupName of sortedGroups) {
+        const ranking = rankedByGroup.get(groupName)!;
+        if (pos < ranking.length) {
+          const playerId = ranking[pos];
+          const stats = playerStats.get(playerId);
+          playersAtPos.push({
+            id: playerId,
+            wins: stats?.wins || 0,
+            gamesWon: stats?.gamesWon || 0,
+            gamesLost: stats?.gamesLost || 0,
+          });
+        }
+      }
+      playersAtPos.sort((a, b) => {
+        if (a.wins !== b.wins) return b.wins - a.wins;
+        const diffA = a.gamesWon - a.gamesLost;
+        const diffB = b.gamesWon - b.gamesLost;
+        if (diffA !== diffB) return diffB - diffA;
+        return b.gamesWon - a.gamesWon;
+      });
+      playersAtPos.forEach(p => globalSeeding.push(p.id));
+    }
+
+    console.log(`[POPULATE_PLACEMENT] Global seeding for RO16 (${globalSeeding.length} players):`, globalSeeding.map((_, i) => `${i + 1}°`));
+
+    // Assign to RO16 using bracket seeding: top+bottom vs mid seeds
+    const n = Math.min(globalSeeding.length, unpopulatedRo16.length * 4);
+    const half = Math.floor(n / 2);
+
+    for (let i = 0; i < unpopulatedRo16.length && i < Math.floor(n / 4); i++) {
+      const p1 = globalSeeding[i];
+      const p2 = globalSeeding[n - 1 - i];
+      const p3 = globalSeeding[half - 1 - i];
+      const p4 = globalSeeding[half + i];
+
+      if (!p1 || !p2 || !p3 || !p4) break;
+
+      await supabase.from('matches').update({
+        player1_individual_id: p1,
+        player2_individual_id: p2,
+        player3_individual_id: p3,
+        player4_individual_id: p4,
+      }).eq('id', unpopulatedRo16[i].id);
+      console.log(`[POPULATE_PLACEMENT] RO16 Match ${i + 1}: Seed${i + 1}+Seed${n - i} vs Seed${half - i}+Seed${half + 1 + i}`);
+    }
+
+    // Delete extra empty RO16 matches
+    const { data: updatedRo16 } = await supabase
+      .from('matches')
+      .select('id, player1_individual_id, player3_individual_id')
+      .eq('tournament_id', tournamentId)
+      .in('round', allRo16Rounds);
+
+    if (updatedRo16) {
+      const emptyRo16 = updatedRo16.filter(m => !m.player1_individual_id && !m.player3_individual_id);
+      if (emptyRo16.length > 0) {
+        console.log(`[POPULATE_PLACEMENT] Removing ${emptyRo16.length} extra empty round_of_16 matches`);
+        for (const empty of emptyRo16) {
+          await supabase.from('matches').delete().eq('id', empty.id);
+        }
+      }
+    }
+
+    console.log('[POPULATE_PLACEMENT] Round of 16 population done');
+    return;
+  }
 
   // ====================================================================
   // QUARTERFINALS POPULATION: If quarterfinals exist and are unpopulated
@@ -1524,8 +1647,90 @@ export async function advanceKnockoutWinner(
     return;
   }
 
+  const ro16Rounds = ['round_of_16'];
   const semifinalRounds = ['semifinal', 'semi_final'];
   const quarterfinalRounds = ['quarterfinal', 'quarter_final'];
+
+  if (ro16Rounds.includes(round)) {
+    const ro16Matches = allMatches
+      .filter(m => ro16Rounds.includes(m.round))
+      .sort((a, b) => a.match_number - b.match_number);
+
+    const quarterfinalMatches = allMatches
+      .filter(m => quarterfinalRounds.includes(m.round))
+      .sort((a, b) => a.match_number - b.match_number);
+
+    const isPowerOf2 = ro16Matches.length === quarterfinalMatches.length * 2;
+
+    if (isPowerOf2) {
+      const matchIndex = ro16Matches.findIndex(m => m.id === completedMatchId);
+      const targetQFIndex = Math.floor(matchIndex / 2);
+      const isFirstInPair = matchIndex % 2 === 0;
+
+      if (quarterfinalMatches[targetQFIndex]) {
+        if (isIndividual) {
+          const updateData: any = {};
+          if (isFirstInPair) {
+            updateData.player1_individual_id = winnerIds.p1;
+            updateData.player2_individual_id = winnerIds.p2;
+          } else {
+            updateData.player3_individual_id = winnerIds.p1;
+            updateData.player4_individual_id = winnerIds.p2;
+          }
+          await supabase.from('matches').update(updateData).eq('id', quarterfinalMatches[targetQFIndex].id);
+          console.log('[ADVANCE_WINNER] Updated QF', targetQFIndex + 1, 'with winner from RO16', matchIndex + 1);
+        } else {
+          const updateData: any = {};
+          if (isFirstInPair) {
+            updateData.team1_id = winnerIds.team;
+          } else {
+            updateData.team2_id = winnerIds.team;
+          }
+          await supabase.from('matches').update(updateData).eq('id', quarterfinalMatches[targetQFIndex].id);
+          console.log('[ADVANCE_WINNER] Updated QF', targetQFIndex + 1, 'with winner team from RO16', matchIndex + 1);
+        }
+      }
+    } else {
+      const allRo16Done = ro16Matches.every(m => m.status === 'completed');
+      if (!allRo16Done) {
+        console.log(`[ADVANCE_WINNER] Non-standard bracket: waiting for all RO16 (${ro16Matches.filter(m => m.status === 'completed').length}/${ro16Matches.length})`);
+        return;
+      }
+
+      console.log('[ADVANCE_WINNER] All RO16 complete, batch advancing to QFs');
+
+      if (isIndividual) {
+        const ro16Results: Array<{ winners: { p1: string; p2: string }; winnerGameDiff: number }> = [];
+
+        for (const m of ro16Matches) {
+          const t1g = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+          const t2g = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+          const t1Won = t1g > t2g;
+
+          if (t1Won) {
+            ro16Results.push({ winners: { p1: m.player1_individual_id, p2: m.player2_individual_id }, winnerGameDiff: t1g - t2g });
+          } else {
+            ro16Results.push({ winners: { p1: m.player3_individual_id, p2: m.player4_individual_id }, winnerGameDiff: t2g - t1g });
+          }
+        }
+
+        const sortedWinners = [...ro16Results].sort((a, b) => b.winnerGameDiff - a.winnerGameDiff);
+        const pairs = sortedWinners.map(r => r.winners);
+
+        for (let i = 0; i < quarterfinalMatches.length && i * 2 + 1 < pairs.length; i++) {
+          const pair1 = pairs[i * 2];
+          const pair2 = pairs[i * 2 + 1];
+          await supabase.from('matches').update({
+            player1_individual_id: pair1.p1,
+            player2_individual_id: pair1.p2,
+            player3_individual_id: pair2.p1,
+            player4_individual_id: pair2.p2,
+          }).eq('id', quarterfinalMatches[i].id);
+          console.log(`[ADVANCE_WINNER] QF${i + 1}: RO16 winner pair${i * 2 + 1} vs pair${i * 2 + 2}`);
+        }
+      }
+    }
+  }
 
   if (semifinalRounds.includes(round)) {
     const semifinalMatches = allMatches

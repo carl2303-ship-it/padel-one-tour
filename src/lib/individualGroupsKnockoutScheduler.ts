@@ -176,7 +176,7 @@ export function generateIndividualGroupsKnockoutSchedule(
   endTime: string = '21:00',
   matchDurationMinutes: number = 90,
   qualifiedPerGroup: number = 2,
-  knockoutStage: 'semifinals' | 'quarterfinals' = 'semifinals'
+  knockoutStage: 'semifinals' | 'quarterfinals' | 'round_of_16' | 'final' = 'semifinals'
 ): IndividualMatch[] {
   console.log('=== NEW ROTATION CODE v2 ===', new Date().toISOString());
   console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Starting schedule generation');

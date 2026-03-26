@@ -68,6 +68,12 @@ export type Player = {
   created_at: string;
 };
 
+export type CategoryScheduleEntry = {
+  date: string;       // e.g. "2026-04-05"
+  start_time: string; // e.g. "09:00"
+  end_time: string;   // e.g. "13:00"
+};
+
 export type TournamentCategory = {
   id: string;
   tournament_id: string;
@@ -82,6 +88,8 @@ export type TournamentCategory = {
   qualified_per_group?: number;
   game_format?: '1set' | '3sets'; // Formato dos jogos: 1 set ou melhor de 3
   court_names?: string[] | null;
+  category_schedule?: CategoryScheduleEntry[] | null; // Schedule per category (day/time)
+  match_duration_minutes?: number | null; // Per-category match duration (overrides tournament default)
   created_at: string;
 };
 
