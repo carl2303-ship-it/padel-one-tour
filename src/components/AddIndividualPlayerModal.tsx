@@ -245,6 +245,21 @@ export default function AddIndividualPlayerModal({
         return;
       }
 
+      if (formData.phone.trim()) {
+        const normalizedPhone = formData.phone.trim().replace(/[\s\-\(\)\.]/g, '');
+        const { data: existingAccount } = await supabase
+          .from('player_accounts')
+          .select('name')
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+
+        if (existingAccount && existingAccount.name?.toLowerCase() !== formData.name.trim().toLowerCase()) {
+          setError(`Este número já está registado para "${existingAccount.name}". Use o modo "Select Existing" ou corrija o número.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const insertData: any = {
         tournament_id: tournamentId,
         category_id: selectedCategoryId,

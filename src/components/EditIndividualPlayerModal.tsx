@@ -61,6 +61,21 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
     }
 
     try {
+      if (phoneNumber.trim() && phoneNumber.trim() !== (player.phone_number || '')) {
+        const normalizedPhone = phoneNumber.trim().replace(/[\s\-\(\)\.]/g, '');
+        const { data: existingAccount } = await supabase
+          .from('player_accounts')
+          .select('name')
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+
+        if (existingAccount && existingAccount.name?.toLowerCase() !== name.trim().toLowerCase()) {
+          setError(`Este número já está registado para "${existingAccount.name}". Não é possível atribuir o mesmo número a outro jogador.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const { error: updateError } = await supabase
         .from('players')
         .update({

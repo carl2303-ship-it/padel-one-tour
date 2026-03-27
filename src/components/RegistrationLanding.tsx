@@ -481,6 +481,13 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
     const normalizedPhone = normalizePhone(phone);
 
+    // Block using the same phone as player 1
+    if (normalizedPhone === normalizePhone(formData.player1Phone)) {
+      setError('O parceiro não pode ter o mesmo número de telefone que o jogador 1');
+      setPartnerLookupLoading(false);
+      return;
+    }
+
     const { data: account } = await supabase
       .from('player_accounts')
       .select('*')
@@ -560,6 +567,28 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         setError(category ? `A categoria ${category.name} esta cheia` : t.registration.tournamentFull);
         setLoading(false);
         return;
+      }
+
+      if (!isIndividualFormat()) {
+        const p1Normalized = normalizePhone(formData.player1Phone);
+        const p2Normalized = normalizePhone(formData.player2Phone);
+        if (p1Normalized === p2Normalized) {
+          setError('Os dois jogadores não podem ter o mesmo número de telefone');
+          setLoading(false);
+          return;
+        }
+
+        const { data: p2Account } = await supabase
+          .from('player_accounts')
+          .select('name')
+          .eq('phone_number', p2Normalized)
+          .maybeSingle();
+
+        if (p2Account && p2Account.name?.toLowerCase() !== formData.player2Name.trim().toLowerCase()) {
+          setError(`O número do parceiro já está registado para "${p2Account.name}". Verifique o número ou o nome.`);
+          setLoading(false);
+          return;
+        }
       }
 
       const player1Result = await createOrGetPlayerAccount(

@@ -710,11 +710,16 @@ export async function updateLeagueStandings(tournamentId: string) {
 
   const { data: tournamentLeagues, error: leaguesError } = await supabase
     .from('tournament_leagues')
-    .select('league_id, league_category')
+    .select('league_id, league_category, group_filter')
     .eq('tournament_id', tournamentId);
 
   console.log('[LEAGUE_UPDATE] Tournament leagues:', tournamentLeagues);
   console.log('[LEAGUE_UPDATE] Tournament leagues error:', leaguesError);
+  if (tournamentLeagues) {
+    tournamentLeagues.forEach((tl: any) => {
+      console.log(`[LEAGUE_UPDATE] League ${tl.league_id}: category=${tl.league_category}, group_filter=${tl.group_filter}`);
+    });
+  }
 
   if (!tournamentLeagues || tournamentLeagues.length === 0) {
     console.log('[LEAGUE_UPDATE] Skipping - no leagues associated with this tournament');
@@ -793,6 +798,27 @@ export async function updateLeagueStandings(tournamentId: string) {
       league_uuid: leagueId
     });
 
+    // Determine which scoring system the RPC will use for this tournament
+    const tlEntry = tournamentLeagues.find((tl: any) => tl.league_id === leagueId);
+    const leagueCat = tlEntry?.league_category;
+    const groupFilter = tlEntry?.group_filter;
+    let effectiveScoring = leagueData?.scoring_system;
+    if (leagueCat && leagueData?.category_scoring_systems?.[leagueCat]) {
+      effectiveScoring = leagueData.category_scoring_systems[leagueCat];
+    }
+    console.log('[LEAGUE_UPDATE] Effective scoring for this tournament (category=' + leagueCat + '):', effectiveScoring);
+    if (groupFilter) {
+      console.warn('[LEAGUE_UPDATE] ⚠️ group_filter is SET:', groupFilter, '— players without matching group_name will be EXCLUDED');
+    }
+
+    // Show expected points per team
+    if (teams && teams.length > 0) {
+      teams.filter(t => t.final_position).forEach(t => {
+        const pts = effectiveScoring?.[String(t.final_position)] || 0;
+        console.log(`[LEAGUE_UPDATE] Team "${t.name || t.id}" pos=${t.final_position} → ${pts} pts (per player)`);
+      });
+    }
+
     if (error) {
       console.error('[LEAGUE_UPDATE] Error recalculating league standings:', error);
       console.error('[LEAGUE_UPDATE] Error details:', JSON.stringify(error));
@@ -807,8 +833,19 @@ export async function updateLeagueStandings(tournamentId: string) {
       
       console.log('[LEAGUE_UPDATE] Standings AFTER RPC:', standingsAfter?.length || 0, 'entries');
       console.log('[LEAGUE_UPDATE] Standings error:', standingsError);
-      if (standingsAfter && standingsAfter.length > 0) {
-        console.log('[LEAGUE_UPDATE] Sample standing:', standingsAfter[0]);
+
+      // Show standings for players from this tournament
+      if (standingsAfter && players) {
+        const playerNames = new Set(players.map(p => p.name?.toLowerCase()).filter(Boolean));
+        const relevantStandings = standingsAfter.filter(s => playerNames.has(s.entity_name?.toLowerCase()));
+        if (relevantStandings.length > 0) {
+          console.log(`[LEAGUE_UPDATE] Standings for this tournament's players (${relevantStandings.length}):`);
+          relevantStandings.forEach(s => {
+            console.log(`  → ${s.entity_name}: ${s.total_points} pts (${s.tournaments_played} tournaments, best: ${s.best_position}°)`);
+          });
+        } else {
+          console.warn('[LEAGUE_UPDATE] ⚠️ No standings found for this tournament\'s players! Check group_filter or player names.');
+        }
       }
     }
   }

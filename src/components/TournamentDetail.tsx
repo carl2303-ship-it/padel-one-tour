@@ -4324,8 +4324,34 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     if (!confirm(t.tournament.confirmDeleteTeam)) return;
     
     try {
+      const { data: team } = await supabase
+        .from('teams')
+        .select('player1_id, player2_id')
+        .eq('id', teamId)
+        .single();
+
+      const [m1, m2] = await Promise.all([
+        supabase.from('matches').select('id').eq('team1_id', teamId),
+        supabase.from('matches').select('id').eq('team2_id', teamId),
+      ]);
+      const matchIds = [...new Set([
+        ...(m1.data || []).map(m => m.id),
+        ...(m2.data || []).map(m => m.id),
+      ])];
+      for (const matchId of matchIds) {
+        await supabase.from('matches').delete().eq('id', matchId);
+      }
+
       const { error } = await supabase.from('teams').delete().eq('id', teamId);
       if (error) throw error;
+
+      if (team) {
+        const playerIds = [team.player1_id, team.player2_id].filter(Boolean);
+        for (const pid of playerIds) {
+          await supabase.from('players').delete().eq('id', pid);
+        }
+      }
+
       await fetchTournamentData();
     } catch (error) {
       console.error('Error deleting team:', error);
@@ -6138,6 +6164,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           console.log('[FINALIZE] Updated', teamStats.length, 'team positions');
+
+          // Propagate final_position to players (each player inherits team position)
+          for (const team of tournamentTeams) {
+            const teamPosition = sortedStats.findIndex(s => s.id === team.id) + 1;
+            if (teamPosition > 0) {
+              if (team.player1_id) {
+                await supabase.from('players').update({ final_position: teamPosition }).eq('id', team.player1_id);
+              }
+              if (team.player2_id) {
+                await supabase.from('players').update({ final_position: teamPosition }).eq('id', team.player2_id);
+              }
+            }
+          }
+          console.log('[FINALIZE] Propagated positions to players');
         } else {
           console.log('[FINALIZE] No teams or matches found');
         }
