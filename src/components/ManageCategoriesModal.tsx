@@ -26,7 +26,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     court_names: [] as string[],
     category_schedule: [] as CategoryScheduleEntry[],
     match_duration_minutes: null as number | null,
-    accepted_levels: [] as string[]
+    accepted_levels: [] as string[],
+    min_level: null as number | null,
+    max_level: null as number | null
   });
 
   const ALL_PLAYER_LEVELS = ['M6', 'M5', 'M4', 'M3', 'M2', 'M1', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
@@ -143,7 +145,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
           category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
           match_duration_minutes: newCategory.match_duration_minutes || null,
-          accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null
+          accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null,
+          min_level: newCategory.min_level,
+          max_level: newCategory.max_level
         });
 
       if (error) throw error;
@@ -158,7 +162,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         court_names: [],
         category_schedule: [],
         match_duration_minutes: null,
-        accepted_levels: []
+        accepted_levels: [],
+        min_level: null,
+        max_level: null
       });
 
       await loadCategories();
@@ -191,7 +197,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
           category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
           match_duration_minutes: editingCategory.match_duration_minutes || null,
-          accepted_levels: editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels : null
+          accepted_levels: editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels : null,
+          min_level: editingCategory.min_level ?? null,
+          max_level: editingCategory.max_level ?? null
         })
         .eq('id', editingCategory.id);
 
@@ -397,6 +405,42 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                   })}
                 </div>
               </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Intervalo de nível (ranking numérico 0.5 – 7.0)
+              </label>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">Mínimo</label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    max="7.0"
+                    step="0.1"
+                    value={newCategory.min_level ?? ''}
+                    onChange={(e) => setNewCategory({ ...newCategory, min_level: e.target.value ? parseFloat(e.target.value) : null })}
+                    placeholder="Ex: 2.0"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  />
+                </div>
+                <span className="text-gray-400 mt-5">–</span>
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">Máximo</label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    max="7.0"
+                    step="0.1"
+                    value={newCategory.max_level ?? ''}
+                    onChange={(e) => setNewCategory({ ...newCategory, max_level: e.target.value ? parseFloat(e.target.value) : null })}
+                    placeholder="Ex: 4.5"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">Se vazio, sem restrição de nível numérico</p>
             </div>
 
             {clubCourts.length > 0 && (
@@ -712,6 +756,42 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                           </div>
                         </div>
 
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Intervalo de nível (ranking numérico 0.5 – 7.0)
+                          </label>
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-500 mb-1">Mínimo</label>
+                              <input
+                                type="number"
+                                min="0.5"
+                                max="7.0"
+                                step="0.1"
+                                value={editingCategory.min_level ?? ''}
+                                onChange={(e) => setEditingCategory({ ...editingCategory, min_level: e.target.value ? parseFloat(e.target.value) : null })}
+                                placeholder="Ex: 2.0"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                              />
+                            </div>
+                            <span className="text-gray-400 mt-5">–</span>
+                            <div className="flex-1">
+                              <label className="block text-xs text-gray-500 mb-1">Máximo</label>
+                              <input
+                                type="number"
+                                min="0.5"
+                                max="7.0"
+                                step="0.1"
+                                value={editingCategory.max_level ?? ''}
+                                onChange={(e) => setEditingCategory({ ...editingCategory, max_level: e.target.value ? parseFloat(e.target.value) : null })}
+                                placeholder="Ex: 4.5"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                              />
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">Se vazio, sem restrição de nível numérico</p>
+                        </div>
+
                         {clubCourts.length > 0 && (
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -899,6 +979,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             )}
                             {category.accepted_levels && category.accepted_levels.length > 0 && (
                               <> • Níveis: {category.accepted_levels.join(', ')}</>
+                            )}
+                            {(category.min_level != null || category.max_level != null) && (
+                              <> • Rating: {category.min_level ?? '0.5'}–{category.max_level ?? '7.0'}</>
                             )}
                           </div>
                           {category.category_schedule && category.category_schedule.length > 0 && (

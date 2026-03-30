@@ -91,6 +91,8 @@ export type TournamentCategory = {
   category_schedule?: CategoryScheduleEntry[] | null; // Schedule per category (day/time)
   match_duration_minutes?: number | null; // Per-category match duration (overrides tournament default)
   accepted_levels?: string[] | null;
+  min_level?: number | null;
+  max_level?: number | null;
   created_at: string;
 };
 
