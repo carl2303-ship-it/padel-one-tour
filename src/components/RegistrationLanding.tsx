@@ -83,6 +83,7 @@ interface PlayerAccount {
   name: string;
   email: string | null;
   user_id: string | null;
+  player_category: string | null;
 }
 
 export default function RegistrationLanding({ tournament, onClose }: RegistrationLandingProps) {
@@ -187,6 +188,31 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     if (params.get('enrolled') === '1') {
       fetchAllRegistered();
       setShowRegisteredList(true);
+    }
+
+    const phoneParam = params.get('phone');
+    if (phoneParam && step === 'check_account') {
+      const normalized = normalizePhone(decodeURIComponent(phoneParam));
+      setCheckPhone(normalized);
+      (async () => {
+        const { data: account } = await supabase
+          .from('player_accounts')
+          .select('*')
+          .eq('phone_number', normalized)
+          .maybeSingle();
+
+        if (account) {
+          setExistingAccount(account);
+          setFormData(prev => ({
+            ...prev,
+            player1Name: account.name || '',
+            player1Email: account.email || '',
+            player1Phone: normalized,
+          }));
+          setLoggedInPlayer(account);
+          setStep('register');
+        }
+      })();
     }
   }, [tournament.id]);
 
@@ -495,6 +521,16 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       .maybeSingle();
 
     if (account) {
+      const selectedCat = categories.find(c => c.id === formData.categoryId);
+      if (selectedCat?.accepted_levels && selectedCat.accepted_levels.length > 0) {
+        const partnerLevel = (account as any).player_category;
+        if (!partnerLevel || !selectedCat.accepted_levels.includes(partnerLevel)) {
+          setError(`O nível de ${account.name} (${partnerLevel || 'não definido'}) não é aceite na categoria ${selectedCat.name}. Níveis aceites: ${selectedCat.accepted_levels.join(', ')}. Contacte o clube organizador.`);
+          setPartnerLookupLoading(false);
+          return;
+        }
+      }
+
       setFormData(prev => ({
         ...prev,
         player2Phone: normalizedPhone,
@@ -569,6 +605,17 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         return;
       }
 
+      const selectedCat = categories.find(c => c.id === formData.categoryId);
+      if (selectedCat?.accepted_levels && selectedCat.accepted_levels.length > 0) {
+        const p1Account = loggedInPlayer || existingAccount;
+        const p1Level = p1Account?.player_category;
+        if (!p1Level || !selectedCat.accepted_levels.includes(p1Level)) {
+          setError(`O seu nível (${p1Level || 'não definido'}) não é aceite na categoria ${selectedCat.name}. Níveis aceites: ${selectedCat.accepted_levels.join(', ')}. Contacte o clube organizador para mais informações.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       if (!isIndividualFormat()) {
         const p1Normalized = normalizePhone(formData.player1Phone);
         const p2Normalized = normalizePhone(formData.player2Phone);
@@ -580,7 +627,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
         const { data: p2Account } = await supabase
           .from('player_accounts')
-          .select('name')
+          .select('name, player_category')
           .eq('phone_number', p2Normalized)
           .maybeSingle();
 
@@ -588,6 +635,15 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           setError(`O número do parceiro já está registado para "${p2Account.name}". Verifique o número ou o nome.`);
           setLoading(false);
           return;
+        }
+
+        if (selectedCat?.accepted_levels && selectedCat.accepted_levels.length > 0 && p2Account) {
+          const p2Level = p2Account.player_category;
+          if (!p2Level || !selectedCat.accepted_levels.includes(p2Level)) {
+            setError(`O nível do parceiro ${formData.player2Name} (${p2Level || 'não definido'}) não é aceite na categoria ${selectedCat.name}. Níveis aceites: ${selectedCat.accepted_levels.join(', ')}. Contacte o clube organizador.`);
+            setLoading(false);
+            return;
+          }
         }
       }
 
@@ -1291,13 +1347,20 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">Selecione uma categoria</option>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.name}
-                    {category.max_teams && ` (max ${category.max_teams})`}
-                    {category.registration_fee && category.registration_fee > 0 && ` - ${category.registration_fee}EUR`}
-                  </option>
-                ))}
+                {categories.map((category) => {
+                  const playerLevel = (loggedInPlayer || existingAccount)?.player_category;
+                  const hasRestriction = category.accepted_levels && category.accepted_levels.length > 0;
+                  const isLevelBlocked = hasRestriction && (!playerLevel || !category.accepted_levels!.includes(playerLevel));
+                  return (
+                    <option key={category.id} value={category.id} disabled={isLevelBlocked || false}>
+                      {category.name}
+                      {category.max_teams && ` (max ${category.max_teams})`}
+                      {category.registration_fee && category.registration_fee > 0 && ` - ${category.registration_fee}EUR`}
+                      {hasRestriction && ` [${category.accepted_levels!.join('/')}]`}
+                      {isLevelBlocked && ' - Nível incompatível'}
+                    </option>
+                  );
+                })}
               </select>
 
               {formData.categoryId && categoryTeams.length > 0 && (

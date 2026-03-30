@@ -25,8 +25,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     qualified_per_group: 2,
     court_names: [] as string[],
     category_schedule: [] as CategoryScheduleEntry[],
-    match_duration_minutes: null as number | null
+    match_duration_minutes: null as number | null,
+    accepted_levels: [] as string[]
   });
+
+  const ALL_PLAYER_LEVELS = ['M6', 'M5', 'M4', 'M3', 'M2', 'M1', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
 
@@ -139,7 +142,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
           court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
           category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
-          match_duration_minutes: newCategory.match_duration_minutes || null
+          match_duration_minutes: newCategory.match_duration_minutes || null,
+          accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null
         });
 
       if (error) throw error;
@@ -153,7 +157,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         qualified_per_group: 2,
         court_names: [],
         category_schedule: [],
-        match_duration_minutes: null
+        match_duration_minutes: null,
+        accepted_levels: []
       });
 
       await loadCategories();
@@ -185,7 +190,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
           court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
           category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
-          match_duration_minutes: editingCategory.match_duration_minutes || null
+          match_duration_minutes: editingCategory.match_duration_minutes || null,
+          accepted_levels: editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels : null
         })
         .eq('id', editingCategory.id);
 
@@ -352,6 +358,45 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                 />
               </div>
 
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Níveis aceites ({newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels.join(', ') : 'todos'})
+              </label>
+              <div className="border border-gray-300 rounded-lg p-3 bg-gray-50">
+                <div className="text-xs text-gray-600 mb-2">
+                  Se nenhum nível for selecionado, qualquer jogador pode inscrever-se
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {ALL_PLAYER_LEVELS.map((level) => {
+                    const isSelected = newCategory.accepted_levels.includes(level);
+                    return (
+                      <label
+                        key={level}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full cursor-pointer text-sm font-medium transition-colors ${
+                          isSelected ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            setNewCategory(prev => ({
+                              ...prev,
+                              accepted_levels: isSelected
+                                ? prev.accepted_levels.filter(l => l !== level)
+                                : [...prev.accepted_levels, level]
+                            }));
+                          }}
+                          className="sr-only"
+                        />
+                        {level}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {clubCourts.length > 0 && (
@@ -624,6 +669,49 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
                         </div>
 
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Níveis aceites ({editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels.join(', ') : 'todos'})
+                          </label>
+                          <div className="border border-gray-300 rounded-lg p-3 bg-gray-50">
+                            <div className="text-xs text-gray-600 mb-2">
+                              Se nenhum nível for selecionado, qualquer jogador pode inscrever-se
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {ALL_PLAYER_LEVELS.map((level) => {
+                                const isSelected = editingCategory.accepted_levels?.includes(level) || false;
+                                return (
+                                  <label
+                                    key={level}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full cursor-pointer text-sm font-medium transition-colors ${
+                                      isSelected ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setEditingCategory(prev => {
+                                          if (!prev) return prev;
+                                          const current = prev.accepted_levels || [];
+                                          return {
+                                            ...prev,
+                                            accepted_levels: isSelected
+                                              ? current.filter(l => l !== level)
+                                              : [...current, level]
+                                          };
+                                        });
+                                      }}
+                                      className="sr-only"
+                                    />
+                                    {level}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+
                         {clubCourts.length > 0 && (
                           <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -808,6 +896,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             )}
                             {category.match_duration_minutes && (
                               <> • {category.match_duration_minutes}min</>
+                            )}
+                            {category.accepted_levels && category.accepted_levels.length > 0 && (
+                              <> • Níveis: {category.accepted_levels.join(', ')}</>
                             )}
                           </div>
                           {category.category_schedule && category.category_schedule.length > 0 && (
