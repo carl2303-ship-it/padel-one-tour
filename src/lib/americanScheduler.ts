@@ -216,8 +216,8 @@ export function generateAmericanSchedule(
       const extraDays = Math.floor(totalMinutes / (60 * 24));
 
       const [year, month, day] = startDate.split('-').map(Number);
-      const matchDate = new Date(Date.UTC(year, month - 1, day + daysFromStart + extraDays, matchHour, matchMinute, 0, 0));
-      const dateString = matchDate.toISOString().split('T')[0];
+      const matchDate = new Date(year, month - 1, day + daysFromStart + extraDays, matchHour, matchMinute, 0, 0);
+      const dateString = `${matchDate.getFullYear()}-${String(matchDate.getMonth() + 1).padStart(2, '0')}-${String(matchDate.getDate()).padStart(2, '0')}`;
       const timeString = `${String(matchHour).padStart(2, '0')}:${String(matchMinute).padStart(2, '0')}`;
       const timeKey = `${dateString}T${timeString}:00`;
 

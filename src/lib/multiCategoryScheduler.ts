@@ -101,7 +101,7 @@ function generateCategoryTimeSlots(
       const totalMinutes = startTotalMinutes + i * matchDurationMinutes;
       const h = Math.floor(totalMinutes / 60) % 24;
       const m = totalMinutes % 60;
-      const slotTime = new Date(Date.UTC(year, month - 1, day, h, m, 0, 0));
+      const slotTime = new Date(year, month - 1, day, h, m, 0, 0);
       slots.push({
         time: slotTime.toISOString(),
         dateStr: entry.date
@@ -310,7 +310,7 @@ export function scheduleMultipleCategories(
           const hourOffset = Math.floor(totalMinutesFromStart / 60);
           const minuteOffset = totalMinutesFromStart % 60;
           const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-          const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+          const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
           const timeStr = scheduledTime.toISOString();
 
           catPlayersThisSlot.clear();
@@ -437,7 +437,7 @@ export function scheduleMultipleCategories(
       const minuteOffset = totalMinutesFromStart % 60;
 
       const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-      const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+      const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
       const timeStr = scheduledTime.toISOString();
 
       const anyRemaining = groupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
@@ -511,7 +511,7 @@ export function scheduleMultipleCategories(
             const futureHourOffset = Math.floor(futureTotalMinutes / 60);
             const futureMinuteOffset = futureTotalMinutes % 60;
             const [yr, mo, dy] = futureSlotInfo.dateStr.split('-').map(Number);
-            const futureTime = new Date(Date.UTC(yr, mo - 1, dy, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
+            const futureTime = new Date(yr, mo - 1, dy, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0);
             occupiedSlots.add(`${futureTime.toISOString()}_${court}`);
           }
 
@@ -642,7 +642,7 @@ export function scheduleMultipleCategories(
             const hourOffset = Math.floor(totalMinutesFromStart / 60);
             const minuteOffset = totalMinutesFromStart % 60;
             const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-            const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+            const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
             const timeStr = scheduledTime.toISOString();
 
             let assignedCourt = 0;
@@ -683,7 +683,7 @@ export function scheduleMultipleCategories(
         const minuteOffset = totalMinutesFromStart % 60;
 
         const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-        const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+        const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
         const timeStr = scheduledTime.toISOString();
 
         let scheduledInThisSlot = 0;
@@ -734,7 +734,7 @@ export function scheduleMultipleCategories(
             const futureHourOffset = Math.floor(futureTotalMinutes / 60);
             const futureMinuteOffset = futureTotalMinutes % 60;
             const [y, m, d] = futureSlotInfo.dateStr.split('-').map(Number);
-            const futureTime = new Date(Date.UTC(y, m - 1, d, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
+            const futureTime = new Date(y, m - 1, d, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0);
             occupiedSlots.add(`${futureTime.toISOString()}_${assignedCourt}`);
           }
 
@@ -792,7 +792,7 @@ export function scheduleMultipleCategories(
         const minuteOffset = totalMinutesFromStart % 60;
 
         const [year, month, day] = slotInfo.dateStr.split('-').map(Number);
-        const scheduledTime = new Date(Date.UTC(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0));
+        const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
         const timeStr = scheduledTime.toISOString();
 
         let matchesScheduledThisSlot = 0;
@@ -838,7 +838,7 @@ export function scheduleMultipleCategories(
             const futureHourOffset = Math.floor(futureTotalMinutes / 60);
             const futureMinuteOffset = futureTotalMinutes % 60;
             const [fy, fm, fd] = futureSlotInfo.dateStr.split('-').map(Number);
-            const futureTime = new Date(Date.UTC(fy, fm - 1, fd, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0));
+            const futureTime = new Date(fy, fm - 1, fd, futureSlotInfo.startHour + futureHourOffset, futureSlotInfo.startMinute + futureMinuteOffset, 0, 0);
             occupiedSlots.add(`${futureTime.toISOString()}_${assignedCourt}`);
           }
 

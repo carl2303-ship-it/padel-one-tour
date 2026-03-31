@@ -247,7 +247,7 @@ function generateSingleEliminationSchedule(
       const daySchedule = getDaySchedule(matchDateStr, dailySchedules, startTime, endTime);
       const [dayStartHour, dayStartMinute] = daySchedule.start_time.split(':').map(Number);
 
-      const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, dayStartHour + hourOffset, dayStartMinute + minuteOffset, 0, 0));
+      const scheduledTime = new Date(year, month - 1, day + daysFromStart, dayStartHour + hourOffset, dayStartMinute + minuteOffset, 0, 0);
 
       let team1_id: string | null = null;
       let team2_id: string | null = null;
@@ -345,7 +345,7 @@ function generateRoundRobinSchedule(
       const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
 
       const [year, month, day] = startDate.split('-').map(Number);
-      const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0));
+      const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
 
       slotMatches.forEach((match, courtIdx) => {
         matches.push({

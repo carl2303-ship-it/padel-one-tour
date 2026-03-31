@@ -5168,38 +5168,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const hasCategories = categories.length > 0 && teamsWithCategory.length > 0;
         
         if (hasCategories) {
-          // Round Robin POR CATEGORIA - cada categoria joga entre si
-          console.log('[SCHEDULE] Categories detected! Generating round robin per category');
+          // Round Robin POR CATEGORIA - usando método do círculo para rondas perfeitas
+          console.log('[SCHEDULE] Categories detected! Generating round robin per category (circle method)');
           let globalMatchNumber = 1;
           
-          // Agendar jogos de todas as categorias em paralelo nos courts disponíveis
-          const allCategoryMatches: Array<{team1_id: string; team2_id: string; category_id: string; category_name: string}> = [];
-          
-          for (const category of categories) {
-            const categoryTeams = teams.filter(t => t.category_id === category.id);
-            console.log(`[SCHEDULE] Category "${category.name}": ${categoryTeams.length} teams`);
-            
-            if (categoryTeams.length < 2) {
-              console.warn(`[SCHEDULE] Category "${category.name}" has fewer than 2 teams, skipping`);
-              continue;
-            }
-            
-            // Gerar todos os pares round-robin para esta categoria
-            for (let i = 0; i < categoryTeams.length; i++) {
-              for (let j = i + 1; j < categoryTeams.length; j++) {
-                allCategoryMatches.push({
-                  team1_id: categoryTeams[i].id,
-                  team2_id: categoryTeams[j].id,
-                  category_id: category.id,
-                  category_name: category.name
-                });
-              }
-            }
-          }
-          
-          console.log(`[SCHEDULE] Total round robin matches across all categories: ${allCategoryMatches.length}`);
-          
-          // Agendar os jogos respeitando conflitos (equipas não podem jogar ao mesmo tempo)
           const [startHour, startMinute] = startTime.split(':').map(Number);
           const [endHour, endMinute] = endTime.split(':').map(Number);
           const startTotalMinutes = startHour * 60 + startMinute;
@@ -5210,73 +5182,79 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
           const slotsPerDay = Math.floor(availableMinutesPerDay / matchDuration);
           
-          const scheduled = new Array(allCategoryMatches.length).fill(false);
-          let scheduledCount = 0;
-          let timeSlotIndex = 0;
-          const teamLastPlayed = new Map<string, number>();
+          type CatMatch = { team1_id: string; team2_id: string; category_id: string; category_name: string };
+          const allCategoryRounds: CatMatch[][][] = [];
           
-          while (scheduledCount < allCategoryMatches.length) {
-            const teamsPlayingThisSlot = new Set<string>();
-            let courtCounter = 0;
+          for (const category of categories) {
+            const categoryTeams = teams.filter(t => t.category_id === category.id);
+            console.log(`[SCHEDULE] Category "${category.name}": ${categoryTeams.length} teams`);
             
-            // Tentar preencher todos os campos neste time slot
-            for (let i = 0; i < allCategoryMatches.length && courtCounter < numberOfCourts; i++) {
-              if (scheduled[i]) continue;
+            if (categoryTeams.length < 2) {
+              console.warn(`[SCHEDULE] Category "${category.name}" has fewer than 2 teams, skipping`);
+              continue;
+            }
+            
+            const n = categoryTeams.length;
+            const isOdd = n % 2 !== 0;
+            const rotation: Array<{ id: string }> = categoryTeams.map(t => ({ id: t.id }));
+            if (isOdd) rotation.push({ id: 'BYE' });
+            const total = rotation.length;
+            const numRounds = total - 1;
+            const matchesPerRound = total / 2;
+            
+            const catRounds: CatMatch[][] = [];
+            for (let r = 0; r < numRounds; r++) {
+              const roundMatches: CatMatch[] = [];
+              for (let i = 0; i < matchesPerRound; i++) {
+                const t1 = rotation[i];
+                const t2 = rotation[total - 1 - i];
+                if (t1.id !== 'BYE' && t2.id !== 'BYE') {
+                  roundMatches.push({
+                    team1_id: t1.id,
+                    team2_id: t2.id,
+                    category_id: category.id,
+                    category_name: category.name
+                  });
+                }
+              }
+              catRounds.push(roundMatches);
               
-              const match = allCategoryMatches[i];
+              if (r < numRounds - 1) {
+                const fixed = rotation[0];
+                const rest = rotation.slice(1);
+                rest.unshift(rest.pop()!);
+                rotation.splice(0, rotation.length, fixed, ...rest);
+              }
+            }
+            allCategoryRounds.push(catRounds);
+          }
+          
+          // Merge rounds from different categories into same time slots
+          const maxRounds = Math.max(...allCategoryRounds.map(cr => cr.length), 0);
+          let totalMatchCount = 0;
+          let timeSlotIndex = 0;
+          
+          for (let r = 0; r < maxRounds; r++) {
+            const mergedRound: CatMatch[] = [];
+            for (const catRounds of allCategoryRounds) {
+              if (r < catRounds.length) {
+                mergedRound.push(...catRounds[r]);
+              }
+            }
+            if (mergedRound.length === 0) continue;
+            totalMatchCount += mergedRound.length;
+            
+            for (let matchIdx = 0; matchIdx < mergedRound.length; matchIdx += numberOfCourts) {
+              const slotMatches = mergedRound.slice(matchIdx, matchIdx + numberOfCourts);
               
-              // Verificar conflitos
-              if (teamsPlayingThisSlot.has(match.team1_id) || teamsPlayingThisSlot.has(match.team2_id)) continue;
-              
-              // Verificar descanso mínimo
-              const t1Last = teamLastPlayed.get(match.team1_id) ?? -2;
-              const t2Last = teamLastPlayed.get(match.team2_id) ?? -2;
-              if (timeSlotIndex - t1Last <= 1 && t1Last >= 0) continue;
-              if (timeSlotIndex - t2Last <= 1 && t2Last >= 0) continue;
-              
-              // Agendar
               const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDuration;
               const hourOffset = Math.floor(totalMinutesFromStart / 60);
               const minuteOffset = totalMinutesFromStart % 60;
               const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
               const [year, month, day] = startDate.split('-').map(Number);
-              const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0));
+              const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
               
-              matchesToInsert.push({
-                tournament_id: currentTournament.id,
-                round: 'round_robin',
-                match_number: globalMatchNumber++,
-                team1_id: match.team1_id,
-                team2_id: match.team2_id,
-                category_id: match.category_id,
-                scheduled_time: scheduledTime.toISOString(),
-                court: (courtCounter + 1).toString(),
-                status: 'scheduled'
-              });
-              
-              teamsPlayingThisSlot.add(match.team1_id);
-              teamsPlayingThisSlot.add(match.team2_id);
-              teamLastPlayed.set(match.team1_id, timeSlotIndex);
-              teamLastPlayed.set(match.team2_id, timeSlotIndex);
-              scheduled[i] = true;
-              scheduledCount++;
-              courtCounter++;
-            }
-            
-            // Forçar sem descanso se não agendou nenhum
-            if (courtCounter === 0 && scheduledCount < allCategoryMatches.length) {
-              for (let i = 0; i < allCategoryMatches.length && courtCounter < numberOfCourts; i++) {
-                if (scheduled[i]) continue;
-                const match = allCategoryMatches[i];
-                if (teamsPlayingThisSlot.has(match.team1_id) || teamsPlayingThisSlot.has(match.team2_id)) continue;
-                
-                const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDuration;
-                const hourOffset = Math.floor(totalMinutesFromStart / 60);
-                const minuteOffset = totalMinutesFromStart % 60;
-                const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
-                const [year, month, day] = startDate.split('-').map(Number);
-                const scheduledTime = new Date(Date.UTC(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0));
-                
+              slotMatches.forEach((match, courtIdx) => {
                 matchesToInsert.push({
                   tournament_id: currentTournament.id,
                   round: 'round_robin',
@@ -5285,24 +5263,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   team2_id: match.team2_id,
                   category_id: match.category_id,
                   scheduled_time: scheduledTime.toISOString(),
-                  court: (courtCounter + 1).toString(),
+                  court: (courtIdx + 1).toString(),
                   status: 'scheduled'
                 });
-                
-                teamsPlayingThisSlot.add(match.team1_id);
-                teamsPlayingThisSlot.add(match.team2_id);
-                teamLastPlayed.set(match.team1_id, timeSlotIndex);
-                teamLastPlayed.set(match.team2_id, timeSlotIndex);
-                scheduled[i] = true;
-                scheduledCount++;
-                courtCounter++;
-              }
+              });
+              
+              timeSlotIndex++;
             }
-            
-            timeSlotIndex++;
           }
           
-          console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} matches across categories`);
+          console.log(`[SCHEDULE] Scheduled ${totalMatchCount} matches across categories using circle method`);
           
         } else {
           // Sem categorias - round robin normal (todas vs todas)
