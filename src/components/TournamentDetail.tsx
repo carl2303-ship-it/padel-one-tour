@@ -5100,6 +5100,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
             return {
               tournament_id: currentTournament.id,
+              category_id: categories.length === 1 ? categories[0].id : null,
               round: m.round,
               match_number: m.match_number,
               player1_individual_id: toUuidOrNull(m.player1_id),
