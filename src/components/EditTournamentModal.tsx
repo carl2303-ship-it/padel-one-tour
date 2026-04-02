@@ -26,15 +26,10 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     end_time: (tournament as any).end_time || '12:00',
     daily_start_time: (tournament as any).daily_start_time || '09:00',
     daily_end_time: (tournament as any).daily_end_time || '21:00',
-    format: tournament.format === 'round_robin'
-      ? ((tournament as any).round_robin_type === 'individual' || (tournament as any).round_robin_type === 'american' ? 'round_robin_individual' : 'round_robin_teams')
-      : tournament.format,
     max_teams: tournament.max_teams,
     number_of_courts: (tournament as any).number_of_courts || 1,
     status: tournament.status,
     match_duration_minutes: (tournament as any).match_duration_minutes || 15,
-    number_of_groups: (tournament as any).number_of_groups || 4,
-    knockout_stage: (tournament as any).knockout_stage || 'quarterfinals' as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals',
     registration_fee: (tournament as any).registration_fee || 0,
     member_price: (tournament as any).member_price || 0,
     non_member_price: (tournament as any).non_member_price || 0,
@@ -299,13 +294,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
-        format: (formData.format === 'round_robin_individual' || formData.format === 'round_robin_teams') ? 'round_robin' : formData.format,
-        round_robin_type: formData.format === 'round_robin_individual' ? 'individual' : formData.format === 'round_robin_teams' ? 'teams' : null,
         number_of_courts: selectedCourtNames.length > 0 ? selectedCourtNames.length : formData.number_of_courts,
         status: formData.status,
         match_duration_minutes: formData.match_duration_minutes,
-        number_of_groups: formData.number_of_groups,
-        knockout_stage: formData.knockout_stage,
         registration_fee: formData.registration_fee,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
@@ -717,185 +708,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.tournament.format} *
-            </label>
-            <select
-              value={formData.format}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  format: e.target.value as 'single_elimination' | 'round_robin' | 'round_robin_individual' | 'round_robin_teams' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'mixed_gender' | 'mixed_american',
-                })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <optgroup label={t.tournament.formatOptgroupIndividual}>
-                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
-                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
-              </optgroup>
-              <optgroup label={t.tournament.formatOptgroupTeams}>
-                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
-                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
-                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
-                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
-              </optgroup>
-              <optgroup label={t.tournament.formatOptgroupSpecial}>
-                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
-                <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams || 'Playoffs Cruzados (Equipas) - 2-3 Categorias'}</option>
-                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
-                <option value="mixed_american">{t.tournament.formatOption_mixed_american || 'Americano Misto Individual'}</option>
-              </optgroup>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">{t.tournament.pdfExportNote}</p>
-          </div>
+          {/* Formato do torneio é definido nas categorias */}
 
-          {formData.format === 'super_teams' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-2">
-              <h3 className="text-sm font-semibold text-blue-900">{t.tournament.superTeamsTitle}</h3>
-              <p className="text-sm text-blue-800">{t.tournament.superTeamsDescription}</p>
-            </div>
-          )}
 
-          {formData.format === 'groups_knockout' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-4">
-              <h3 className="text-sm font-semibold text-blue-900">{t.tournament.groupStageSettings}</h3>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.numberOfGroups} *
-                  </label>
-                  <select
-                    value={formData.number_of_groups}
-                    onChange={(e) => setFormData({ ...formData, number_of_groups: parseInt(e.target.value) })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value={2}>{t.tournament.groupsOption2}</option>
-                    <option value={3}>{t.tournament.groupsOption3}</option>
-                    <option value={4}>{t.tournament.groupsOption4}</option>
-                    <option value={5}>{t.tournament.groupsOption5}</option>
-                    <option value={6}>{t.tournament.groupsOption6}</option>
-                    <option value={7}>{t.tournament.groupsOption7}</option>
-                    <option value={8}>{t.tournament.groupsOption8}</option>
-                    <option value={9}>{t.tournament.groupsOption9}</option>
-                    <option value={10}>{t.tournament.groupsOption10}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.knockoutStageLabel} *
-                  </label>
-                  <select
-                    value={formData.knockout_stage}
-                    onChange={(e) => setFormData({ ...formData, knockout_stage: e.target.value as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals' })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
-                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
-                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
-                    <option value="round_of_16">{t.tournament.sixteenTeamRoundOf16}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="text-xs text-gray-600 bg-white p-3 rounded border border-gray-200">
-                <strong>{t.tournament.knockoutStageLabel}:</strong> {t.tournament.knockoutStageDescription} {formData.knockout_stage === 'final' ? t.tournament.twoTeamFinal : formData.knockout_stage === 'semifinals' ? t.tournament.fourTeamSemifinals : formData.knockout_stage === 'quarterfinals' ? t.tournament.eightTeamQuarterfinals : t.tournament.sixteenTeamRoundOf16}.
-                {formData.knockout_stage === 'round_of_16' && ` ${t.tournament.best3rdIncluded}`}
-              </div>
-            </div>
-          )}
-
-          {formData.format === 'individual_groups_knockout' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-4">
-              <h3 className="text-sm font-semibold text-blue-900">{t.tournament.groupStageSettings}</h3>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.numberOfGroups} *
-                  </label>
-                  <select
-                    value={formData.number_of_groups}
-                    onChange={(e) => setFormData({ ...formData, number_of_groups: parseInt(e.target.value) })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value={2}>{t.tournament.groupsOption2}</option>
-                    <option value={3}>{t.tournament.groupsOption3}</option>
-                    <option value={4}>{t.tournament.groupsOption4}</option>
-                    <option value={5}>{t.tournament.groupsOption5}</option>
-                    <option value={6}>{t.tournament.groupsOption6}</option>
-                    <option value={7}>{t.tournament.groupsOption7}</option>
-                    <option value={8}>{t.tournament.groupsOption8}</option>
-                    <option value={9}>{t.tournament.groupsOption9}</option>
-                    <option value={10}>{t.tournament.groupsOption10}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.knockoutStageLabel} *
-                  </label>
-                  <select
-                    value={formData.knockout_stage}
-                    onChange={(e) => setFormData({ ...formData, knockout_stage: e.target.value as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals' })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
-                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
-                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
-                    <option value="round_of_16">{t.tournament.sixteenTeamRoundOf16}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="text-xs text-gray-600 bg-white p-3 rounded border border-gray-200">
-                <strong>{t.format.individual_groups_knockout}:</strong> {t.tournament.individualGroupsDescription}
-              </div>
-
-              <div className="border-t border-blue-200 pt-4 mt-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="mixed_knockout"
-                    checked={formData.mixed_knockout}
-                    onChange={(e) => setFormData({ ...formData, mixed_knockout: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <label htmlFor="mixed_knockout" className="text-sm font-medium text-gray-700">
-                    Knockout Misto (Americano Misto)
-                  </label>
-                </div>
-                <p className="text-xs text-gray-500 mt-2 ml-7">
-                  Quando ativado, a fase knockout combina jogadores de diferentes categorias (ex: 1 Homem + 1 Mulher por equipa).
-                  Use isto quando tiver categorias masculina e feminina separadas nos grupos que devem jogar juntas nas finais.
-                </p>
-                {formData.mixed_knockout && (
-                  <div className="mt-3 bg-amber-50 border border-amber-200 rounded p-3">
-                    <p className="text-xs text-amber-800">
-                      <strong>Importante:</strong> Para funcionar corretamente, certifique-se de que tem igual numero de jogadores qualificados em cada categoria (ex: 2 homens + 2 mulheres para meias-finais).
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {formData.format === 'crossed_playoffs' && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTitle}</h4>
-              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'crossed_playoffs_teams' && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTeamsTitle || 'Playoffs Cruzados (Equipas)'}</h4>
-              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsTeamsDescription || 'Ideal para torneios de equipas com 2-3 categorias onde as melhores equipas de cada categoria se cruzam nas eliminatórias. Estrutura: R1 (3 jogos) → R2 Meias-finais + 5º/6º → R3 Final + 3º/4º. Equipas são combinadas de diferentes categorias.'}</p>
-            </div>
-          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

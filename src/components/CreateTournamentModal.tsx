@@ -24,11 +24,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     end_time: '12:00',
     daily_start_time: '09:00',
     daily_end_time: '21:00',
-    format: 'individual_groups_knockout' as const,
     match_duration_minutes: 30,
-    teams_per_group: 4,
-    number_of_groups: 4,
-    knockout_stage: 'quarterfinals' as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals',
     registration_fee: 0,
     member_price: 0,
     non_member_price: 0,
@@ -236,14 +232,10 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         end_time: formData.daily_end_time,
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
-        format: (formData.format === 'round_robin_individual' || formData.format === 'round_robin_teams') ? 'round_robin' : formData.format,
-        round_robin_type: formData.format === 'round_robin_individual' ? 'individual' : formData.format === 'round_robin_teams' ? 'teams' : null,
+        format: 'groups_knockout',
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
         match_duration_minutes: formData.match_duration_minutes,
-        teams_per_group: formData.teams_per_group,
-        number_of_groups: formData.number_of_groups,
-        knockout_stage: formData.knockout_stage,
         registration_fee: formData.registration_fee,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
@@ -449,188 +441,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 ))}
               </div>
             </div>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.tournament.formatLabel}
-            </label>
-            <select
-              value={formData.format}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  format: e.target.value as any,
-                })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <optgroup label={t.tournament.formatOptgroupIndividual}>
-                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
-                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
-              </optgroup>
-              <optgroup label={t.tournament.formatOptgroupTeams}>
-                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
-                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
-                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
-                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
-              </optgroup>
-              <optgroup label={t.tournament.formatOptgroupSpecial}>
-                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
-                <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams || 'Playoffs Cruzados (Equipas) - 2-3 Categorias'}</option>
-                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
-                <option value="mixed_american">{t.tournament.formatOption_mixed_american || 'Americano Misto - 1H+1M vs 1H+1M (São Valentim)'}</option>
-              </optgroup>
-            </select>
-            <p className="text-xs text-gray-500 mt-1">{t.tournament.formatHelper}</p>
-          </div>
-
-          {formData.format === 'super_teams' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.superTeamsTitle}</h4>
-              <p className="text-sm text-blue-800">{t.tournament.superTeamsDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'round_robin_individual' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.roundRobinIndividualTitle}</h4>
-              <p className="text-sm text-blue-800">{t.tournament.roundRobinIndividualDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'round_robin_teams' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.roundRobinTeamsTitle}</h4>
-              <p className="text-sm text-blue-800">{t.tournament.roundRobinTeamsDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'individual_groups_knockout' && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-2">{t.tournament.individualGroupsTitle}</h4>
-              <p className="text-sm text-blue-800">{t.tournament.individualGroupsDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'crossed_playoffs' && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTitle}</h4>
-              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'crossed_playoffs_teams' && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <h4 className="font-semibold text-purple-900 mb-2">{t.tournament.crossedPlayoffsTeamsTitle || 'Playoffs Cruzados (Equipas)'}</h4>
-              <p className="text-sm text-purple-800">{t.tournament.crossedPlayoffsTeamsDescription || 'Ideal para torneios de equipas com 2-3 categorias onde as melhores equipas de cada categoria se cruzam nas eliminatórias. Estrutura: R1 (3 jogos) → R2 Meias-finais + 5º/6º → R3 Final + 3º/4º. Equipas são combinadas de diferentes categorias.'}</p>
-            </div>
-          )}
-
-          {formData.format === 'mixed_gender' && (
-            <div className="bg-pink-50 border border-pink-200 rounded-lg p-4">
-              <h4 className="font-semibold text-pink-900 mb-2">{t.tournament.mixedGenderTitle}</h4>
-              <p className="text-sm text-pink-800">{t.tournament.mixedGenderDescription}</p>
-            </div>
-          )}
-
-          {formData.format === 'mixed_american' && (
-            <div className="bg-rose-50 border border-rose-200 rounded-lg p-4">
-              <h4 className="font-semibold text-rose-900 mb-2">Americano Misto Individual</h4>
-              <p className="text-sm text-rose-800">
-                Formato especial: 1 Homem + 1 Mulher vs 1 Homem + 1 Mulher. 
-                Os pares trocam a cada ronda. Todos contra todos com classificação individual. 
-                Crie 2 categorias (ex: Masc e Fem) e inscreva os jogadores na respetiva categoria.
-              </p>
-            </div>
-          )}
-
-          {(formData.format === 'groups_knockout' || formData.format === 'individual_groups_knockout') && (
-            <>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.numberOfGroups} *
-                  </label>
-                  <select
-                    value={formData.number_of_groups}
-                    onChange={(e) =>
-                      setFormData({ ...formData, number_of_groups: parseInt(e.target.value) })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value={2}>{t.tournament.groupsOption2}</option>
-                    <option value={3}>{t.tournament.groupsOption3}</option>
-                    <option value={4}>{t.tournament.groupsOption4}</option>
-                    <option value={5}>{t.tournament.groupsOption5}</option>
-                    <option value={6}>{t.tournament.groupsOption6}</option>
-                    <option value={7}>{t.tournament.groupsOption7}</option>
-                    <option value={8}>{t.tournament.groupsOption8}</option>
-                    <option value={9}>{t.tournament.groupsOption9}</option>
-                    <option value={10}>{t.tournament.groupsOption10}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {formData.format === 'individual_groups_knockout' ? t.tournament.playersPerGroupLabel : t.tournament.teamsPerGroupLabel}
-                  </label>
-                  <select
-                    value={formData.teams_per_group}
-                    onChange={(e) =>
-                      setFormData({ ...formData, teams_per_group: parseInt(e.target.value) })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value={3}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup3 : t.tournament.perGroupTeams3}</option>
-                    <option value={4}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup4 : t.tournament.perGroupTeams4}</option>
-                    <option value={5}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup5 : t.tournament.perGroupTeams5}</option>
-                    <option value={6}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup6 : t.tournament.perGroupTeams6}</option>
-                    <option value={8}>{formData.format === 'individual_groups_knockout' ? t.tournament.perGroup8 : t.tournament.perGroupTeams8}</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    {t.tournament.knockoutStageLabel} *
-                  </label>
-                  <select
-                    value={formData.knockout_stage}
-                    onChange={(e) =>
-                      setFormData({ ...formData, knockout_stage: e.target.value as 'final' | 'round_of_16' | 'quarterfinals' | 'semifinals' })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="final">{t.tournament.knockoutOptionFinal}</option>
-                    <option value="semifinals">{t.tournament.knockoutOptionSemifinals}</option>
-                    <option value="quarterfinals">{t.tournament.knockoutOptionQuarterfinals}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                {formData.format === 'individual_groups_knockout' ? (
-                  <p className="text-sm text-blue-800">
-                    <strong>{t.tournament.groupsIndividualBold}</strong>{' '}
-                    {t.tournament.individualGroupsSummary
-                      .replace('{groups}', String(formData.number_of_groups))
-                      .replace('{playersPerGroup}', String(formData.teams_per_group))
-                      .replace('{total}', String(formData.number_of_groups * formData.teams_per_group))
-                      .replace('{stage}', formData.knockout_stage === 'final' ? t.tournament.finalLabel : formData.knockout_stage === 'semifinals' ? t.tournament.semifinalsLabel : t.tournament.quarterfinalsLabel)}
-                  </p>
-                ) : (
-                  <p className="text-sm text-blue-800">
-                    <strong>{t.tournament.groupsTeamsBold}</strong>{' '}
-                    {t.tournament.groupsTeamsSummaryStart
-                      .replace('{groups}', String(formData.number_of_groups))
-                      .replace('{teamsPerGroup}', String(formData.teams_per_group))
-                      .replace('{total}', String(formData.number_of_groups * formData.teams_per_group))}
-                    {' '}{t.tournament.knockoutStageDescription} {formData.knockout_stage === 'final' ? t.tournament.twoTeamFinal : formData.knockout_stage === 'semifinals' ? t.tournament.fourTeamSemifinals : formData.knockout_stage === 'quarterfinals' ? t.tournament.eightTeamQuarterfinals : t.tournament.sixteenTeamRoundOf16}.
-                    {formData.knockout_stage === 'round_of_16' && ` ${t.tournament.best3rdIncluded}`}
-                  </p>
-                )}
-              </div>
-            </>
           )}
 
           <div>

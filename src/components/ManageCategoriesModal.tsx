@@ -152,6 +152,12 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
       if (error) throw error;
 
+      const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
+      await supabase.from('tournaments').update({
+        format: tournamentFormat,
+        round_robin_type: newCategory.format === 'round_robin_teams' ? 'teams' : newCategory.format === 'round_robin_individual' ? 'individual' : null,
+      }).eq('id', tournamentId);
+
       setNewCategory({
         name: '',
         format: 'single_elimination',
@@ -204,6 +210,12 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         .eq('id', editingCategory.id);
 
       if (error) throw error;
+
+      const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
+      await supabase.from('tournaments').update({
+        format: tournamentFormat,
+        round_robin_type: editingCategory.format === 'round_robin_teams' ? 'teams' : editingCategory.format === 'round_robin_individual' ? 'individual' : null,
+      }).eq('id', tournamentId);
 
       setEditingCategory(null);
       await loadCategories();
