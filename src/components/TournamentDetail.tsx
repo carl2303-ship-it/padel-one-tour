@@ -1345,12 +1345,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
                   if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
                     console.log(`[FETCH-FILL] 3-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}], C=[${rankC.map(p=>p.name)}]`);
-                    // J1: (1°A + 4°C) vs (2°A + 3°C)
-                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankC[3].id, player3_individual_id: rankA[1].id, player4_individual_id: rankC[2].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    // J2: (3°A + 2°B) vs (4°A + 1°B)
-                    await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[1].id, player3_individual_id: rankA[3].id, player4_individual_id: rankB[0].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                    // J3: (3°B + 2°C) vs (4°B + 1°C)
-                    await supabase.from('matches').update({ player1_individual_id: rankB[2].id, player2_individual_id: rankC[1].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[0].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                    // J1: (A1 + B2) vs (C1 + A2) - cruzamento rotativo
+                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankC[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                    // J2: (B1 + C2) vs (A3 + B3)
+                    await supabase.from('matches').update({ player1_individual_id: rankB[0].id, player2_individual_id: rankC[1].id, player3_individual_id: rankA[2].id, player4_individual_id: rankB[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
+                    // J3: (A4 + C3) vs (B4 + C4)
+                    await supabase.from('matches').update({ player1_individual_id: rankA[3].id, player2_individual_id: rankC[2].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[3].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
                     console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
                     await fetchTournamentData(); return;
                   }
@@ -1359,7 +1359,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
                   if (rankA.length >= 4 && rankB.length >= 4) {
                     console.log(`[FETCH-FILL] 2-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}]`);
+                    // J1: (A1 + B2) vs (B1 + A2) - cruzamento rotativo
                     await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                    // J2: (A3 + B4) vs (B3 + A4)
                     await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[2].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
                     console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
                     await fetchTournamentData(); return;
@@ -3890,28 +3892,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         console.log(`[AUTO_FILL_R1] Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
         
-        // J1: (1°A + 4°C) vs (2°A + 3°C)
+        // J1: (A1 + B2) vs (C1 + A2) - cruzamento rotativo
         await supabase.from('matches').update({
           player1_individual_id: rankA[0].id,
-          player2_individual_id: rankC[3].id,
-          player3_individual_id: rankA[1].id,
-          player4_individual_id: rankC[2].id,
+          player2_individual_id: rankB[1].id,
+          player3_individual_id: rankC[0].id,
+          player4_individual_id: rankA[1].id,
         }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
         
-        // J2: (3°A + 2°B) vs (4°A + 1°B)
+        // J2: (B1 + C2) vs (A3 + B3)
         await supabase.from('matches').update({
-          player1_individual_id: rankA[2].id,
-          player2_individual_id: rankB[1].id,
-          player3_individual_id: rankA[3].id,
-          player4_individual_id: rankB[0].id,
+          player1_individual_id: rankB[0].id,
+          player2_individual_id: rankC[1].id,
+          player3_individual_id: rankA[2].id,
+          player4_individual_id: rankB[2].id,
         }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
         
-        // J3: (3°B + 2°C) vs (4°B + 1°C)
+        // J3: (A4 + C3) vs (B4 + C4)
         await supabase.from('matches').update({
-          player1_individual_id: rankB[2].id,
-          player2_individual_id: rankC[1].id,
+          player1_individual_id: rankA[3].id,
+          player2_individual_id: rankC[2].id,
           player3_individual_id: rankB[3].id,
-          player4_individual_id: rankC[0].id,
+          player4_individual_id: rankC[3].id,
         }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
         
       } else {
@@ -3927,29 +3929,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         console.log(`[AUTO_FILL_R1] 2-cat Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
         
-        // J1: (1°A + 4°B) vs (1°B + 4°A) — Tops cruzam com últimos
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[0].id,
-          player2_individual_id: rankB[3].id,
-          player3_individual_id: rankB[0].id,
-          player4_individual_id: rankA[3].id,
-        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-        
-        // J2: (2°A + 3°B) vs (2°B + 3°A) — Segundos cruzam com terceiros
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[1].id,
-          player2_individual_id: rankB[2].id,
-          player3_individual_id: rankB[1].id,
-          player4_individual_id: rankA[2].id,
-        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-        
-        // J3: (1°A + 2°B) vs (1°B + 2°A) — Tops cruzam com segundos
+        // J1: (A1 + B2) vs (B1 + A2) - cruzamento rotativo
         await supabase.from('matches').update({
           player1_individual_id: rankA[0].id,
           player2_individual_id: rankB[1].id,
           player3_individual_id: rankB[0].id,
           player4_individual_id: rankA[1].id,
-        }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+        
+        // J2: (A3 + B4) vs (B3 + A4) - cruzamento rotativo
+        await supabase.from('matches').update({
+          player1_individual_id: rankA[2].id,
+          player2_individual_id: rankB[3].id,
+          player3_individual_id: rankB[2].id,
+          player4_individual_id: rankA[3].id,
+        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
       }
       
       console.log('[AUTO_FILL_R1] R1 matches filled with players!');

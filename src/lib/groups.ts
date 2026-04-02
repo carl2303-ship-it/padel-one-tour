@@ -954,10 +954,11 @@ async function populateDirectFinals(
 
       if (!a1 || !b1) continue;
 
+      // Cruzamento rotativo: (pos1)°A+(pos2)°B vs (pos1)°B+(pos2)°A
       const updateData: any = {
         player1_individual_id: a1,
-        player2_individual_id: b2 || a1,
-        player3_individual_id: b1,
+        player2_individual_id: b2 || b1 || a1,
+        player3_individual_id: b1 || a1,
         player4_individual_id: a2 || b1,
       };
 
@@ -972,32 +973,53 @@ async function populateDirectFinals(
         console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
       }
     } else {
-      const neededPlayers: string[] = [];
-      for (const groupName of sortedGroups) {
-        const groupRanking = rankedByGroup.get(groupName)!;
-        for (let r = startRank; r < startRank + 2 && r < groupRanking.length; r++) {
-          neededPlayers.push(groupRanking[r]);
+      // 3+ grupos: cruzamento G[startRank] + (G+1)[startRank+1]
+      const nGroups = sortedGroups.length;
+      const dfRankings = sortedGroups.map(g => rankedByGroup.get(g)!);
+      const usedDf = new Set<string>();
+
+      const dfPairs: Array<[string, string]> = [];
+      for (let g = 0; g < nGroups; g++) {
+        const gNext = (g + 1) % nGroups;
+        const pA = startRank < dfRankings[g].length ? dfRankings[g][startRank] : null;
+        const pB = (startRank + 1) < dfRankings[gNext].length ? dfRankings[gNext][startRank + 1] : null;
+        if (pA && pB && !usedDf.has(pA) && !usedDf.has(pB)) {
+          dfPairs.push([pA, pB]);
+          usedDf.add(pA);
+          usedDf.add(pB);
+        }
+      }
+      if (dfPairs.length === 3) {
+        const tmp = dfPairs[1];
+        dfPairs[1] = dfPairs[2];
+        dfPairs[2] = tmp;
+      }
+      // Restantes
+      for (let pos = startRank; pos < startRank + 2; pos++) {
+        for (let g = 0; g < nGroups; g++) {
+          if (pos < dfRankings[g].length && !usedDf.has(dfRankings[g][pos])) {
+            dfPairs.push([dfRankings[g][pos], '']);
+            usedDf.add(dfRankings[g][pos]);
+          }
         }
       }
 
-      if (neededPlayers.length < 4) continue;
+      if (dfPairs.length >= 2 && dfPairs[0][0] && dfPairs[0][1] && dfPairs[1][0] && dfPairs[1][1]) {
+        const { error } = await supabase
+          .from('matches')
+          .update({
+            player1_individual_id: dfPairs[0][0],
+            player2_individual_id: dfPairs[0][1],
+            player3_individual_id: dfPairs[1][0],
+            player4_individual_id: dfPairs[1][1],
+          })
+          .eq('id', match.id);
 
-      const shuffled = [...neededPlayers].sort(() => Math.random() - 0.5);
-
-      const { error } = await supabase
-        .from('matches')
-        .update({
-          player1_individual_id: shuffled[0],
-          player2_individual_id: shuffled[1],
-          player3_individual_id: shuffled[2],
-          player4_individual_id: shuffled[3],
-        })
-        .eq('id', match.id);
-
-      if (error) {
-        console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
-      } else {
-        console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: populated with shuffled players`);
+        if (error) {
+          console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
+        } else {
+          console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: cruzamento rotativo`);
+        }
       }
     }
   }
@@ -1191,56 +1213,64 @@ export async function populatePlacementMatches(
       .filter(m => !m.player1_individual_id && !m.player3_individual_id)
       .sort((a, b) => a.match_number - b.match_number);
 
-    // Build global seeding by interleaving positions across groups
-    const globalSeeding: string[] = [];
-    const maxPos = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+    // Cruzamento rotativo para RO16 (mesma lógica dos QFs)
+    const nGroupsRo16 = sortedGroups.length;
+    const rankingsRo16 = sortedGroups.map(g => rankedByGroup.get(g)!);
+    const maxLenRo16 = Math.max(...rankingsRo16.map(r => r.length));
+    const usedRo16 = new Set<string>();
+    const allPairsRo16: Array<[string, string]> = [];
 
-    for (let pos = 0; pos < maxPos; pos++) {
-      const playersAtPos: Array<{ id: string; wins: number; gamesWon: number; gamesLost: number }> = [];
-      for (const groupName of sortedGroups) {
-        const ranking = rankedByGroup.get(groupName)!;
-        if (pos < ranking.length) {
-          const playerId = ranking[pos];
-          const stats = playerStats.get(playerId);
-          playersAtPos.push({
-            id: playerId,
-            wins: stats?.wins || 0,
-            gamesWon: stats?.gamesWon || 0,
-            gamesLost: stats?.gamesLost || 0,
-          });
+    // Pares cruzados por camada de 2 posições
+    for (let basePos = 0; basePos < maxLenRo16; basePos += 2) {
+      const layerPairs: Array<[string, string]> = [];
+      for (let g = 0; g < nGroupsRo16; g++) {
+        const gNext = (g + 1) % nGroupsRo16;
+        const pA = basePos < rankingsRo16[g].length ? rankingsRo16[g][basePos] : null;
+        const pB = (basePos + 1) < rankingsRo16[gNext].length ? rankingsRo16[gNext][basePos + 1] : null;
+        if (pA && pB && !usedRo16.has(pA) && !usedRo16.has(pB)) {
+          layerPairs.push([pA, pB]);
+          usedRo16.add(pA);
+          usedRo16.add(pB);
         }
       }
-      playersAtPos.sort((a, b) => {
-        if (a.wins !== b.wins) return b.wins - a.wins;
-        const diffA = a.gamesWon - a.gamesLost;
-        const diffB = b.gamesWon - b.gamesLost;
-        if (diffA !== diffB) return diffB - diffA;
-        return b.gamesWon - a.gamesWon;
-      });
-      playersAtPos.forEach(p => globalSeeding.push(p.id));
+      if (layerPairs.length === 3) {
+        const tmp = layerPairs[1];
+        layerPairs[1] = layerPairs[2];
+        layerPairs[2] = tmp;
+      }
+      allPairsRo16.push(...layerPairs);
+
+      // Restantes desta camada
+      for (let pos = basePos; pos < basePos + 2; pos++) {
+        for (let g = 0; g < nGroupsRo16; g++) {
+          if (pos < rankingsRo16[g].length && !usedRo16.has(rankingsRo16[g][pos])) {
+            usedRo16.add(rankingsRo16[g][pos]);
+            // Guardar para emparelhar
+            const lastPair = allPairsRo16[allPairsRo16.length - 1];
+            if (lastPair && lastPair[1] === '') {
+              lastPair[1] = rankingsRo16[g][pos];
+            } else {
+              allPairsRo16.push([rankingsRo16[g][pos], '']);
+            }
+          }
+        }
+      }
     }
 
-    console.log(`[POPULATE_PLACEMENT] Global seeding for RO16 (${globalSeeding.length} players):`, globalSeeding.map((_, i) => `${i + 1}°`));
+    console.log(`[POPULATE_PLACEMENT] Formed ${allPairsRo16.length} pairs for RO16`);
 
-    // Assign to RO16 using bracket seeding: top+bottom vs mid seeds
-    const n = Math.min(globalSeeding.length, unpopulatedRo16.length * 4);
-    const half = Math.floor(n / 2);
-
-    for (let i = 0; i < unpopulatedRo16.length && i < Math.floor(n / 4); i++) {
-      const p1 = globalSeeding[i];
-      const p2 = globalSeeding[n - 1 - i];
-      const p3 = globalSeeding[half - 1 - i];
-      const p4 = globalSeeding[half + i];
-
-      if (!p1 || !p2 || !p3 || !p4) break;
+    for (let i = 0; i < unpopulatedRo16.length && (i * 2 + 1) < allPairsRo16.length; i++) {
+      const pair1 = allPairsRo16[i * 2];
+      const pair2 = allPairsRo16[i * 2 + 1];
+      if (!pair1?.[0] || !pair1?.[1] || !pair2?.[0] || !pair2?.[1]) break;
 
       await supabase.from('matches').update({
-        player1_individual_id: p1,
-        player2_individual_id: p2,
-        player3_individual_id: p3,
-        player4_individual_id: p4,
+        player1_individual_id: pair1[0],
+        player2_individual_id: pair1[1],
+        player3_individual_id: pair2[0],
+        player4_individual_id: pair2[1],
       }).eq('id', unpopulatedRo16[i].id);
-      console.log(`[POPULATE_PLACEMENT] RO16 Match ${i + 1}: Seed${i + 1}+Seed${n - i} vs Seed${half - i}+Seed${half + 1 + i}`);
+      console.log(`[POPULATE_PLACEMENT] RO16 Match ${i + 1}: cruzamento rotativo`);
     }
 
     // Delete extra empty RO16 matches
@@ -1275,114 +1305,111 @@ export async function populatePlacementMatches(
       .sort((a, b) => a.match_number - b.match_number);
 
     if (isSingleGroup) {
-      // Single group: populate QFs with ranked players
+      // Single group: populate QFs with ranked players (rankings similares juntos)
       const ranking = rankedByGroup.get(sortedGroups[0])!;
       const numQFsNeeded = Math.min(unpopulatedQFs.length, Math.floor(ranking.length / 4));
       
       for (let i = 0; i < numQFsNeeded; i++) {
         const base = i * 4;
         if (base + 3 >= ranking.length) break;
-        // QF seeding: 1+8 vs 4+5, 2+7 vs 3+6, etc.
-        const topIdx = base;
-        const bottomIdx = ranking.length - 1 - base;
-        const midHigh = base + 1;
-        const midLow = ranking.length - 2 - base;
         
         await supabase.from('matches').update({
-          player1_individual_id: ranking[topIdx],
-          player2_individual_id: ranking[bottomIdx] || ranking[topIdx],
-          player3_individual_id: ranking[midHigh],
-          player4_individual_id: ranking[midLow] || ranking[midHigh],
+          player1_individual_id: ranking[base],
+          player2_individual_id: ranking[base + 1],
+          player3_individual_id: ranking[base + 2],
+          player4_individual_id: ranking[base + 3],
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${topIdx + 1}°+${(bottomIdx || topIdx) + 1}° vs ${midHigh + 1}°+${(midLow || midHigh) + 1}°`);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${base + 1}°+${base + 2}° vs ${base + 3}°+${base + 4}°`);
       }
     } else if (sortedGroups.length === 2) {
-      // 2 groups: cross-group quarterfinal matchups
       const groupA = sortedGroups[0];
       const groupB = sortedGroups[1];
-      const rankingA = rankedByGroup.get(groupA)!;
-      const rankingB = rankedByGroup.get(groupB)!;
-      
-      // Calculate how many QFs we can fill (need 4 players per QF, 2 from each group)
-      const maxQFs = Math.min(unpopulatedQFs.length, Math.floor(Math.min(rankingA.length, rankingB.length) / 2));
-      
+      const rankA = rankedByGroup.get(groupA)!;
+      const rankB = rankedByGroup.get(groupB)!;
+      const qualPerGroup = Math.min(rankA.length, rankB.length);
+      const maxQFs = Math.min(unpopulatedQFs.length, Math.floor(qualPerGroup / 2));
+
       for (let i = 0; i < maxQFs; i++) {
-        const startRank = i * 2;
-        const a1 = rankingA[startRank];
-        const a2 = rankingA[startRank + 1];
-        const b1 = rankingB[startRank];
-        const b2 = rankingB[startRank + 1];
-        
+        const pos1 = i * 2;
+        const pos2 = i * 2 + 1;
+        const a1 = rankA[pos1];
+        const a2 = rankA[pos2];
+        const b1 = rankB[pos1];
+        const b2 = rankB[pos2];
+
         if (!a1 || !a2 || !b1 || !b2) break;
-        
-        // Cross-group: A-top + B-bottom vs B-top + A-bottom
+
+        // Cruzamento rotativo: (pos1)°A+(pos2)°B vs (pos1)°B+(pos2)°A
         await supabase.from('matches').update({
           player1_individual_id: a1,
           player2_individual_id: b2,
           player3_individual_id: b1,
           player4_individual_id: a2,
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${groupA}${pos1 + 1}°+${groupB}${pos2 + 1}° vs ${groupB}${pos1 + 1}°+${groupA}${pos2 + 1}°`);
       }
     } else {
-      // 3+ groups: proper cross-group seeding for QFs
-      // Build global seeding by interleaving positions across groups
-      // e.g. 3 groups: A1, B1, C1, A2, B2, C2, A3, B3, C3, A4, B4, C4
-      // Within same position tier, sort by stats (wins, game diff, games won)
-      const globalSeeding: string[] = [];
-      const maxPos = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
+      // 3+ grupos: cruzamento rotativo
+      // Com 3 grupos (A=0,B=1,C=2) x 4 jogadores:
+      //   QF1: A1+B2 vs C1+A2   (g0p0+g1p1, g2p0+g0p1)
+      //   QF2: B1+C2 vs A3+B3   (g1p0+g2p1, g0p2+g1p2)
+      //   QF3: A4+C3 vs B4+C4   (g0p3+g2p2, g1p3+g2p3)
+      const nGroups = sortedGroups.length;
+      const rankings = sortedGroups.map(g => rankedByGroup.get(g)!);
+      const usedPlayers = new Set<string>();
 
-      for (let pos = 0; pos < maxPos; pos++) {
-        const playersAtPos: Array<{ id: string; wins: number; gamesWon: number; gamesLost: number }> = [];
-        for (const groupName of sortedGroups) {
-          const ranking = rankedByGroup.get(groupName)!;
-          if (pos < ranking.length) {
-            const playerId = ranking[pos];
-            const stats = playerStats.get(playerId);
-            playersAtPos.push({
-              id: playerId,
-              wins: stats?.wins || 0,
-              gamesWon: stats?.gamesWon || 0,
-              gamesLost: stats?.gamesLost || 0,
-            });
-          }
+      // Fase 1: pares cruzados — grupo G pos 0 com grupo (G+1)%N pos 1
+      const crossedPairs: Array<[string, string]> = [];
+      for (let g = 0; g < nGroups; g++) {
+        const gNext = (g + 1) % nGroups;
+        const playerA = 0 < rankings[g].length ? rankings[g][0] : null;
+        const playerB = 1 < rankings[gNext].length ? rankings[gNext][1] : null;
+        if (playerA && playerB && !usedPlayers.has(playerA) && !usedPlayers.has(playerB)) {
+          crossedPairs.push([playerA, playerB]);
+          usedPlayers.add(playerA);
+          usedPlayers.add(playerB);
         }
-        // Sort within same position by wins, then game diff, then games won
-        playersAtPos.sort((a, b) => {
-          if (a.wins !== b.wins) return b.wins - a.wins;
-          const diffA = a.gamesWon - a.gamesLost;
-          const diffB = b.gamesWon - b.gamesLost;
-          if (diffA !== diffB) return diffB - diffA;
-          return b.gamesWon - a.gamesWon;
-        });
-        playersAtPos.forEach(p => globalSeeding.push(p.id));
       }
 
-      console.log(`[POPULATE_PLACEMENT] Global seeding (${globalSeeding.length} players):`, globalSeeding.map((id, i) => `${i + 1}°`));
+      // Reordenar pares cruzados: [0, 2, 1] para que A1+B2 vs C1+A2, depois B1+C2
+      const reordered: Array<[string, string]> = [];
+      if (crossedPairs.length === 3) {
+        reordered.push(crossedPairs[0], crossedPairs[2], crossedPairs[1]);
+      } else {
+        reordered.push(...crossedPairs);
+      }
 
-      // Assign to QFs using bracket seeding: top+bottom vs mid seeds
-      // For 12 players (seeds 0-11), 3 QFs:
-      //   QF1: Seed0 + Seed11 vs Seed5 + Seed6
-      //   QF2: Seed1 + Seed10 vs Seed4 + Seed7
-      //   QF3: Seed2 + Seed9  vs Seed3 + Seed8
-      const n = globalSeeding.length;
-      const half = Math.floor(n / 2);
+      // Fase 2: jogadores restantes emparelhados na ordem (rank por rank, grupo por grupo)
+      const remaining: string[] = [];
+      const maxLen = Math.max(...rankings.map(r => r.length));
+      for (let pos = 0; pos < maxLen; pos++) {
+        for (let g = 0; g < nGroups; g++) {
+          if (pos < rankings[g].length && !usedPlayers.has(rankings[g][pos])) {
+            remaining.push(rankings[g][pos]);
+          }
+        }
+      }
 
-      for (let i = 0; i < unpopulatedQFs.length && i < Math.floor(n / 4); i++) {
-        const p1 = globalSeeding[i];             // top seed
-        const p2 = globalSeeding[n - 1 - i];     // bottom seed (partner)
-        const p3 = globalSeeding[half - 1 - i];  // mid-high seed
-        const p4 = globalSeeding[half + i];       // mid-low seed (partner)
+      const allPairs = [...reordered];
+      for (let i = 0; i < remaining.length - 1; i += 2) {
+        allPairs.push([remaining[i], remaining[i + 1]]);
+      }
+      const crossPairs = allPairs;
 
-        if (!p1 || !p2 || !p3 || !p4) break;
+      console.log(`[POPULATE_PLACEMENT] Formed ${crossPairs.length} cross pairs for QFs`);
+
+      for (let i = 0; i < unpopulatedQFs.length && (i * 2 + 1) < crossPairs.length; i++) {
+        const pair1 = crossPairs[i * 2];
+        const pair2 = crossPairs[i * 2 + 1];
+        if (!pair1 || !pair2) break;
 
         await supabase.from('matches').update({
-          player1_individual_id: p1,
-          player2_individual_id: p2,
-          player3_individual_id: p3,
-          player4_individual_id: p4,
+          player1_individual_id: pair1[0],
+          player2_individual_id: pair1[1],
+          player3_individual_id: pair2[0],
+          player4_individual_id: pair2[1],
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: Seed${i + 1}+Seed${n - i} vs Seed${half - i}+Seed${half + 1 + i}`);
+        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: cross pair vs cross pair`);
       }
     }
     
@@ -1430,17 +1457,17 @@ export async function populatePlacementMatches(
 
       if (!alreadyPopulated) {
         const [p1, p2, p3, p4] = singleGroupRanking; // Top 4 players
-        // SF1: 1st + 4th vs 2nd + 3rd
+        // SF1: 1st + 2nd vs 3rd + 4th (rankings similares juntos)
         await supabase
           .from('matches')
           .update({
             player1_individual_id: p1,
-            player2_individual_id: p4,
-            player3_individual_id: p2,
-            player4_individual_id: p3,
+            player2_individual_id: p2,
+            player3_individual_id: p3,
+            player4_individual_id: p4,
           })
           .eq('id', semifinalMatches[0].id);
-        console.log(`[POPULATE_PLACEMENT] SF1: 1st+4th vs 2nd+3rd`);
+        console.log(`[POPULATE_PLACEMENT] SF1: 1st+2nd vs 3rd+4th`);
 
         if (singleGroupRanking.length >= 8) {
           // With 8+ players, SF2 gets players 5-8
@@ -1449,12 +1476,12 @@ export async function populatePlacementMatches(
             .from('matches')
             .update({
               player1_individual_id: p5,
-              player2_individual_id: p8 || p5,
-              player3_individual_id: p6,
-              player4_individual_id: p7 || p6,
+              player2_individual_id: p6,
+              player3_individual_id: p7,
+              player4_individual_id: p8 || p7,
             })
             .eq('id', semifinalMatches[1].id);
-          console.log(`[POPULATE_PLACEMENT] SF2: 5th+8th vs 6th+7th`);
+          console.log(`[POPULATE_PLACEMENT] SF2: 5th+6th vs 7th+8th`);
         } else {
           // With 4-7 players, SF2 uses different pairings of same top 4
           await supabase
@@ -1530,6 +1557,7 @@ export async function populatePlacementMatches(
 
       if (!a1 || !a2 || !b1 || !b2) return;
 
+      // SF1: (A1+B2) vs (B1+A2) - cruzamento rotativo
       const { error: sf1Error } = await supabase
         .from('matches')
         .update({
@@ -1543,38 +1571,76 @@ export async function populatePlacementMatches(
       if (sf1Error) {
         console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF1:`, sf1Error);
       } else {
-        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF1: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
+        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF1: ${groupA}${startRank + 1}°+${groupB}${startRank + 2}° vs ${groupB}${startRank + 1}°+${groupA}${startRank + 2}°`);
       }
 
+      // SF2: (A1+A2) vs (B1+B2) - mesmos do grupo juntos para variar confrontos
       const { error: sf2Error } = await supabase
         .from('matches')
         .update({
-          player1_individual_id: a2,
-          player2_individual_id: b1,
-          player3_individual_id: b2,
-          player4_individual_id: a1,
+          player1_individual_id: a1,
+          player2_individual_id: a2,
+          player3_individual_id: b1,
+          player4_individual_id: b2,
         })
         .eq('id', tierSemis[1].id);
 
       if (sf2Error) {
         console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF2:`, sf2Error);
       } else {
-        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF2: ${groupA}${startRank + 2}+${groupB}${startRank + 1} vs ${groupB}${startRank + 2}+${groupA}${startRank + 1}`);
+        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF2: ${groupA}${startRank + 1}°+${groupA}${startRank + 2}° vs ${groupB}${startRank + 1}°+${groupB}${startRank + 2}°`);
       }
     } else {
-      const shuffled = [...neededPlayers].sort(() => Math.random() - 0.5);
+      // 3+ grupos: cruzamento G[startRank] + (G+1)[startRank+1]
+      const nGroups = sortedGroups.length;
+      const fullRankings = sortedGroups.map(g => rankedByGroup.get(g)!);
+      const usedTier = new Set<string>();
 
-      for (let i = 0; i < tierSemis.length && (i * 4 + 3) < shuffled.length; i++) {
-        const base = i * 4;
+      const tierPairs: Array<[string, string]> = [];
+      for (let g = 0; g < nGroups; g++) {
+        const gNext = (g + 1) % nGroups;
+        const pA = startRank < fullRankings[g].length ? fullRankings[g][startRank] : null;
+        const pB = (startRank + 1) < fullRankings[gNext].length ? fullRankings[gNext][startRank + 1] : null;
+        if (pA && pB && !usedTier.has(pA) && !usedTier.has(pB)) {
+          tierPairs.push([pA, pB]);
+          usedTier.add(pA);
+          usedTier.add(pB);
+        }
+      }
+      if (tierPairs.length === 3) {
+        const tmp = tierPairs[1];
+        tierPairs[1] = tierPairs[2];
+        tierPairs[2] = tmp;
+      }
+
+      // Restantes do tier
+      const tierRemaining: string[] = [];
+      for (let pos = startRank; pos < startRank + 2; pos++) {
+        for (let g = 0; g < nGroups; g++) {
+          if (pos < fullRankings[g].length && !usedTier.has(fullRankings[g][pos])) {
+            tierRemaining.push(fullRankings[g][pos]);
+          }
+        }
+      }
+      for (let i = 0; i < tierRemaining.length - 1; i += 2) {
+        tierPairs.push([tierRemaining[i], tierRemaining[i + 1]]);
+      }
+
+      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: formed ${tierPairs.length} pairs`);
+
+      for (let i = 0; i < tierSemis.length && (i * 2 + 1) < tierPairs.length; i++) {
+        const pair1 = tierPairs[i * 2];
+        const pair2 = tierPairs[i * 2 + 1];
         await supabase
           .from('matches')
           .update({
-            player1_individual_id: shuffled[base],
-            player2_individual_id: shuffled[base + 1],
-            player3_individual_id: shuffled[base + 2],
-            player4_individual_id: shuffled[base + 3],
+            player1_individual_id: pair1[0],
+            player2_individual_id: pair1[1],
+            player3_individual_id: pair2[0],
+            player4_individual_id: pair2[1],
           })
           .eq('id', tierSemis[i].id);
+        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF${i + 1}: cruzamento rotativo`);
       }
     }
 
