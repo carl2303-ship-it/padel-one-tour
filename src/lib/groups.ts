@@ -59,41 +59,60 @@ export function sortTeamsByTiebreaker(
   matches: MatchData[],
   teamOrder?: Map<string, number>
 ): TeamStats[] {
-  return [...teams].sort((a, b) => {
-    // 1° Número de vitórias
-    if (b.wins !== a.wins) return b.wins - a.wins;
+  const getPoints = (t: TeamStats) => t.wins * 2 + (t.draws || 0);
+  const getDiff = (t: TeamStats) => t.gamesWon - t.gamesLost;
 
-    // 2° Pontos (V=2, E=1, D=0)
-    const ptsA = a.wins * 2 + (a.draws || 0);
-    const ptsB = b.wins * 2 + (b.draws || 0);
-    if (ptsB !== ptsA) return ptsB - ptsA;
-
-    // 3° Confronto direto (apenas aplicável quando comparamos 2 equipas)
-    const h2hWinner = getHeadToHeadWinner(a.id, b.id, matches);
-    if (h2hWinner === a.id) return -1;
-    if (h2hWinner === b.id) return 1;
-
-    // 4° Diferença de jogos
-    const diffA = a.gamesWon - a.gamesLost;
-    const diffB = b.gamesWon - b.gamesLost;
-    if (diffB !== diffA) return diffB - diffA;
-
-    // 5° Maior número de jogos ganhos
+  const tiebreakSort = (a: TeamStats, b: TeamStats) => {
+    const diffCmp = getDiff(b) - getDiff(a);
+    if (diffCmp !== 0) return diffCmp;
     if (b.gamesWon !== a.gamesWon) return b.gamesWon - a.gamesWon;
-
-    // 6° Data de inscrição (quem se inscreveu primeiro)
     if (teamOrder) {
-      const orderA = teamOrder.get(a.id) ?? 999;
-      const orderB = teamOrder.get(b.id) ?? 999;
-      return orderA - orderB;
+      return (teamOrder.get(a.id) ?? 999) - (teamOrder.get(b.id) ?? 999);
     }
-
     if (a.created_at && b.created_at) {
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     }
-
     return 0;
+  };
+
+  // 1° Sort by wins (desc), then points (desc)
+  const sorted = [...teams].sort((a, b) => {
+    if (b.wins !== a.wins) return b.wins - a.wins;
+    return getPoints(b) - getPoints(a);
   });
+
+  // 2° Process groups of tied teams (same wins + same points)
+  const result: TeamStats[] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    let j = i + 1;
+    while (j < sorted.length && sorted[j].wins === sorted[i].wins && getPoints(sorted[j]) === getPoints(sorted[i])) {
+      j++;
+    }
+
+    const tiedGroup = sorted.slice(i, j);
+
+    if (tiedGroup.length === 1) {
+      result.push(tiedGroup[0]);
+    } else if (tiedGroup.length === 2) {
+      // 2 teams tied: head-to-head first, then game diff
+      const h2hWinner = getHeadToHeadWinner(tiedGroup[0].id, tiedGroup[1].id, matches);
+      if (h2hWinner === tiedGroup[0].id) {
+        result.push(tiedGroup[0], tiedGroup[1]);
+      } else if (h2hWinner === tiedGroup[1].id) {
+        result.push(tiedGroup[1], tiedGroup[0]);
+      } else {
+        result.push(...tiedGroup.sort(tiebreakSort));
+      }
+    } else {
+      // 3+ teams tied: skip head-to-head (circular risk), use game diff then games won
+      result.push(...tiedGroup.sort(tiebreakSort));
+    }
+
+    i = j;
+  }
+
+  return result;
 }
 
 /**

@@ -21,7 +21,8 @@ export function generateAmericanSchedule(
   startTime: string = '09:00',
   endTime: string = '21:00',
   matchDurationMinutes: number = 90,
-  matchesPerPlayer: number = 7
+  matchesPerPlayer: number = 7,
+  outdoorCourtIndices: Set<number> = new Set()
 ): AmericanMatch[] {
   console.log('[AMERICAN] Generating schedule for', players.length, 'players, max', matchesPerPlayer, 'matches per player');
 
@@ -200,6 +201,24 @@ export function generateAmericanSchedule(
   const busyPlayers = new Map<string, Set<string>>(); // time -> Set of player IDs
   const occupiedCourts = new Map<string, Set<number>>(); // time -> Set of court numbers
 
+  // Track per-player court usage + outdoor count for fair distribution
+  const hasOutdoor = outdoorCourtIndices.size > 0;
+  const playerOutdoorCount = new Map<string, number>();
+  const getPlayerOutdoor = (pid: string) => playerOutdoorCount.get(pid) || 0;
+
+  const playerCourtUsage = new Map<string, number[]>();
+  const getPlayerUsage = (pid: string, c: number) => {
+    const u = playerCourtUsage.get(pid);
+    return u ? (u[c - 1] || 0) : 0;
+  };
+  const addPlayerUsage = (pid: string, c: number) => {
+    if (!playerCourtUsage.has(pid)) playerCourtUsage.set(pid, new Array(numberOfCourts).fill(0));
+    playerCourtUsage.get(pid)![c - 1]++;
+    if (hasOutdoor && outdoorCourtIndices.has(c)) {
+      playerOutdoorCount.set(pid, (playerOutdoorCount.get(pid) || 0) + 1);
+    }
+  };
+
   for (const match of matches) {
     let scheduled = false;
     let currentTimeSlot = 0;
@@ -227,33 +246,41 @@ export function generateAmericanSchedule(
       const hasConflict = playersInMatch.some(p => busyAtThisTime.has(p));
 
       if (!hasConflict) {
-        // Find an available court
+        // Find court minimizing outdoor usage, then equalizing indoor usage
         const usedCourts = occupiedCourts.get(timeKey) || new Set();
-        let availableCourt = -1;
+        let bestCourt = -1;
+        let bestScore = Infinity;
 
         for (let c = 1; c <= numberOfCourts; c++) {
-          if (!usedCourts.has(c)) {
-            availableCourt = c;
-            break;
+          if (usedCourts.has(c)) continue;
+          let score: number;
+          if (hasOutdoor && outdoorCourtIndices.has(c)) {
+            const maxOutdoor = Math.max(...playersInMatch.map(p => getPlayerOutdoor(p) + 1));
+            score = maxOutdoor * 10000;
+          } else {
+            score = playersInMatch.reduce((sum, p) => sum + getPlayerUsage(p, c), 0);
+          }
+          if (score < bestScore) {
+            bestScore = score;
+            bestCourt = c;
           }
         }
 
-        if (availableCourt !== -1) {
-          // Schedule the match
+        if (bestCourt !== -1) {
           match.scheduled_time = timeKey;
-          match.court = String(availableCourt);
+          match.court = String(bestCourt);
 
-          // Mark players as busy
+          playersInMatch.forEach(p => addPlayerUsage(p, bestCourt));
+
           if (!busyPlayers.has(timeKey)) {
             busyPlayers.set(timeKey, new Set());
           }
           playersInMatch.forEach(p => busyPlayers.get(timeKey)!.add(p));
 
-          // Mark court as occupied
           if (!occupiedCourts.has(timeKey)) {
             occupiedCourts.set(timeKey, new Set());
           }
-          occupiedCourts.get(timeKey)!.add(availableCourt);
+          occupiedCourts.get(timeKey)!.add(bestCourt);
 
           scheduled = true;
         }

@@ -315,7 +315,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                     <input
                       type="number"
                       min="2"
-                      max="8"
+                      max="10"
                       value={newCategory.number_of_groups}
                       onChange={(e) => setNewCategory({ ...newCategory, number_of_groups: parseInt(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -660,7 +660,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                                 <input
                                   type="number"
                                   min="2"
-                                  max="8"
+                                  max="10"
                                   value={editingCategory.number_of_groups}
                                   onChange={(e) => setEditingCategory({ ...editingCategory, number_of_groups: parseInt(e.target.value) || 0 })}
                                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"

@@ -417,6 +417,22 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     setError('');
 
     try {
+      const [m1, m2] = await Promise.all([
+        supabase.from('matches').select('id').eq('team1_id', team.id),
+        supabase.from('matches').select('id').eq('team2_id', team.id),
+      ]);
+      const matchIds = [...new Set([
+        ...(m1.data || []).map(m => m.id),
+        ...(m2.data || []).map(m => m.id),
+      ])];
+
+      if (matchIds.length > 0) {
+        await supabase.from('court_bookings').delete().in('tournament_match_id', matchIds);
+        for (const matchId of matchIds) {
+          await supabase.from('matches').delete().eq('id', matchId);
+        }
+      }
+
       const { error: deleteError } = await supabase
         .from('teams')
         .delete()
@@ -425,9 +441,15 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
       if (deleteError) {
         setError(deleteError.message);
         setLoading(false);
-      } else {
-        onSuccess();
+        return;
       }
+
+      const playerIds = [team.player1_id, team.player2_id].filter(Boolean);
+      for (const pid of playerIds) {
+        await supabase.from('players').delete().eq('id', pid);
+      }
+
+      onSuccess();
     } catch (err) {
       setError('An unexpected error occurred');
       setLoading(false);

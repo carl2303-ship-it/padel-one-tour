@@ -446,7 +446,8 @@ export function scheduleMultipleCategories(
       let matchesScheduledThisSlot = 0;
       const playersPlayingThisSlot = new Set<string>();
 
-      for (let court = 1; court <= numberOfCourts; court++) {
+      for (let courtOffset = 0; courtOffset < numberOfCourts; courtOffset++) {
+        const court = ((courtOffset + slotIndex) % numberOfCourts) + 1;
         const slotKey = `${timeStr}_${court}`;
         if (occupiedSlots.has(slotKey)) {
           continue;

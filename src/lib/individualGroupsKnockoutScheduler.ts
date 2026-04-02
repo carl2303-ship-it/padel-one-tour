@@ -363,7 +363,7 @@ export function generateIndividualGroupsKnockoutSchedule(
 
     for (let courtIdx = 0; courtIdx < slot.length; courtIdx++) {
       const groupMatch = slot[courtIdx];
-      const courtNumber = courtIdx + 1;
+      const courtNumber = ((courtIdx + slotIdx) % numberOfCourts) + 1;
 
       matches.push({
         round: `group_${groupMatch.group}`,

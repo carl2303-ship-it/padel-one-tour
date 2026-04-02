@@ -170,6 +170,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const { eventType, new: newRecord, old: oldRecord } = payload;
     console.log('[REALTIME] Match change:', eventType);
     if (eventType === 'UPDATE' && newRecord) {
+      const cn: string[] = (currentTournament as any)?.court_names || (tournament as any)?.court_names || [];
+      if (newRecord.court && cn.length > 0) {
+        const num = parseInt(newRecord.court);
+        if (!isNaN(num) && num >= 1 && num <= cn.length) {
+          newRecord.court = cn[num - 1];
+        }
+      }
       setMatches(prev => {
         const updated = prev.map(m => m.id === newRecord.id ? { ...m, ...newRecord } : m);
         // Verificar se precisa avançar playoffs cruzados
@@ -1004,6 +1011,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
+  const fixMatchCourts = (matchList: MatchWithTeams[]): MatchWithTeams[] => {
+    const cn: string[] = (currentTournament as any)?.court_names || (tournament as any)?.court_names || [];
+    if (cn.length === 0) return matchList;
+    return matchList.map(m => {
+      if (m.court) {
+        const num = parseInt(m.court);
+        if (!isNaN(num) && num >= 1 && num <= cn.length) {
+          return { ...m, court: cn[num - 1] };
+        }
+      }
+      return m;
+    });
+  };
+
   const fetchTournamentData = async (silent = false) => {
     console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
     if (!silent) setLoading(true);
@@ -1066,8 +1087,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (matchesResult.data) {
         console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
         console.log('[FETCH] First match:', matchesResult.data[0]);
-        const sortedMatches = (matchesResult.data as unknown as MatchWithTeams[]).sort(
-          (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
+        const sortedMatches = fixMatchCourts(
+          (matchesResult.data as unknown as MatchWithTeams[]).sort(
+            (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
+          )
         );
         setMatches(sortedMatches);
 
@@ -1132,11 +1155,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               ? new Date(new Date(lastGroupMatch.scheduled_time).getTime() + matchDur * 60000).toISOString()
               : new Date().toISOString();
             
+            const cn = (currentTournament as any)?.court_names || [];
+            const cName = (idx: number) => cn[idx] || (idx + 1).toString();
             await supabase.from('matches').insert([
-              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: koTime, court: '1', status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: koTime, court: '2', status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: koTime, court: '1', status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: koTime, court: '2', status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: koTime, court: cName(0), status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: koTime, court: cName(1), status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: koTime, court: cName(0), status: 'scheduled' },
+              { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: koTime, court: cName(1), status: 'scheduled' },
             ]);
             console.log('[FETCH-FIX] Crossed rounds apagados, 4 knockout corretos criados. Refetching...');
             await fetchTournamentData(); return;
@@ -1209,11 +1234,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     ? new Date(new Date(lastGroup.scheduled_time).getTime() + matchDuration * 60000).toISOString()
                     : new Date().toISOString();
                   
+                  const cn2 = (currentTournament as any)?.court_names || [];
+                  const cName2 = (idx: number) => cn2[idx] || (idx + 1).toString();
                   await supabase.from('matches').insert([
-                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: knockoutTime, court: '1', status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: knockoutTime, court: '2', status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: knockoutTime, court: '1', status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: knockoutTime, court: '2', status: 'scheduled' },
+                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: knockoutTime, court: cName2(0), status: 'scheduled' },
+                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: knockoutTime, court: cName2(1), status: 'scheduled' },
+                    { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: knockoutTime, court: cName2(0), status: 'scheduled' },
+                    { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: knockoutTime, court: cName2(1), status: 'scheduled' },
                   ]);
                   console.log('[FETCH-FILL] MA: Criados 4 matches knockout corretos. Refetching...');
                   await fetchTournamentData(); return;
@@ -1393,8 +1420,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             team2_name: m.team2?.name
           })));
         }
-        const sortedMatches = (matchesResult.data as unknown as MatchWithTeams[]).sort(
-          (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
+        const sortedMatches = fixMatchCourts(
+          (matchesResult.data as unknown as MatchWithTeams[]).sort(
+            (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
+          )
         );
         setMatches(sortedMatches);
       }
@@ -1517,6 +1546,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const maxNum = Math.max(...allMatchesLocal.map(m => m.match_number || 0), 0);
             let matchNum = maxNum + 1;
             const numberOfCourts = currentTournament?.number_of_courts || 4;
+            const fixCourtNames: string[] = (currentTournament as any)?.court_names || [];
+            const fixCourtName = (idx: number) => fixCourtNames[idx] || (idx + 1).toString();
             
             const formatTime = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
             
@@ -1534,7 +1565,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 team1_id: null,
                 team2_id: null,
                 scheduled_time: r1TimeStr,
-                court: String((i % numberOfCourts) + 1),
+                court: fixCourtName(i % numberOfCourts),
                 status: 'scheduled'
               });
             }
@@ -1552,7 +1583,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   team1_id: null,
                   team2_id: null,
                   scheduled_time: r2TimeStr,
-                  court: String((i % numberOfCourts) + 1),
+                  court: fixCourtName(i % numberOfCourts),
                   status: 'scheduled'
                 });
               }
@@ -1566,13 +1597,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               tournament_id: tournament.id, category_id: null,
               round: 'crossed_r3_final', match_number: matchNum++,
               team1_id: null, team2_id: null,
-              scheduled_time: r3TimeStr, court: '1', status: 'scheduled'
+              scheduled_time: r3TimeStr, court: fixCourtName(0), status: 'scheduled'
             });
             newPlayoffs.push({
               tournament_id: tournament.id, category_id: null,
               round: 'crossed_r3_3rd_place', match_number: matchNum++,
               team1_id: null, team2_id: null,
-              scheduled_time: r3TimeStr, court: '2', status: 'scheduled'
+              scheduled_time: r3TimeStr, court: fixCourtName(1), status: 'scheduled'
             });
             
             if (expectedR4 > 0) {
@@ -1580,7 +1611,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 tournament_id: tournament.id, category_id: null,
                 round: 'crossed_r4_5th', match_number: matchNum++,
                 team1_id: null, team2_id: null,
-                scheduled_time: r3TimeStr, court: '3', status: 'scheduled'
+                scheduled_time: r3TimeStr, court: fixCourtName(2), status: 'scheduled'
               });
             }
             if (expectedR5 > 0) {
@@ -1588,7 +1619,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 tournament_id: tournament.id, category_id: null,
                 round: 'crossed_r5_7th', match_number: matchNum++,
                 team1_id: null, team2_id: null,
-                scheduled_time: r3TimeStr, court: '4', status: 'scheduled'
+                scheduled_time: r3TimeStr, court: fixCourtName(3), status: 'scheduled'
               });
             }
             
@@ -2742,7 +2773,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player3_individual_id: m.p3,
           player4_individual_id: m.p4,
           scheduled_time: currentTime.toISOString(),
-          court: String((i % (currentTournament.number_of_courts || 1)) + 1),
+          court: courtName(i % (currentTournament.number_of_courts || 1)),
           status: 'scheduled'
         });
         if (error) throw error;
@@ -2770,7 +2801,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player3_individual_id: null,
           player4_individual_id: null,
           scheduled_time: currentTime.toISOString(),
-          court: String((i % (currentTournament.number_of_courts || 1)) + 1),
+          court: courtName(i % (currentTournament.number_of_courts || 1)),
           status: 'scheduled'
         });
         if (error) throw error;
@@ -3027,7 +3058,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             player3_individual_id: m.p3,
             player4_individual_id: m.p4,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -3063,7 +3094,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             player3_individual_id: null,
             player4_individual_id: null,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -3098,7 +3129,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             player3_individual_id: null,
             player4_individual_id: null,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -3408,7 +3439,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             team1_id: combinedTeam1Id,
             team2_id: combinedTeam2Id,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -3442,7 +3473,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             team1_id: null,
             team2_id: null,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -3475,7 +3506,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             team1_id: null,
             team2_id: null,
             scheduled_time: currentTime.toISOString(),
-            court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+            court: courtName(i % (currentTournament.number_of_courts || 1)),
             status: 'scheduled',
             team1_score_set1: 0, team2_score_set1: 0,
             team1_score_set2: 0, team2_score_set2: 0,
@@ -4268,7 +4299,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               player3_individual_id: playoffMatches[i].team2.p1.id,
               player4_individual_id: playoffMatches[i].team2.p2.id,
               scheduled_time: playoffTime.toISOString(),
-              court: ((i % (currentTournament.number_of_courts || 1)) + 1).toString(),
+              court: courtName(i % (currentTournament.number_of_courts || 1)),
               status: 'scheduled',
               team1_score_set1: 0,
               team2_score_set1: 0,
@@ -4338,8 +4369,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         ...(m1.data || []).map(m => m.id),
         ...(m2.data || []).map(m => m.id),
       ])];
-      for (const matchId of matchIds) {
-        await supabase.from('matches').delete().eq('id', matchId);
+
+      if (matchIds.length > 0) {
+        await supabase.from('court_bookings').delete().in('tournament_match_id', matchIds);
+        for (const matchId of matchIds) {
+          await supabase.from('matches').delete().eq('id', matchId);
+        }
       }
 
       const { error } = await supabase.from('teams').delete().eq('id', teamId);
@@ -4516,6 +4551,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       console.log('[SCHEDULE]   - daily_schedules:', currentTournament.daily_schedules);
       console.log('[SCHEDULE] Using values:', { numberOfCourts, startDate, startTime, endTime, matchDuration, dailySchedules });
       
+      // Identify outdoor courts from club_courts data
+      const outdoorCourtIndices = new Set<number>();
+      const courtNames: string[] = (currentTournament as any).court_names || [];
+      if (currentTournament.club_id && courtNames.length > 0) {
+        const { data: clubData } = await supabase.from('clubs').select('owner_id').eq('id', currentTournament.club_id).single();
+        console.log('[SCHEDULE] Club lookup:', currentTournament.club_id, '→ owner:', clubData?.owner_id);
+        if (clubData) {
+          const { data: courtData } = await supabase.from('club_courts').select('name, type').eq('user_id', clubData.owner_id).eq('is_active', true);
+          console.log('[SCHEDULE] Club courts from DB:', courtData?.map(c => `${c.name} (${c.type})`));
+          if (courtData) {
+            const courtTypeMap = new Map<string, string>();
+            courtData.forEach(c => courtTypeMap.set(c.name, c.type || 'indoor'));
+            courtNames.forEach((name, idx) => {
+              const type = courtTypeMap.get(name) || 'unknown';
+              console.log(`[SCHEDULE] Court ${idx + 1}: "${name}" → type: ${type}`);
+              if (type === 'outdoor') {
+                outdoorCourtIndices.add(idx + 1);
+              }
+            });
+          }
+        }
+      }
+      console.log('[SCHEDULE] Outdoor court indices:', [...outdoorCourtIndices], outdoorCourtIndices.size > 0 ? '✅ Outdoor detection active' : '⚠️ No outdoor courts detected');
+      
+      // Helper: convert 0-based court index to court name
+      const courtName = (idx: number) => courtNames[idx] || (idx + 1).toString();
+      
       let matchesToInsert: any[] = [];
       
       // Helper to convert "TBD" to null for UUID fields
@@ -4598,18 +4660,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           7 // matches per player
         );
         
-        matchesToInsert = americanMatches.map(m => ({
-          tournament_id: currentTournament.id,
-          round: m.round,
-          match_number: m.match_number,
-          player1_individual_id: toUuidOrNull(m.player1_id),
-          player2_individual_id: toUuidOrNull(m.player2_id),
-          player3_individual_id: toUuidOrNull(m.player3_id),
-          player4_individual_id: toUuidOrNull(m.player4_id),
-          scheduled_time: m.scheduled_time,
-          court: m.court,
-          status: 'scheduled'
-        }));
+        matchesToInsert = americanMatches.map(m => {
+          const cNum = parseInt(m.court);
+          const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
+          return {
+            tournament_id: currentTournament.id,
+            round: m.round,
+            match_number: m.match_number,
+            player1_individual_id: toUuidOrNull(m.player1_id),
+            player2_individual_id: toUuidOrNull(m.player2_id),
+            player3_individual_id: toUuidOrNull(m.player3_id),
+            player4_individual_id: toUuidOrNull(m.player4_id),
+            scheduled_time: m.scheduled_time,
+            court: cLabel,
+            status: 'scheduled'
+          };
+        });
         
       } else if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
         // ================================================================
@@ -4681,7 +4747,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           for (let i = 0; i < catData.combinations.length; i++) {
             const combo = catData.combinations[i];
             const courtInGroup = (i % catData.courtsPerGroup);
-            const court = (catData.baseCourtForGroup + courtInGroup + 1).toString();
+            const courtIdx = catData.baseCourtForGroup + courtInGroup;
+            const court = courtNames[courtIdx] || (courtIdx + 1).toString();
             
             matchesToInsert.push({
               tournament_id: currentTournament.id,
@@ -4735,14 +4802,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           round: 'semifinal', match_number: matchNumber++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
-          scheduled_time: knockoutTime.toISOString(), court: '1', status: 'scheduled'
+          scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
           round: 'semifinal', match_number: matchNumber++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
-          scheduled_time: knockoutTime.toISOString(), court: '2', status: 'scheduled'
+          scheduled_time: knockoutTime.toISOString(), court: courtName(1), status: 'scheduled'
         });
 
         // 3rd + Final (após SFs)
@@ -4756,14 +4823,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           round: '3rd_place', match_number: matchNumber++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
-          scheduled_time: knockoutTime.toISOString(), court: '1', status: 'scheduled'
+          scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
           round: 'final', match_number: matchNumber++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
-          scheduled_time: knockoutTime.toISOString(), court: '2', status: 'scheduled'
+          scheduled_time: knockoutTime.toISOString(), court: courtName(1), status: 'scheduled'
         });
 
         console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + 3rd + Final)`);
@@ -4835,7 +4902,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               const combo = catData.combinations[i];
               // Atribuir campos dentro do grupo
               const courtInGroup = (i % catData.courtsPerGroup);
-              const court = (catData.baseCourtForGroup + courtInGroup + 1).toString();
+              const courtIdx = catData.baseCourtForGroup + courtInGroup;
+              const court = courtName(courtIdx);
               
               matchesToInsert.push({
                 tournament_id: currentTournament.id,
@@ -4890,9 +4958,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // J2: (3°A + 2°B) vs (4°A + 1°B)
           // J3: (3°B + 2°C) vs (4°B + 1°C)
           const r1Matches = [
-            { round: 'crossed_r1_j1', court: '1' },
-            { round: 'crossed_r1_j2', court: '2' },
-            { round: 'crossed_r1_j3', court: '3' },
+            { round: 'crossed_r1_j1', court: courtName(0) },
+            { round: 'crossed_r1_j2', court: courtName(1) },
+            { round: 'crossed_r1_j3', court: courtName(2) },
           ];
           
           for (const m of r1Matches) {
@@ -4922,9 +4990,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // J5: Vencedor J3 vs Melhor Perdedor
           // J6: Perdedor J3 vs Pior Perdedor (5º/6º lugar)
           const r2Matches = [
-            { round: 'crossed_r2_j4', court: '1' },
-            { round: 'crossed_r2_j5', court: '2' },
-            { round: 'crossed_r2_j6', court: '3' },
+            { round: 'crossed_r2_j4', court: courtName(0) },
+            { round: 'crossed_r2_j5', court: courtName(1) },
+            { round: 'crossed_r2_j6', court: courtName(2) },
           ];
           
           for (const m of r2Matches) {
@@ -4953,8 +5021,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // J7: Final (Vencedor J4 vs Vencedor J5)
           // J8: 3º/4º lugar (Perdedor J4 vs Perdedor J5)
           const r3Matches = [
-            { round: 'crossed_r3_j7', court: '1' }, // Final
-            { round: 'crossed_r3_j8', court: '2' }, // 3º/4º
+            { round: 'crossed_r3_j7', court: courtName(0) },
+            { round: 'crossed_r3_j8', court: courtName(1) },
           ];
           
           for (const m of r3Matches) {
@@ -5027,18 +5095,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
           }
 
-          matchesToInsert = groupOnlyMatches.map(m => ({
-            tournament_id: currentTournament.id,
-            round: m.round,
-            match_number: m.match_number,
-            player1_individual_id: toUuidOrNull(m.player1_id),
-            player2_individual_id: toUuidOrNull(m.player2_id),
-            player3_individual_id: toUuidOrNull(m.player3_id),
-            player4_individual_id: toUuidOrNull(m.player4_id),
-            scheduled_time: m.scheduled_time,
-            court: m.court,
-            status: 'scheduled'
-          }));
+          matchesToInsert = groupOnlyMatches.map(m => {
+            const cNum = parseInt(m.court);
+            const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
+            return {
+              tournament_id: currentTournament.id,
+              round: m.round,
+              match_number: m.match_number,
+              player1_individual_id: toUuidOrNull(m.player1_id),
+              player2_individual_id: toUuidOrNull(m.player2_id),
+              player3_individual_id: toUuidOrNull(m.player3_id),
+              player4_individual_id: toUuidOrNull(m.player4_id),
+              scheduled_time: m.scheduled_time,
+              court: cLabel,
+              status: 'scheduled'
+            };
+          });
 
           const lastTime = groupOnlyMatches.length > 0
             ? new Date(groupOnlyMatches[groupOnlyMatches.length - 1].scheduled_time)
@@ -5096,7 +5168,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numRo16} round_of_16 matches (${totalQualifiedPlayers} players)`);
             
             for (let i = 0; i < numRo16; i++) {
-              addKoMatch('round_of_16', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('round_of_16', courtName(i % numberOfCourts));
             }
             advanceKoTime();
 
@@ -5104,7 +5176,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numQuarters} quarterfinal matches`);
             
             for (let i = 0; i < numQuarters; i++) {
-              addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('quarterfinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
 
@@ -5112,7 +5184,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches`);
             
             for (let i = 0; i < numSemis; i++) {
-              addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('semifinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
           } else if (categoryKnockoutStage === 'quarterfinals') {
@@ -5121,7 +5193,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numQuarters} quarterfinal matches`);
             
             for (let i = 0; i < numQuarters; i++) {
-              addKoMatch('quarterfinal', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('quarterfinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
 
@@ -5129,12 +5201,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (from ${numQuarters} quarterfinal winners = ${numQuarters * 2} players)`);
             
             for (let i = 0; i < numSemis; i++) {
-              addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('semifinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
 
             console.log(`[SCHEDULE] Creating 1 consolation match for QF losers`);
-            addKoMatch('consolation', ((numSemis % numberOfCourts) + 1).toString());
+            addKoMatch('consolation', courtName(numSemis % numberOfCourts));
             advanceKoTime();
           } else if (categoryKnockoutStage === 'semifinals') {
             // Direct to semifinals (no quarters)
@@ -5142,7 +5214,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (no quarters)`);
             
             for (let i = 0; i < numSemis; i++) {
-              addKoMatch('semifinal', ((i % numberOfCourts) + 1).toString());
+              addKoMatch('semifinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
           } else if (categoryKnockoutStage === 'final') {
@@ -5151,8 +5223,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           // Always create 3rd place and final matches
-          addKoMatch('3rd_place', '1');
-          addKoMatch('final', '2');
+          addKoMatch('3rd_place', courtName(0));
+          addKoMatch('final', courtName(1));
 
           // No extra placement matches needed - consolation match already created above for QF losers
 
@@ -5234,6 +5306,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           let totalMatchCount = 0;
           let timeSlotIndex = 0;
           
+          // Track per-team outdoor game count + per-court usage
+          const teamOutdoorCount = new Map<string, number>();
+          const getOutdoor = (tid: string) => teamOutdoorCount.get(tid) || 0;
+          const addOutdoor = (tid: string) => teamOutdoorCount.set(tid, (teamOutdoorCount.get(tid) || 0) + 1);
+          
+          const teamCourtUsage = new Map<string, number[]>();
+          const getUsage = (tid: string, c: number) => {
+            const u = teamCourtUsage.get(tid);
+            return u ? (u[c - 1] || 0) : 0;
+          };
+          const addUsage = (tid: string, c: number) => {
+            if (!teamCourtUsage.has(tid)) teamCourtUsage.set(tid, new Array(numberOfCourts).fill(0));
+            teamCourtUsage.get(tid)![c - 1]++;
+          };
+          
+          const hasOutdoorCourts = outdoorCourtIndices.size > 0;
+          
           for (let r = 0; r < maxRounds; r++) {
             const mergedRound: CatMatch[] = [];
             for (const catRounds of allCategoryRounds) {
@@ -5254,22 +5343,73 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               const [year, month, day] = startDate.split('-').map(Number);
               const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
               
-              slotMatches.forEach((match, courtIdx) => {
+              // Find the court permutation that minimizes outdoor games per team,
+              // then equalizes indoor court usage as tiebreaker
+              const n = slotMatches.length;
+              const courtOptions = Array.from({length: n}, (_, i) => i + 1);
+              let bestAssignment = [...courtOptions];
+              let bestScore = Infinity;
+              
+              const tryPermutations = (arr: number[], start: number) => {
+                if (start === arr.length) {
+                  let outdoorSum = 0;
+                  let indoorSum = 0;
+                  for (let i = 0; i < n; i++) {
+                    const c = arr[i];
+                    const t1 = slotMatches[i].team1_id;
+                    const t2 = slotMatches[i].team2_id;
+                    if (hasOutdoorCourts && outdoorCourtIndices.has(c)) {
+                      outdoorSum += getOutdoor(t1) + getOutdoor(t2);
+                    }
+                    indoorSum += getUsage(t1, c) + getUsage(t2, c);
+                  }
+                  const score = outdoorSum * 10000 + indoorSum;
+                  if (score < bestScore) {
+                    bestScore = score;
+                    bestAssignment = [...arr];
+                  }
+                  return;
+                }
+                for (let i = start; i < arr.length; i++) {
+                  [arr[start], arr[i]] = [arr[i], arr[start]];
+                  tryPermutations(arr, start + 1);
+                  [arr[start], arr[i]] = [arr[i], arr[start]];
+                }
+              };
+              tryPermutations(courtOptions, 0);
+              
+              for (let i = 0; i < n; i++) {
+                const court = bestAssignment[i];
+                addUsage(slotMatches[i].team1_id, court);
+                addUsage(slotMatches[i].team2_id, court);
+                if (hasOutdoorCourts && outdoorCourtIndices.has(court)) {
+                  addOutdoor(slotMatches[i].team1_id);
+                  addOutdoor(slotMatches[i].team2_id);
+                }
+                const courtLabel = courtNames[court - 1] || court.toString();
                 matchesToInsert.push({
                   tournament_id: currentTournament.id,
                   round: 'round_robin',
                   match_number: globalMatchNumber++,
-                  team1_id: match.team1_id,
-                  team2_id: match.team2_id,
-                  category_id: match.category_id,
+                  team1_id: slotMatches[i].team1_id,
+                  team2_id: slotMatches[i].team2_id,
+                  category_id: slotMatches[i].category_id,
                   scheduled_time: scheduledTime.toISOString(),
-                  court: (courtIdx + 1).toString(),
+                  court: courtLabel,
                   status: 'scheduled'
                 });
-              });
+              }
               
               timeSlotIndex++;
             }
+          }
+          
+          // Log outdoor distribution
+          if (hasOutdoorCourts) {
+            console.log('[SCHEDULE] Outdoor court distribution per team:');
+            teamOutdoorCount.forEach((count, teamId) => {
+              console.log(`[SCHEDULE]   Team ${teamId.substring(0, 8)}: ${count} outdoor games`);
+            });
           }
           
           console.log(`[SCHEDULE] Scheduled ${totalMatchCount} matches across categories using circle method`);
@@ -5287,16 +5427,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             dailySchedules
           );
           
-          matchesToInsert = teamMatches.map(m => ({
-            tournament_id: currentTournament.id,
-            round: m.round,
-            match_number: m.match_number,
-            team1_id: m.team1_id,
-            team2_id: m.team2_id,
-            scheduled_time: m.scheduled_time,
-            court: m.court,
-            status: 'scheduled'
-          }));
+          matchesToInsert = teamMatches.map(m => {
+            const courtNum = parseInt(m.court);
+            const courtLabel = (!isNaN(courtNum) && courtNames[courtNum - 1]) ? courtNames[courtNum - 1] : m.court;
+            return {
+              tournament_id: currentTournament.id,
+              round: m.round,
+              match_number: m.match_number,
+              team1_id: m.team1_id,
+              team2_id: m.team2_id,
+              scheduled_time: m.scheduled_time,
+              court: courtLabel,
+              status: 'scheduled'
+            };
+          });
         }
         
       } else if (currentTournament.format === 'crossed_playoffs_teams') {
@@ -5329,7 +5473,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               : (catIdx + 1) * courtsPerCategory;
             const courts: string[] = [];
             for (let c = startCourt; c <= endCourt; c++) {
-              courts.push(c.toString());
+              courts.push(courtName(c - 1));
             }
             categoryCourtAssignments.set(category.id, courts);
           }
@@ -5613,16 +5757,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const r1TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
         
         for (let i = 0; i < numR1Matches; i++) {
-          const courtNum = ((i % numberOfCourts) + 1).toString();
           matchesToInsert.push({
             tournament_id: currentTournament.id,
             category_id: null,
-            round: `crossed_r1_j${i + 1}`, // crossed_r1_j1, crossed_r1_j2, etc.
+            round: `crossed_r1_j${i + 1}`,
             match_number: matchNumber++,
-            team1_id: null, // TBD - será preenchido quando grupos terminarem
-            team2_id: null, // TBD - será preenchido quando grupos terminarem
+            team1_id: null,
+            team2_id: null,
             scheduled_time: r1TimeStr,
-            court: courtNum,
+            court: courtName(i % numberOfCourts),
             status: 'scheduled'
           });
         }
@@ -5648,16 +5791,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const r2TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
           
           for (let i = 0; i < numR2Matches; i++) {
-            const courtNum = ((i % numberOfCourts) + 1).toString();
             matchesToInsert.push({
               tournament_id: currentTournament.id,
               category_id: null,
-              round: `crossed_r2_j${i + 1}`, // crossed_r2_j1, crossed_r2_j2, etc.
+              round: `crossed_r2_j${i + 1}`,
               match_number: matchNumber++,
               team1_id: null,
               team2_id: null,
               scheduled_time: r2TimeStr,
-              court: courtNum,
+              court: courtName(i % numberOfCourts),
               status: 'scheduled'
             });
           }
@@ -5685,24 +5827,24 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         matchesToInsert.push({
           tournament_id: currentTournament.id,
           category_id: null,
-          round: 'crossed_r3_final', // Final
+          round: 'crossed_r3_final',
           match_number: matchNumber++,
           team1_id: null,
           team2_id: null,
           scheduled_time: r3TimeStr,
-          court: '1',
+          court: courtName(0),
           status: 'scheduled'
         });
         
         matchesToInsert.push({
           tournament_id: currentTournament.id,
           category_id: null,
-          round: 'crossed_r3_3rd_place', // 3º/4º
+          round: 'crossed_r3_3rd_place',
           match_number: matchNumber++,
           team1_id: null,
           team2_id: null,
           scheduled_time: r3TimeStr,
-          court: '2',
+          court: courtName(1),
           status: 'scheduled'
         });
         
@@ -5711,12 +5853,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           matchesToInsert.push({
             tournament_id: currentTournament.id,
             category_id: null,
-            round: 'crossed_r4_5th', // Classificação 5-6
+            round: 'crossed_r4_5th',
             match_number: matchNumber++,
             team1_id: null,
             team2_id: null,
-            scheduled_time: r3TimeStr, // Mesmo horário que final e 3º/4º
-            court: '3',
+            scheduled_time: r3TimeStr,
+            court: courtName(2),
             status: 'scheduled'
           });
         }
@@ -5725,12 +5867,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           matchesToInsert.push({
             tournament_id: currentTournament.id,
             category_id: null,
-            round: 'crossed_r5_7th', // Classificação 7-8
+            round: 'crossed_r5_7th',
             match_number: matchNumber++,
             team1_id: null,
             team2_id: null,
-            scheduled_time: r3TimeStr, // Mesmo horário que final e 3º/4º
-            court: '4',
+            scheduled_time: r3TimeStr,
+            court: courtName(3),
             status: 'scheduled'
           });
         }
@@ -5863,10 +6005,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           );
           
           matchesToInsert = teamMatches.map(m => {
-            // Para cada match, pegar o category_id da team1 (se houver)
             const matchTeam1 = teams.find(t => t.id === m.team1_id);
             const matchTeam2 = teams.find(t => t.id === m.team2_id);
             const categoryId = matchTeam1?.category_id || matchTeam2?.category_id || null;
+            const cNum = parseInt(m.court);
+            const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
             
             return {
               tournament_id: currentTournament.id,
@@ -5876,7 +6019,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               team1_id: m.team1_id,
               team2_id: m.team2_id,
               scheduled_time: m.scheduled_time,
-              court: m.court,
+              court: cLabel,
               status: 'scheduled'
             };
           });

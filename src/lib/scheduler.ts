@@ -167,7 +167,8 @@ export function generateTournamentSchedule(
   matchDurationMinutes: number = 90,
   skipLaterRounds: any = false,
   dailySchedules: DailySchedule[] = [],
-  knockoutStage: string = 'semifinals'
+  knockoutStage: string = 'semifinals',
+  outdoorCourtIndices: Set<number> = new Set()
 ): ScheduledMatch[] {
   const sortedTeams = [...teams].sort((a, b) => (a.seed || 0) - (b.seed || 0));
   const matches: ScheduledMatch[] = [];
@@ -175,9 +176,9 @@ export function generateTournamentSchedule(
   if (format === 'single_elimination') {
     return generateSingleEliminationSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, !!skipLaterRounds, dailySchedules);
   } else if (format === 'round_robin') {
-    return generateRoundRobinSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules);
+    return generateRoundRobinSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules, outdoorCourtIndices);
   } else if (format === 'groups_knockout') {
-    return generateGroupStageSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules, knockoutStage);
+    return generateGroupStageSchedule(sortedTeams, numberOfCourts, startDate, dailyStartTime, dailyEndTime, matchDurationMinutes, dailySchedules, knockoutStage, outdoorCourtIndices);
   }
 
   return matches;
@@ -233,9 +234,9 @@ function generateSingleEliminationSchedule(
     }
 
     for (let i = 0; i < matchesInRound; i++) {
-      const courtIndex = i % numberOfCourts;
-      const court = (courtIndex + 1).toString();
       const slotIndex = globalTimeSlot + Math.floor(i / numberOfCourts);
+      const courtIndex = i % numberOfCourts;
+      const court = (((courtIndex + slotIndex) % numberOfCourts) + 1).toString();
       const totalMinutesFromStart = (slotIndex % slotsPerDay) * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
       const minuteOffset = totalMinutesFromStart % 60;
@@ -280,7 +281,8 @@ function generateRoundRobinSchedule(
   startTime: string,
   endTime: string,
   matchDurationMinutes: number,
-  dailySchedules: DailySchedule[] = []
+  dailySchedules: DailySchedule[] = [],
+  outdoorCourtIndices: Set<number> = new Set()
 ): ScheduledMatch[] {
   const matches: ScheduledMatch[] = [];
   const teamCount = teams.length;
@@ -297,8 +299,6 @@ function generateRoundRobinSchedule(
   }
   const slotsPerDay = Math.floor(availableMinutesPerDay / matchDurationMinutes);
 
-  // Use circle rotation method for optimal round-robin scheduling
-  // If odd number of teams, add a dummy team for "bye"
   const teamsForRotation = [...teams];
   const isOdd = teamCount % 2 === 1;
   if (isOdd) {
@@ -308,24 +308,38 @@ function generateRoundRobinSchedule(
   const n = teamsForRotation.length;
   const rounds = n - 1;
   const matchesPerRound = n / 2;
+  const hasOutdoor = outdoorCourtIndices.size > 0;
 
   console.log('[SCHEDULER V3] Circle rotation:', teamCount, 'teams,', rounds, 'rounds,', matchesPerRound, 'matches per round');
+  if (hasOutdoor) console.log('[SCHEDULER V3] Outdoor courts:', [...outdoorCourtIndices]);
 
   let matchNumber = 1;
   let timeSlotIndex = 0;
 
-  // Generate rounds using circle rotation
+  // Track per-team outdoor count + per-court usage
+  const teamOutdoorCount = new Map<string, number>();
+  const getOutdoor = (tid: string) => teamOutdoorCount.get(tid) || 0;
+  const addOutdoor = (tid: string) => teamOutdoorCount.set(tid, (teamOutdoorCount.get(tid) || 0) + 1);
+
+  const teamCourtUsage = new Map<string, number[]>();
+  const getUsage = (tid: string, c: number) => {
+    const u = teamCourtUsage.get(tid);
+    return u ? (u[c - 1] || 0) : 0;
+  };
+  const addUsage = (tid: string, c: number) => {
+    if (!teamCourtUsage.has(tid)) teamCourtUsage.set(tid, new Array(numberOfCourts).fill(0));
+    teamCourtUsage.get(tid)![c - 1]++;
+  };
+
   for (let round = 0; round < rounds; round++) {
     console.log('[SCHEDULER V3] Round', round + 1);
 
     const roundMatches: Array<{ team1_id: string; team2_id: string }> = [];
 
-    // In each round, pair teams: first with last, second with second-to-last, etc.
     for (let i = 0; i < matchesPerRound; i++) {
       const team1 = teamsForRotation[i];
       const team2 = teamsForRotation[n - 1 - i];
 
-      // Skip matches involving the BYE team
       if (team1.id !== 'BYE' && team2.id !== 'BYE') {
         roundMatches.push({
           team1_id: team1.id,
@@ -334,11 +348,9 @@ function generateRoundRobinSchedule(
       }
     }
 
-    // Schedule round matches across multiple time slots if needed
     for (let matchIdx = 0; matchIdx < roundMatches.length; matchIdx += numberOfCourts) {
       const slotMatches = roundMatches.slice(matchIdx, matchIdx + numberOfCourts);
 
-      // Calculate scheduled time
       const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
       const minuteOffset = totalMinutesFromStart % 60;
@@ -347,18 +359,58 @@ function generateRoundRobinSchedule(
       const [year, month, day] = startDate.split('-').map(Number);
       const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
 
-      slotMatches.forEach((match, courtIdx) => {
+      // Find court permutation minimizing outdoor games, then equalizing indoor usage
+      const slotSize = slotMatches.length;
+      const courtOptions = Array.from({length: slotSize}, (_, i) => i + 1);
+      let bestAssignment = [...courtOptions];
+      let bestScore = Infinity;
+
+      const tryPerms = (arr: number[], start: number) => {
+        if (start === arr.length) {
+          let outdoorSum = 0;
+          let indoorSum = 0;
+          for (let i = 0; i < slotSize; i++) {
+            const c = arr[i];
+            const t1 = slotMatches[i].team1_id;
+            const t2 = slotMatches[i].team2_id;
+            if (hasOutdoor && outdoorCourtIndices.has(c)) {
+              outdoorSum += getOutdoor(t1) + getOutdoor(t2);
+            }
+            indoorSum += getUsage(t1, c) + getUsage(t2, c);
+          }
+          const score = outdoorSum * 10000 + indoorSum;
+          if (score < bestScore) {
+            bestScore = score;
+            bestAssignment = [...arr];
+          }
+          return;
+        }
+        for (let i = start; i < arr.length; i++) {
+          [arr[start], arr[i]] = [arr[i], arr[start]];
+          tryPerms(arr, start + 1);
+          [arr[start], arr[i]] = [arr[i], arr[start]];
+        }
+      };
+      tryPerms(courtOptions, 0);
+
+      for (let i = 0; i < slotSize; i++) {
+        const court = bestAssignment[i];
+        addUsage(slotMatches[i].team1_id, court);
+        addUsage(slotMatches[i].team2_id, court);
+        if (hasOutdoor && outdoorCourtIndices.has(court)) {
+          addOutdoor(slotMatches[i].team1_id);
+          addOutdoor(slotMatches[i].team2_id);
+        }
         matches.push({
           round: 'round_robin',
           match_number: matchNumber++,
-          team1_id: match.team1_id,
-          team2_id: match.team2_id,
+          team1_id: slotMatches[i].team1_id,
+          team2_id: slotMatches[i].team2_id,
           scheduled_time: scheduledTime.toISOString(),
-          court: (courtIdx + 1).toString()
+          court: bestAssignment[i].toString()
         });
-
-        console.log('[SCHEDULER V3] Slot', timeSlotIndex, 'Court', courtIdx + 1, ':', match.team1_id, 'vs', match.team2_id);
-      });
+        console.log('[SCHEDULER V3] Slot', timeSlotIndex, 'Court', bestAssignment[i], ':', slotMatches[i].team1_id, 'vs', slotMatches[i].team2_id);
+      }
 
       timeSlotIndex++;
     }
@@ -385,7 +437,8 @@ function generateGroupStageSchedule(
   endTime: string,
   matchDurationMinutes: number,
   dailySchedules: DailySchedule[] = [],
-  knockoutStage: string = 'semifinals'
+  knockoutStage: string = 'semifinals',
+  outdoorCourtIndices: Set<number> = new Set()
 ): ScheduledMatch[] {
   console.log('[GROUP STAGE] Starting group stage scheduling for', teams.length, 'teams');
 
@@ -453,102 +506,122 @@ function generateGroupStageSchedule(
   let timeSlotIndex = 0;
   let scheduledCount = 0;
 
+  // Track per-team outdoor count + per-court usage
+  const gsHasOutdoor = outdoorCourtIndices.size > 0;
+  const gsTeamOutdoor = new Map<string, number>();
+  const gsGetOutdoor = (tid: string) => gsTeamOutdoor.get(tid) || 0;
+  const gsAddOutdoor = (tid: string) => gsTeamOutdoor.set(tid, (gsTeamOutdoor.get(tid) || 0) + 1);
+
+  const gsTeamCourtUsage = new Map<string, number[]>();
+  const gsGetUsage = (tid: string, c: number) => {
+    const u = gsTeamCourtUsage.get(tid);
+    return u ? (u[c - 1] || 0) : 0;
+  };
+  const gsAddUsage = (tid: string, c: number) => {
+    if (!gsTeamCourtUsage.has(tid)) gsTeamCourtUsage.set(tid, new Array(numberOfCourts).fill(0));
+    gsTeamCourtUsage.get(tid)![c - 1]++;
+  };
+
   while (scheduledCount < allMatches.length) {
     const teamsPlayingThisSlot = new Set<string>();
-    let courtCounter = 0;
 
     console.log(`[GROUP STAGE V4] === TIME SLOT ${timeSlotIndex} === (${scheduledCount}/${allMatches.length} scheduled)`);
 
-    // Try to fill all courts in this time slot
-    for (let i = 0; i < allMatches.length && courtCounter < numberOfCourts; i++) {
-      const matchItem = allMatches[i];
+    // Collect eligible matches for this slot
+    type SlotEntry = { matchItem: typeof allMatches[0]; team1Id: string; team2Id: string; forced: boolean };
+    const slotEntries: SlotEntry[] = [];
 
+    // First pass: with rest constraints
+    for (let i = 0; i < allMatches.length && slotEntries.length < numberOfCourts; i++) {
+      const matchItem = allMatches[i];
       if (matchItem.scheduled) continue;
 
-      const { group, match } = matchItem;
+      const { match } = matchItem;
       const team1Id = match.team1.id;
       const team2Id = match.team2.id;
 
-      // Check if either team is already playing in this slot
-      if (teamsPlayingThisSlot.has(team1Id) || teamsPlayingThisSlot.has(team2Id)) {
-        continue;
-      }
+      if (teamsPlayingThisSlot.has(team1Id) || teamsPlayingThisSlot.has(team2Id)) continue;
 
-      // Check if teams have minimum rest (at least 1 slot between matches when possible)
       const team1LastSlot = teamLastPlayed.get(team1Id) ?? -2;
       const team2LastSlot = teamLastPlayed.get(team2Id) ?? -2;
       const minRestSlots = 1;
 
-      if (timeSlotIndex - team1LastSlot <= minRestSlots && team1LastSlot >= 0) {
-        // Team 1 needs more rest, try to skip this match for now
-        continue;
-      }
-      if (timeSlotIndex - team2LastSlot <= minRestSlots && team2LastSlot >= 0) {
-        // Team 2 needs more rest, try to skip this match for now
-        continue;
-      }
+      if (timeSlotIndex - team1LastSlot <= minRestSlots && team1LastSlot >= 0) continue;
+      if (timeSlotIndex - team2LastSlot <= minRestSlots && team2LastSlot >= 0) continue;
 
-      // Schedule this match
-      const court = courtCounter + 1;
+      slotEntries.push({ matchItem, team1Id, team2Id, forced: false });
+      teamsPlayingThisSlot.add(team1Id);
+      teamsPlayingThisSlot.add(team2Id);
+    }
 
-      // Calculate time
+    // Second pass: force without rest if nothing was found
+    if (slotEntries.length === 0 && scheduledCount < allMatches.length) {
+      console.log('[GROUP STAGE V4] ⚠️ Forcing matches without rest for slot', timeSlotIndex);
+      for (let i = 0; i < allMatches.length && slotEntries.length < numberOfCourts; i++) {
+        const matchItem = allMatches[i];
+        if (matchItem.scheduled) continue;
+
+        const { match } = matchItem;
+        const team1Id = match.team1.id;
+        const team2Id = match.team2.id;
+
+        if (teamsPlayingThisSlot.has(team1Id) || teamsPlayingThisSlot.has(team2Id)) continue;
+
+        slotEntries.push({ matchItem, team1Id, team2Id, forced: true });
+        teamsPlayingThisSlot.add(team1Id);
+        teamsPlayingThisSlot.add(team2Id);
+      }
+    }
+
+    // Assign courts minimizing outdoor games, then equalizing indoor usage
+    if (slotEntries.length > 0) {
+      const sn = slotEntries.length;
+      const courtOpts = Array.from({length: sn}, (_, i) => i + 1);
+      let bestAssign = [...courtOpts];
+      let bestScore = Infinity;
+
+      const tryP = (arr: number[], start: number) => {
+        if (start === arr.length) {
+          let outdoorSum = 0;
+          let indoorSum = 0;
+          for (let i = 0; i < sn; i++) {
+            const c = arr[i];
+            const t1 = slotEntries[i].team1Id;
+            const t2 = slotEntries[i].team2Id;
+            if (gsHasOutdoor && outdoorCourtIndices.has(c)) {
+              outdoorSum += gsGetOutdoor(t1) + gsGetOutdoor(t2);
+            }
+            indoorSum += gsGetUsage(t1, c) + gsGetUsage(t2, c);
+          }
+          const score = outdoorSum * 10000 + indoorSum;
+          if (score < bestScore) { bestScore = score; bestAssign = [...arr]; }
+          return;
+        }
+        for (let i = start; i < arr.length; i++) {
+          [arr[start], arr[i]] = [arr[i], arr[start]];
+          tryP(arr, start + 1);
+          [arr[start], arr[i]] = [arr[i], arr[start]];
+        }
+      };
+      tryP(courtOpts, 0);
+
       const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
       const minuteOffset = totalMinutesFromStart % 60;
       const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
-
       const [year, month, day] = startDate.split('-').map(Number);
       const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
 
-      scheduledMatches.push({
-        round: 'group_stage',
-        match_number: globalMatchNumber++,
-        team1_id: team1Id,
-        team2_id: team2Id,
-        scheduled_time: scheduledTime.toISOString(),
-        court: court.toString()
-      });
+      for (let i = 0; i < sn; i++) {
+        const { matchItem, team1Id, team2Id, forced } = slotEntries[i];
+        const court = bestAssign[i];
 
-      console.log(`[GROUP STAGE V4] ✅ Slot ${timeSlotIndex} Court ${court}: Group ${group} - ${match.team1.name} vs ${match.team2.name}`);
-
-      // Mark teams as playing
-      teamsPlayingThisSlot.add(team1Id);
-      teamsPlayingThisSlot.add(team2Id);
-      teamLastPlayed.set(team1Id, timeSlotIndex);
-      teamLastPlayed.set(team2Id, timeSlotIndex);
-
-      // Mark as scheduled
-      matchItem.scheduled = true;
-      scheduledCount++;
-      courtCounter++;
-    }
-
-    // If no courts were filled, force schedule without rest requirements
-    if (courtCounter === 0 && scheduledCount < allMatches.length) {
-      console.log('[GROUP STAGE V4] ⚠️ Forcing matches without rest for slot', timeSlotIndex);
-
-      for (let i = 0; i < allMatches.length && courtCounter < numberOfCourts; i++) {
-        const matchItem = allMatches[i];
-
-        if (matchItem.scheduled) continue;
-
-        const { group, match } = matchItem;
-        const team1Id = match.team1.id;
-        const team2Id = match.team2.id;
-
-        // Only check if already playing in THIS slot
-        if (teamsPlayingThisSlot.has(team1Id) || teamsPlayingThisSlot.has(team2Id)) {
-          continue;
+        gsAddUsage(team1Id, court);
+        gsAddUsage(team2Id, court);
+        if (gsHasOutdoor && outdoorCourtIndices.has(court)) {
+          gsAddOutdoor(team1Id);
+          gsAddOutdoor(team2Id);
         }
-
-        const court = courtCounter + 1;
-        const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDurationMinutes;
-        const hourOffset = Math.floor(totalMinutesFromStart / 60);
-        const minuteOffset = totalMinutesFromStart % 60;
-        const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
-
-        const [year, month, day] = startDate.split('-').map(Number);
-        const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
 
         scheduledMatches.push({
           round: 'group_stage',
@@ -559,16 +632,13 @@ function generateGroupStageSchedule(
           court: court.toString()
         });
 
-        console.log(`[GROUP STAGE V4] ⚠️ Slot ${timeSlotIndex} Court ${court}: Group ${group} - ${match.team1.name} vs ${match.team2.name} (FORCED)`);
+        const label = forced ? '⚠️' : '✅';
+        console.log(`[GROUP STAGE V4] ${label} Slot ${timeSlotIndex} Court ${court}: Group ${matchItem.group} - ${matchItem.match.team1.name} vs ${matchItem.match.team2.name}${forced ? ' (FORCED)' : ''}`);
 
-        teamsPlayingThisSlot.add(team1Id);
-        teamsPlayingThisSlot.add(team2Id);
         teamLastPlayed.set(team1Id, timeSlotIndex);
         teamLastPlayed.set(team2Id, timeSlotIndex);
-
         matchItem.scheduled = true;
         scheduledCount++;
-        courtCounter++;
       }
     }
 
@@ -600,7 +670,16 @@ function generateGroupStageSchedule(
     knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
   };
 
-  if (knockoutStage === 'quarterfinals') {
+  const matchesBefore = scheduledMatches.length;
+
+  if (knockoutStage === 'round_of_16') {
+    for (let i = 0; i < 8; i++) {
+      addKnockoutMatch('round_of_16', ((i % Math.min(numberOfCourts, 8)) + 1).toString());
+    }
+    advanceTime();
+  }
+
+  if (knockoutStage === 'quarterfinals' || knockoutStage === 'round_of_16') {
     for (let i = 0; i < 4; i++) {
       addKnockoutMatch('quarterfinal', ((i % Math.min(numberOfCourts, 4)) + 1).toString());
     }
@@ -614,7 +693,7 @@ function generateGroupStageSchedule(
   addKnockoutMatch('3rd_place', '1');
   addKnockoutMatch('final', '2');
 
-  const knockoutCount = scheduledMatches.length - (scheduledMatches.length - (knockoutStage === 'quarterfinals' ? 8 : 4));
+  const knockoutCount = scheduledMatches.length - matchesBefore;
   console.log(`[GROUP STAGE V4] Added ${knockoutCount} knockout matches (stage: ${knockoutStage})`);
   console.log('[GROUP STAGE V4] TOTAL matches (group + knockout):', scheduledMatches.length);
   

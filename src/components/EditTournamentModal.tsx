@@ -775,8 +775,12 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     <option value={2}>{t.tournament.groupsOption2}</option>
                     <option value={3}>{t.tournament.groupsOption3}</option>
                     <option value={4}>{t.tournament.groupsOption4}</option>
+                    <option value={5}>{t.tournament.groupsOption5}</option>
                     <option value={6}>{t.tournament.groupsOption6}</option>
+                    <option value={7}>{t.tournament.groupsOption7}</option>
                     <option value={8}>{t.tournament.groupsOption8}</option>
+                    <option value={9}>{t.tournament.groupsOption9}</option>
+                    <option value={10}>{t.tournament.groupsOption10}</option>
                   </select>
                 </div>
 
@@ -821,8 +825,12 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     <option value={2}>{t.tournament.groupsOption2}</option>
                     <option value={3}>{t.tournament.groupsOption3}</option>
                     <option value={4}>{t.tournament.groupsOption4}</option>
+                    <option value={5}>{t.tournament.groupsOption5}</option>
                     <option value={6}>{t.tournament.groupsOption6}</option>
+                    <option value={7}>{t.tournament.groupsOption7}</option>
                     <option value={8}>{t.tournament.groupsOption8}</option>
+                    <option value={9}>{t.tournament.groupsOption9}</option>
+                    <option value={10}>{t.tournament.groupsOption10}</option>
                   </select>
                 </div>
 
