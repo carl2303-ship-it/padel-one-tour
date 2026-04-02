@@ -234,7 +234,7 @@ export function generateIndividualGroupsKnockoutSchedule(
   let currentTime = new Date(currentDate);
   currentTime.setHours(startHours, startMinutes, 0, 0);
 
-  const endOfDay = new Date(currentDate);
+  let endOfDay = new Date(currentDate);
   endOfDay.setHours(endHours, endMinutes, 0, 0);
 
   const matchesByGroup: Map<string, Array<{
@@ -382,11 +382,11 @@ export function generateIndividualGroupsKnockoutSchedule(
     currentTime = new Date(currentTime.getTime() + matchDurationMinutes * 60000);
 
     if (currentTime >= endOfDay) {
-      currentDate.setDate(currentDate.getDate() + 1);
-      currentTime = new Date(currentDate);
-      currentTime.setHours(startHours, startMinutes, 0, 0);
-      endOfDay.setDate(currentDate.getDate());
-      endOfDay.setHours(endHours, endMinutes, 0, 0);
+      const nextDay = new Date(currentDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      currentDate = nextDay;
+      currentTime = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), startHours, startMinutes, 0, 0);
+      endOfDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), endHours, endMinutes, 0, 0);
     }
   }
 

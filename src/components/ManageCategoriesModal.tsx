@@ -152,11 +152,14 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
       if (error) throw error;
 
-      const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
-      await supabase.from('tournaments').update({
-        format: tournamentFormat,
-        round_robin_type: newCategory.format === 'round_robin_teams' ? 'teams' : newCategory.format === 'round_robin_individual' ? 'individual' : null,
-      }).eq('id', tournamentId);
+      const { data: existingCats } = await supabase.from('tournament_categories').select('id').eq('tournament_id', tournamentId);
+      if (!existingCats || existingCats.length <= 1) {
+        const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
+        await supabase.from('tournaments').update({
+          format: tournamentFormat,
+          round_robin_type: newCategory.format === 'round_robin_teams' ? 'teams' : newCategory.format === 'round_robin_individual' ? 'individual' : null,
+        }).eq('id', tournamentId);
+      }
 
       setNewCategory({
         name: '',
@@ -211,11 +214,14 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
       if (error) throw error;
 
-      const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
-      await supabase.from('tournaments').update({
-        format: tournamentFormat,
-        round_robin_type: editingCategory.format === 'round_robin_teams' ? 'teams' : editingCategory.format === 'round_robin_individual' ? 'individual' : null,
-      }).eq('id', tournamentId);
+      const { data: existingCats } = await supabase.from('tournament_categories').select('id').eq('tournament_id', tournamentId);
+      if (!existingCats || existingCats.length <= 1) {
+        const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
+        await supabase.from('tournaments').update({
+          format: tournamentFormat,
+          round_robin_type: editingCategory.format === 'round_robin_teams' ? 'teams' : editingCategory.format === 'round_robin_individual' ? 'individual' : null,
+        }).eq('id', tournamentId);
+      }
 
       setEditingCategory(null);
       await loadCategories();

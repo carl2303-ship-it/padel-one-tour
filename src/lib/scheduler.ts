@@ -289,15 +289,25 @@ function generateRoundRobinSchedule(
 
   if (teamCount < 2) return matches;
 
-  const [startHour, startMinute] = startTime.split(':').map(Number);
+  const [defaultStartHour, defaultStartMinute] = startTime.split(':').map(Number);
   const [endHour, endMinute] = endTime.split(':').map(Number);
-  const startTotalMinutes = startHour * 60 + startMinute;
-  const endTotalMinutes = endHour * 60 + (endMinute || 0);
-  let availableMinutesPerDay = endTotalMinutes - startTotalMinutes;
-  if (availableMinutesPerDay <= 0) {
-    availableMinutesPerDay = (24 * 60 - startTotalMinutes) + endTotalMinutes;
-  }
-  const slotsPerDay = Math.floor(availableMinutesPerDay / matchDurationMinutes);
+  const defaultStartTotalMin = defaultStartHour * 60 + defaultStartMinute;
+  const defaultEndTotalMin = endHour * 60 + (endMinute || 0);
+  let defaultAvailMin = defaultEndTotalMin - defaultStartTotalMin;
+  if (defaultAvailMin <= 0) defaultAvailMin = (24 * 60 - defaultStartTotalMin) + defaultEndTotalMin;
+  const defaultSlotsPerDay = Math.max(1, Math.floor(defaultAvailMin / matchDurationMinutes));
+
+  const getDayConfig = (dateStr: string) => {
+    const ds = dailySchedules.find(d => d.date === dateStr);
+    if (ds) {
+      const [sh, sm] = ds.start_time.split(':').map(Number);
+      const [eh, em] = ds.end_time.split(':').map(Number);
+      let avail = (eh * 60 + (em || 0)) - (sh * 60 + sm);
+      if (avail <= 0) avail = (24 * 60 - (sh * 60 + sm)) + (eh * 60 + (em || 0));
+      return { startHour: sh, startMinute: sm, slotsPerDay: Math.max(1, Math.floor(avail / matchDurationMinutes)) };
+    }
+    return { startHour: defaultStartHour, startMinute: defaultStartMinute, slotsPerDay: defaultSlotsPerDay };
+  };
 
   const teamsForRotation = [...teams];
   const isOdd = teamCount % 2 === 1;
@@ -351,47 +361,63 @@ function generateRoundRobinSchedule(
     for (let matchIdx = 0; matchIdx < roundMatches.length; matchIdx += numberOfCourts) {
       const slotMatches = roundMatches.slice(matchIdx, matchIdx + numberOfCourts);
 
-      const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDurationMinutes;
+      let remainSlots = timeSlotIndex;
+      let daysFromStart = 0;
+      const [year, month, day] = startDate.split('-').map(Number);
+      let slotDate = new Date(year, month - 1, day);
+      let dayConf = getDayConfig(slotDate.toISOString().split('T')[0]);
+      while (remainSlots >= dayConf.slotsPerDay) {
+        remainSlots -= dayConf.slotsPerDay;
+        daysFromStart++;
+        slotDate = new Date(year, month - 1, day + daysFromStart);
+        dayConf = getDayConfig(slotDate.toISOString().split('T')[0]);
+      }
+      const totalMinutesFromStart = remainSlots * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
       const minuteOffset = totalMinutesFromStart % 60;
-      const daysFromStart = Math.floor(timeSlotIndex / slotsPerDay);
+      const scheduledTime = new Date(year, month - 1, day + daysFromStart, dayConf.startHour + hourOffset, dayConf.startMinute + minuteOffset, 0, 0);
 
-      const [year, month, day] = startDate.split('-').map(Number);
-      const scheduledTime = new Date(year, month - 1, day + daysFromStart, startHour + hourOffset, startMinute + minuteOffset, 0, 0);
-
-      // Find court permutation minimizing outdoor games, then equalizing indoor usage
       const slotSize = slotMatches.length;
-      const courtOptions = Array.from({length: slotSize}, (_, i) => i + 1);
+      const courtOptions = Array.from({length: Math.min(slotSize, numberOfCourts)}, (_, i) => i + 1);
       let bestAssignment = [...courtOptions];
       let bestScore = Infinity;
 
-      const tryPerms = (arr: number[], start: number) => {
-        if (start === arr.length) {
-          let outdoorSum = 0;
-          let indoorSum = 0;
-          for (let i = 0; i < slotSize; i++) {
-            const c = arr[i];
-            const t1 = slotMatches[i].team1_id;
-            const t2 = slotMatches[i].team2_id;
-            if (hasOutdoor && outdoorCourtIndices.has(c)) {
-              outdoorSum += getOutdoor(t1) + getOutdoor(t2);
-            }
-            indoorSum += getUsage(t1, c) + getUsage(t2, c);
+      const scorePerm = (arr: number[]) => {
+        let outdoorSum = 0;
+        let indoorSum = 0;
+        for (let i = 0; i < slotSize; i++) {
+          const c = arr[i];
+          const t1 = slotMatches[i].team1_id;
+          const t2 = slotMatches[i].team2_id;
+          if (hasOutdoor && outdoorCourtIndices.has(c)) {
+            outdoorSum += getOutdoor(t1) + getOutdoor(t2);
           }
-          const score = outdoorSum * 10000 + indoorSum;
-          if (score < bestScore) {
-            bestScore = score;
-            bestAssignment = [...arr];
-          }
-          return;
+          indoorSum += getUsage(t1, c) + getUsage(t2, c);
         }
-        for (let i = start; i < arr.length; i++) {
-          [arr[start], arr[i]] = [arr[i], arr[start]];
-          tryPerms(arr, start + 1);
-          [arr[start], arr[i]] = [arr[i], arr[start]];
-        }
+        return outdoorSum * 10000 + indoorSum;
       };
-      tryPerms(courtOptions, 0);
+
+      if (courtOptions.length <= 8) {
+        const tryPerms = (arr: number[], start: number) => {
+          if (start === arr.length) {
+            const score = scorePerm(arr);
+            if (score < bestScore) { bestScore = score; bestAssignment = [...arr]; }
+            return;
+          }
+          for (let i = start; i < arr.length; i++) {
+            [arr[start], arr[i]] = [arr[i], arr[start]];
+            tryPerms(arr, start + 1);
+            [arr[start], arr[i]] = [arr[i], arr[start]];
+          }
+        };
+        tryPerms(courtOptions, 0);
+      } else {
+        for (let iter = 0; iter < 10000; iter++) {
+          const perm = [...courtOptions].sort(() => Math.random() - 0.5);
+          const score = scorePerm(perm);
+          if (score < bestScore) { bestScore = score; bestAssignment = [...perm]; }
+        }
+      }
 
       for (let i = 0; i < slotSize; i++) {
         const court = bestAssignment[i];
@@ -522,7 +548,8 @@ function generateGroupStageSchedule(
     gsTeamCourtUsage.get(tid)![c - 1]++;
   };
 
-  while (scheduledCount < allMatches.length) {
+  const maxSlots = allMatches.length * 10;
+  while (scheduledCount < allMatches.length && timeSlotIndex < maxSlots) {
     const teamsPlayingThisSlot = new Set<string>();
 
     console.log(`[GROUP STAGE V4] === TIME SLOT ${timeSlotIndex} === (${scheduledCount}/${allMatches.length} scheduled)`);
@@ -573,37 +600,49 @@ function generateGroupStageSchedule(
       }
     }
 
-    // Assign courts minimizing outdoor games, then equalizing indoor usage
     if (slotEntries.length > 0) {
       const sn = slotEntries.length;
-      const courtOpts = Array.from({length: sn}, (_, i) => i + 1);
-      let bestAssign = [...courtOpts];
+      const allCourts = Array.from({length: numberOfCourts}, (_, i) => i + 1);
+      const courtOpts = allCourts.slice(0, Math.max(sn, numberOfCourts));
+      let bestAssign = courtOpts.slice(0, sn);
       let bestScore = Infinity;
 
-      const tryP = (arr: number[], start: number) => {
-        if (start === arr.length) {
-          let outdoorSum = 0;
-          let indoorSum = 0;
-          for (let i = 0; i < sn; i++) {
-            const c = arr[i];
-            const t1 = slotEntries[i].team1Id;
-            const t2 = slotEntries[i].team2Id;
-            if (gsHasOutdoor && outdoorCourtIndices.has(c)) {
-              outdoorSum += gsGetOutdoor(t1) + gsGetOutdoor(t2);
-            }
-            indoorSum += gsGetUsage(t1, c) + gsGetUsage(t2, c);
+      const scoreAssign = (arr: number[]) => {
+        let outdoorSum = 0;
+        let indoorSum = 0;
+        for (let i = 0; i < sn; i++) {
+          const c = arr[i];
+          const t1 = slotEntries[i].team1Id;
+          const t2 = slotEntries[i].team2Id;
+          if (gsHasOutdoor && outdoorCourtIndices.has(c)) {
+            outdoorSum += gsGetOutdoor(t1) + gsGetOutdoor(t2);
           }
-          const score = outdoorSum * 10000 + indoorSum;
-          if (score < bestScore) { bestScore = score; bestAssign = [...arr]; }
-          return;
+          indoorSum += gsGetUsage(t1, c) + gsGetUsage(t2, c);
         }
-        for (let i = start; i < arr.length; i++) {
-          [arr[start], arr[i]] = [arr[i], arr[start]];
-          tryP(arr, start + 1);
-          [arr[start], arr[i]] = [arr[i], arr[start]];
-        }
+        return outdoorSum * 10000 + indoorSum;
       };
-      tryP(courtOpts, 0);
+
+      if (numberOfCourts <= 8) {
+        const tryP = (arr: number[], start: number) => {
+          if (start === sn) {
+            const score = scoreAssign(arr.slice(0, sn));
+            if (score < bestScore) { bestScore = score; bestAssign = arr.slice(0, sn); }
+            return;
+          }
+          for (let i = start; i < arr.length; i++) {
+            [arr[start], arr[i]] = [arr[i], arr[start]];
+            tryP(arr, start + 1);
+            [arr[start], arr[i]] = [arr[i], arr[start]];
+          }
+        };
+        tryP([...courtOpts], 0);
+      } else {
+        for (let iter = 0; iter < 10000; iter++) {
+          const perm = [...courtOpts].sort(() => Math.random() - 0.5).slice(0, sn);
+          const score = scoreAssign(perm);
+          if (score < bestScore) { bestScore = score; bestAssign = [...perm]; }
+        }
+      }
 
       const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
@@ -666,24 +705,36 @@ function generateGroupStageSchedule(
     });
   };
 
+  const [koEndH, koEndM] = endTime.split(':').map(Number);
+  const [koStartH, koStartM] = startTime.split(':').map(Number);
   const advanceTime = () => {
     knockoutTime = new Date(knockoutTime.getTime() + matchDurationMinutes * 60000);
+    const koEndMinutes = koEndH * 60 + (koEndM || 0);
+    const currentMinutes = knockoutTime.getHours() * 60 + knockoutTime.getMinutes();
+    if (currentMinutes >= koEndMinutes) {
+      knockoutTime.setDate(knockoutTime.getDate() + 1);
+      knockoutTime.setHours(koStartH, koStartM || 0, 0, 0);
+    }
   };
 
   const matchesBefore = scheduledMatches.length;
 
-  if (knockoutStage === 'round_of_16') {
-    for (let i = 0; i < 8; i++) {
-      addKnockoutMatch('round_of_16', ((i % Math.min(numberOfCourts, 8)) + 1).toString());
+  const addKnockoutRound = (roundName: string, count: number) => {
+    for (let i = 0; i < count; i++) {
+      const courtIdx = i % numberOfCourts;
+      addKnockoutMatch(roundName, (courtIdx + 1).toString());
+      if (courtIdx === numberOfCourts - 1 || i === count - 1) {
+        advanceTime();
+      }
     }
-    advanceTime();
+  };
+
+  if (knockoutStage === 'round_of_16') {
+    addKnockoutRound('round_of_16', 8);
   }
 
   if (knockoutStage === 'quarterfinals' || knockoutStage === 'round_of_16') {
-    for (let i = 0; i < 4; i++) {
-      addKnockoutMatch('quarterfinal', ((i % Math.min(numberOfCourts, 4)) + 1).toString());
-    }
-    advanceTime();
+    addKnockoutRound('quarterfinal', 4);
   }
 
   addKnockoutMatch('semifinal', '1');

@@ -391,7 +391,7 @@ export async function getQualifiedTeamsFromGroups(
     .from('matches')
     .select('*')
     .eq('tournament_id', tournamentId)
-    .eq('round', 'group_stage')
+    .like('round', 'group_%')
     .eq('status', 'completed');
 
   if (categoryId) {
@@ -642,6 +642,7 @@ export async function getQualifiedPlayersFromGroups(
     const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
     const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
     const team1Won = team1Games > team2Games;
+    const team2Won = team2Games > team1Games;
 
     const player1Stats = playerStats.get(match.player1_individual_id);
     const player2Stats = playerStats.get(match.player2_individual_id);
@@ -664,13 +665,13 @@ export async function getQualifiedPlayersFromGroups(
       player3Stats.matchesPlayed++;
       player3Stats.gamesWon += team2Games;
       player3Stats.gamesLost += team1Games;
-      if (!team1Won) player3Stats.wins++;
+      if (team2Won) player3Stats.wins++;
     }
     if (player4Stats) {
       player4Stats.matchesPlayed++;
       player4Stats.gamesWon += team2Games;
       player4Stats.gamesLost += team1Games;
-      if (!team1Won) player4Stats.wins++;
+      if (team2Won) player4Stats.wins++;
     }
   });
 
@@ -1667,7 +1668,7 @@ export async function advanceKnockoutWinner(
   }
 
   const ro16Rounds = ['round_of_16'];
-  const semifinalRounds = ['semifinal', 'semi_final'];
+  const semifinalRounds = ['semifinal', 'semi_final', '1st_semifinal'];
   const quarterfinalRounds = ['quarterfinal', 'quarter_final'];
 
   if (ro16Rounds.includes(round)) {

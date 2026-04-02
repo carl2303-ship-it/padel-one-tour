@@ -708,6 +708,34 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         }
       }
 
+      const p1Phone = normalizePhone(formData.player1Phone);
+      const isIndividual = isIndividualFormat();
+      if (isIndividual) {
+        const { data: existingReg } = await supabase
+          .from('players')
+          .select('id')
+          .eq('tournament_id', tournament.id)
+          .eq('phone_number', p1Phone)
+          .maybeSingle();
+        if (existingReg) {
+          setError('Este jogador já está inscrito neste torneio.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        const { data: existingTeamReg } = await supabase
+          .from('teams')
+          .select('id, players!inner(phone_number)')
+          .eq('tournament_id', tournament.id)
+          .eq('players.phone_number', p1Phone)
+          .maybeSingle();
+        if (existingTeamReg) {
+          setError('Este jogador já está inscrito numa equipa neste torneio.');
+          setLoading(false);
+          return;
+        }
+      }
+
       const player1Result = await createOrGetPlayerAccount(
         formData.player1Name,
         formData.player1Email,
@@ -747,7 +775,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       }
 
       const registrationFee = getRegistrationFee();
-      const isIndividual = isIndividualFormat();
       const canPayAtClub = tournament.allow_club_payment === true;
 
       if (registrationFee && registrationFee > 0 && !(canPayAtClub && payAtClubSelected)) {
@@ -1467,32 +1494,37 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 <CreditCard className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-blue-900">Preço de Inscrição</p>
-                  {(tournament.member_price || tournament.non_member_price) ? (
-                    <div className="mt-1 space-y-1">
-                      {playerIsMember === true ? (
-                        <div>
-                          <p className="text-sm text-green-700 font-medium">Membro do clube</p>
-                          <p className="text-2xl font-bold text-green-600">{tournament.member_price || 0}€</p>
-                        </div>
-                      ) : playerIsMember === false ? (
-                        <div>
-                          <p className="text-sm text-gray-600">Não-Membro</p>
-                          <p className="text-2xl font-bold text-blue-600">{tournament.non_member_price || 0}€</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          {tournament.member_price != null && tournament.member_price > 0 && (
-                            <p className="text-sm text-blue-800">Membros: <span className="font-bold">{tournament.member_price}€</span></p>
-                          )}
-                          {tournament.non_member_price != null && tournament.non_member_price > 0 && (
-                            <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{tournament.non_member_price}€</span></p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-2xl font-bold text-blue-600">{getRegistrationFee()}€</p>
-                  )}
+                  {(() => {
+                    const selectedCat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
+                    const memberPrice = (selectedCat as any)?.member_price ?? tournament.member_price;
+                    const nonMemberPrice = (selectedCat as any)?.non_member_price ?? tournament.non_member_price;
+                    const hasPrices = memberPrice || nonMemberPrice;
+                    if (!hasPrices) return <p className="text-2xl font-bold text-blue-600">{getRegistrationFee()}€</p>;
+                    return (
+                      <div className="mt-1 space-y-1">
+                        {playerIsMember === true ? (
+                          <div>
+                            <p className="text-sm text-green-700 font-medium">Membro do clube</p>
+                            <p className="text-2xl font-bold text-green-600">{memberPrice || 0}€</p>
+                          </div>
+                        ) : playerIsMember === false ? (
+                          <div>
+                            <p className="text-sm text-gray-600">Não-Membro</p>
+                            <p className="text-2xl font-bold text-blue-600">{nonMemberPrice || 0}€</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {memberPrice != null && memberPrice > 0 && (
+                              <p className="text-sm text-blue-800">Membros: <span className="font-bold">{memberPrice}€</span></p>
+                            )}
+                            {nonMemberPrice != null && nonMemberPrice > 0 && (
+                              <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{nonMemberPrice}€</span></p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1575,6 +1607,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   required
                   value={formData.player1Phone}
                   onChange={(e) => setFormData({ ...formData, player1Phone: e.target.value })}
+                  onBlur={(e) => { if (e.target.value && isNewPlayer) checkMembership(normalizePhone(e.target.value)); }}
                   className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${(!!loggedInPlayer || !!existingAccount) ? 'bg-gray-50' : ''}`}
                   placeholder="+351 912 345 678"
                   disabled={!!loggedInPlayer || !!existingAccount}
@@ -1786,10 +1819,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           )}
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">{tournament.name}</h1>
           {tournament.description && (
-            <div
-              className="text-xl text-gray-600 max-w-2xl mx-auto"
-              dangerouslySetInnerHTML={{ __html: tournament.description }}
-            />
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto whitespace-pre-line">
+              {tournament.description.replace(/<[^>]*>/g, '')}
+            </p>
           )}
         </div>
 

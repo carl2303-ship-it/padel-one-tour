@@ -207,8 +207,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               } else if (fmt === 'crossed_playoffs') {
                 setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
               } else if (fmt === 'crossed_playoffs_teams') {
-                // Para equipas, usar lógica diferente (será implementada)
-                console.log('[REALTIME] Crossed playoffs teams - groups done');
+                console.log('[REALTIME] Crossed playoffs teams - groups done, refetching');
+                setTimeout(() => fetchTournamentData(), 500);
               } else if (fmt === 'individual_groups_knockout') {
                 setTimeout(async () => {
                   console.log('[REALTIME] All groups done, populating knockout brackets');
@@ -937,7 +937,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           knockoutConfronts.push({
             tournament_id: tournament.id,
             category_id: cat.id,
-            round: 'third_place',
+            round: '3rd_place',
             group_name: null,
             super_team_1_id: null,
             super_team_2_id: null,
@@ -1025,7 +1025,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     });
   };
 
+  const fetchDepthRef = useRef(0);
   const fetchTournamentData = async (silent = false) => {
+    if (fetchDepthRef.current >= 3) {
+      console.warn('[FETCH] Max recursive depth reached, aborting');
+      fetchDepthRef.current = 0;
+      return;
+    }
+    fetchDepthRef.current++;
+    try {
     console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
     if (!silent) setLoading(true);
 
@@ -1351,9 +1359,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
                   if (rankA.length >= 4 && rankB.length >= 4) {
                     console.log(`[FETCH-FILL] 2-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}]`);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[1].id, player2_individual_id: rankB[2].id, player3_individual_id: rankB[1].id, player4_individual_id: rankA[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
+                    await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[2].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
                     console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
                     await fetchTournamentData(); return;
                   }
@@ -1864,10 +1871,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
 
+    } finally {
+      fetchDepthRef.current = Math.max(0, fetchDepthRef.current - 1);
+    }
     setLoading(false);
     setRefreshKey(prev => prev + 1);
 
-    // Scroll to the match that was just closed (after DOM update)
     if (scrollToMatchIdRef.current) {
       const matchId = scrollToMatchIdRef.current;
       scrollToMatchIdRef.current = null;
@@ -4665,6 +4674,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
           return {
             tournament_id: currentTournament.id,
+            category_id: categories.length === 1 ? categories[0].id : null,
             round: m.round,
             match_number: m.match_number,
             player1_individual_id: toUuidOrNull(m.player1_id),
@@ -5095,12 +5105,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
           }
 
+          const playerCategoryMap = new Map<string, string>();
+          individualPlayers.forEach(p => { if (p.category_id) playerCategoryMap.set(p.id, p.category_id); });
+
           matchesToInsert = groupOnlyMatches.map(m => {
             const cNum = parseInt(m.court);
             const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
+            const matchCategoryId = categories.length === 1
+              ? categories[0].id
+              : (m.player1_id ? playerCategoryMap.get(m.player1_id) : null) || null;
             return {
               tournament_id: currentTournament.id,
-              category_id: categories.length === 1 ? categories[0].id : null,
+              category_id: matchCategoryId,
               round: m.round,
               match_number: m.match_number,
               player1_individual_id: toUuidOrNull(m.player1_id),
@@ -5118,15 +5134,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             : new Date(`${startDate}T${startTime}:00`);
 
           let koTime = new Date(lastTime.getTime() + matchDuration * 60000);
-          const koEndOfDay = new Date(`${startDate}T${endTime}:00`);
-          koEndOfDay.setDate(koTime.getDate());
+          const [endH, endM] = endTime.split(':').map(Number);
+          const [stH, stM] = startTime.split(':').map(Number);
+          const getKoEndOfDay = (ref: Date) => {
+            const eod = new Date(ref);
+            eod.setHours(endH, endM || 0, 0, 0);
+            return eod;
+          };
+          let koEndOfDay = getKoEndOfDay(koTime);
 
           const advanceKoTime = () => {
             koTime = new Date(koTime.getTime() + matchDuration * 60000);
             if (koTime >= koEndOfDay) {
-              koTime.setDate(koTime.getDate() + 1);
-              koTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-              koEndOfDay.setDate(koTime.getDate());
+              const nextDay = new Date(koTime);
+              nextDay.setDate(nextDay.getDate() + 1);
+              nextDay.setHours(stH, stM || 0, 0, 0);
+              koTime = nextDay;
+              koEndOfDay = getKoEndOfDay(koTime);
             }
           };
 
@@ -5425,6 +5449,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             startTime,
             endTime,
             matchDuration,
+            false,
             dailySchedules
           );
           

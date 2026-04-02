@@ -743,20 +743,11 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
   };
 
   const calculateWinner = () => {
-    let team1Sets = 0;
-    let team2Sets = 0;
+    const team1Total = (formData.team1_score_set1 || 0) + (formData.team1_score_set2 || 0) + (formData.team1_score_set3 || 0);
+    const team2Total = (formData.team2_score_set1 || 0) + (formData.team2_score_set2 || 0) + (formData.team2_score_set3 || 0);
 
-    if (formData.team1_score_set1 > formData.team2_score_set1) team1Sets++;
-    else if (formData.team1_score_set1 < formData.team2_score_set1) team2Sets++;
-
-    if (formData.team1_score_set2 > formData.team2_score_set2) team1Sets++;
-    else if (formData.team1_score_set2 < formData.team2_score_set2) team2Sets++;
-
-    if (formData.team1_score_set3 > formData.team2_score_set3) team1Sets++;
-    else if (formData.team1_score_set3 < formData.team2_score_set3) team2Sets++;
-
-    if (team1Sets > team2Sets) return formData.team1_id;
-    if (team2Sets > team1Sets) return formData.team2_id;
+    if (team1Total > team2Total) return formData.team1_id;
+    if (team2Total > team1Total) return formData.team2_id;
     return null;
   };
 
@@ -841,18 +832,6 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
           .eq('id', loserId);
 
         if (currentMatch) {
-          const knockoutRoundsForTeams = ['semifinal', 'semi_final', 'quarterfinal', 'quarter_final', 'round_of_16', 'final', '3rd_place', 'consolation'];
-          const isKnockoutRound = knockoutRoundsForTeams.includes(currentMatch.round);
-
-          if (isKnockoutRound && tournament?.format === 'groups_knockout') {
-            console.log('[MATCH_MODAL] Groups+Knockout team match completed, advancing winner');
-            await advanceKnockoutWinner(
-              tournamentId,
-              matchId || result.data?.[0]?.id,
-              currentMatch.category_id
-            );
-          }
-
           await advanceWinnerToNextRound(
             tournamentId,
             currentMatch.round,
@@ -1055,15 +1034,17 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
 
       const tierMapping = semifinalToFinalMap[matchData.round];
       if (isKnockoutRound && tierMapping) {
-        const categoryFilter = matchData.category_id || '';
-
-        const { data: finalMatch } = await supabase
+        let finalQuery = supabase
           .from('matches')
           .select('id, player1_individual_id')
           .eq('tournament_id', tournamentId)
-          .eq('round', tierMapping.final)
-          .eq('category_id', categoryFilter)
-          .maybeSingle();
+          .eq('round', tierMapping.final);
+        if (matchData.category_id) {
+          finalQuery = finalQuery.eq('category_id', matchData.category_id);
+        } else {
+          finalQuery = finalQuery.is('category_id', null);
+        }
+        const { data: finalMatch } = await finalQuery.maybeSingle();
 
         if (finalMatch && finalMatch.player1_individual_id) {
           await supabase
@@ -1077,13 +1058,17 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
             .eq('id', finalMatch.id);
         }
 
-        const { data: thirdPlaceMatch } = await supabase
+        let thirdQuery = supabase
           .from('matches')
           .select('id, player1_individual_id')
           .eq('tournament_id', tournamentId)
-          .eq('round', tierMapping.third)
-          .eq('category_id', categoryFilter)
-          .maybeSingle();
+          .eq('round', tierMapping.third);
+        if (matchData.category_id) {
+          thirdQuery = thirdQuery.eq('category_id', matchData.category_id);
+        } else {
+          thirdQuery = thirdQuery.is('category_id', null);
+        }
+        const { data: thirdPlaceMatch } = await thirdQuery.maybeSingle();
 
         if (thirdPlaceMatch && thirdPlaceMatch.player1_individual_id) {
           await supabase

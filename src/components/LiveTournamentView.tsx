@@ -49,9 +49,11 @@ interface Tournament {
   start_date: string;
   end_date: string;
   format: string;
+  round_robin_type?: string;
   number_of_courts: number;
   image_url?: string;
   user_id?: string;
+  court_names?: string[];
 }
 
 interface Standing {
@@ -213,7 +215,7 @@ export default function LiveTournamentView() {
     try {
       const { data: tournamentData, error: tErr } = await supabase
         .from('tournaments')
-        .select('id, name, start_date, end_date, format, round_robin_type, number_of_courts, image_url, user_id')
+        .select('id, name, start_date, end_date, format, round_robin_type, number_of_courts, image_url, user_id, court_names')
         .eq('id', tournamentId)
         .single();
       if (tErr) throw tErr;

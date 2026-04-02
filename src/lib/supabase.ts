@@ -116,6 +116,8 @@ export type Match = {
   team2_id: string | null;
   player1_individual_id?: string | null;
   player2_individual_id?: string | null;
+  player3_individual_id?: string | null;
+  player4_individual_id?: string | null;
   round: string;
   match_number: number;
   scheduled_time: string | null;

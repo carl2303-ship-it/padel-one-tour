@@ -87,9 +87,10 @@ export default function MatchScheduleView({
         );
       case 'court':
         return sorted.sort((a, b) => {
-          const courtA = parseInt(a.court || '0');
-          const courtB = parseInt(b.court || '0');
-          if (courtA !== courtB) return courtA - courtB;
+          const cA = a.court || '';
+          const cB = b.court || '';
+          const cmp = cA.localeCompare(cB, undefined, { numeric: true });
+          if (cmp !== 0) return cmp;
           return new Date(a.scheduled_time || 0).getTime() - new Date(b.scheduled_time || 0).getTime();
         });
       case 'group':

@@ -53,17 +53,13 @@ export default function SuperTeamRegistration({ tournament, onClose }: SuperTeam
   const [error, setError] = useState('');
 
   const normalizePhone = (phone: string): string => {
-    let normalized = phone.replace(/[\s\-\(\)\.]/g, '');
-    if (!normalized.startsWith('+')) {
-      if (normalized.startsWith('00')) {
-        normalized = '+' + normalized.substring(2);
-      } else if (normalized.startsWith('9') && normalized.length === 9) {
-        normalized = '+351' + normalized;
-      } else if (normalized.startsWith('351')) {
-        normalized = '+' + normalized;
-      }
-    }
-    return normalized;
+    let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+    if (cleaned.startsWith('+351')) return cleaned;
+    if (cleaned.startsWith('351') && cleaned.length >= 12) return '+' + cleaned;
+    if (cleaned.startsWith('+')) return cleaned;
+    if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
+    if (cleaned.length === 9) return '+351' + cleaned;
+    return '+351' + cleaned;
   };
 
   const lookupPlayerByPhone = async (index: number, phone: string) => {

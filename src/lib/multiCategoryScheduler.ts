@@ -43,12 +43,17 @@ function calculateSlotsForDay(dateStr: string, dailySchedules: DailySchedule[], 
 function getDateForSlot(startDate: string, slotIndex: number, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string, matchDurationMinutes: number): { dateStr: string; slotInDay: number; startHour: number; startMinute: number } {
   const [year, month, day] = startDate.split('-').map(Number);
   let remainingSlots = slotIndex;
-  // Use UTC noon to avoid timezone shifts when converting to ISO string
   let currentDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  let maxDays = 365;
 
-  while (true) {
+  while (maxDays-- > 0) {
     const dateStr = currentDate.toISOString().split('T')[0];
     const dayInfo = calculateSlotsForDay(dateStr, dailySchedules, defaultStart, defaultEnd, matchDurationMinutes);
+
+    if (dayInfo.slotsPerDay <= 0) {
+      currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+      continue;
+    }
 
     if (remainingSlots < dayInfo.slotsPerDay) {
       return { dateStr, slotInDay: remainingSlots, startHour: dayInfo.startHour, startMinute: dayInfo.startMinute };
@@ -57,6 +62,9 @@ function getDateForSlot(startDate: string, slotIndex: number, dailySchedules: Da
     remainingSlots -= dayInfo.slotsPerDay;
     currentDate.setUTCDate(currentDate.getUTCDate() + 1);
   }
+  const fallbackDate = currentDate.toISOString().split('T')[0];
+  const fallbackInfo = calculateSlotsForDay(fallbackDate, dailySchedules, defaultStart, defaultEnd, matchDurationMinutes);
+  return { dateStr: fallbackDate, slotInDay: 0, startHour: fallbackInfo.startHour, startMinute: fallbackInfo.startMinute };
 }
 
 // ===========================
@@ -629,8 +637,10 @@ export function scheduleMultipleCategories(
           }
         }
 
-        // Handle remaining matches with global slots
-        if (remainingMatches.length > 0) {
+        let globalRetries = 0;
+        const maxGlobalRetries = 100;
+        while (remainingMatches.length > 0 && globalRetries < maxGlobalRetries) {
+          globalRetries++;
           const globalRemaining = [...remainingMatches];
           remainingMatches.length = 0;
 
@@ -646,13 +656,16 @@ export function scheduleMultipleCategories(
             const scheduledTime = new Date(year, month - 1, day, slotInfo.startHour + hourOffset, slotInfo.startMinute + minuteOffset, 0, 0);
             const timeStr = scheduledTime.toISOString();
 
+            const catInfo = categoryCourtMap.get(koMatch.categoryId);
+            const fallbackCourts = catInfo ? catInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
             let assignedCourt = 0;
             let courtName = '';
-            for (let court = 1; court <= numberOfCourts; court++) {
+            for (const court of fallbackCourts) {
               const slotKey = `${timeStr}_${court}`;
               if (!occupiedSlots.has(slotKey)) {
                 assignedCourt = court;
-                courtName = court.toString();
+                const courtIdx = catInfo ? catInfo.courtNumbers.indexOf(court) : court - 1;
+                courtName = catInfo ? (catInfo.courtNames[courtIdx] || court.toString()) : (allCourtNames[court - 1] || court.toString());
                 occupiedSlots.add(slotKey);
                 break;
               }
@@ -671,8 +684,10 @@ export function scheduleMultipleCategories(
             console.log(`[MULTI-CAT V6] ✅ Knockout Match ${koMatch.match_number} (fallback) -> ${timeStr} court ${courtName}`);
           }
         }
+        if (remainingMatches.length > 0) {
+          console.warn(`[MULTI-CAT V6] ⚠️ ${remainingMatches.length} knockout matches could not be scheduled after ${maxGlobalRetries} retries`);
+        }
 
-        // Break out - per-category scheduling handles its own iteration
         break;
 
       } else {
@@ -803,11 +818,17 @@ export function scheduleMultipleCategories(
           const matchId = `${tbdMatch.categoryId}_${tbdMatch.match_number}`;
           if (scheduledMatchIds.has(matchId)) continue;
 
+          const catInfo = categoryCourtMap.get(tbdMatch.categoryId);
+          const catCourts = catInfo ? catInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
+
           let assignedCourt = 0;
-          for (let court = 1; court <= numberOfCourts; court++) {
+          let assignedCourtName = '';
+          for (const court of catCourts) {
             const slotKey = `${timeStr}_${court}`;
             if (!occupiedSlots.has(slotKey)) {
               assignedCourt = court;
+              const courtIdx = catInfo ? catInfo.courtNumbers.indexOf(court) : court - 1;
+              assignedCourtName = catInfo ? (catInfo.courtNames[courtIdx] || court.toString()) : (allCourtNames[court - 1] || court.toString());
               break;
             }
           }
@@ -824,7 +845,7 @@ export function scheduleMultipleCategories(
           const scheduledMatch = {
             ...matchData,
             scheduled_time: timeStr,
-            court: assignedCourt.toString()
+            court: assignedCourtName
           };
 
           const categoryScheduled = scheduledMatches.get(categoryId)!;
