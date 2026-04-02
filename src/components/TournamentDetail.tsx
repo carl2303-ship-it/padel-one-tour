@@ -7238,7 +7238,29 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             <div className="space-y-6">
               {/* Barra de ações da tab Jogos */}
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-gray-200">
-                <h3 className="text-lg font-semibold">Jogos</h3>
+                <div className="flex items-center gap-4">
+                  <h3 className="text-lg font-semibold">Jogos</h3>
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-gray-500" />
+                    <select
+                      value={currentTournament.match_duration_minutes || 30}
+                      onChange={async (e) => {
+                        const val = parseInt(e.target.value);
+                        const updated = { ...currentTournament, match_duration_minutes: val };
+                        setCurrentTournament(updated);
+                        await supabase.from('tournaments').update({ match_duration_minutes: val }).eq('id', currentTournament.id);
+                      }}
+                      className="text-sm border border-gray-300 rounded px-2 py-1 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {Array.from({ length: 13 }, (_, i) => i + 8).map((min) => (
+                        <option key={min} value={min}>{min} min</option>
+                      ))}
+                      {Array.from({ length: 20 }, (_, i) => 25 + i * 5).map((min) => (
+                        <option key={min} value={min}>{min} min</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleGenerateSchedule}
@@ -7247,9 +7269,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     <Calendar className="w-4 h-4" />
                     Gerar Calendário
                   </button>
-                  
-                  {/* Playoffs cruzados são agora gerados automaticamente pelo scheduler */}
-                  {/* Jogadores avançam automaticamente quando os jogos terminam */}
                   
                   {filteredMatches.length > 0 && (
                     <button
