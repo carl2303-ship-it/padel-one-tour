@@ -126,6 +126,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [showRegisteredList, setShowRegisteredList] = useState(false);
   const [allRegistered, setAllRegistered] = useState<any[]>([]);
   const [payAtClubSelected, setPayAtClubSelected] = useState(false);
+  const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
 
   // Normalizar telefone: se não tem indicativo, adicionar +351
   const normalizePhone = (phone: string): string => {
@@ -244,6 +245,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
             player1Phone: normalized,
           }));
           setLoggedInPlayer(account);
+          checkMembership(normalized);
           setStep('register');
         }
       })();
@@ -276,6 +278,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         player1Email: playerAccount.email || '',
         player1Phone: playerAccount.phone_number || '',
       }));
+      checkMembership(playerAccount.phone_number);
       setStep('register');
     }
   };
@@ -395,14 +398,39 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   };
 
   const getRegistrationFee = () => {
-    if (formData.categoryId) {
-      const category = categories.find(c => c.id === formData.categoryId);
-      if (category?.registration_fee !== undefined && category?.registration_fee !== null) {
-        return category.registration_fee;
-      }
-      return tournament.registration_fee || 0;
-    }
+    const cat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
+    const mp = (cat as any)?.member_price ?? tournament.member_price;
+    const nmp = (cat as any)?.non_member_price ?? tournament.non_member_price;
+    if (playerIsMember === true && mp) return mp;
+    if (playerIsMember === false && nmp) return nmp;
+    if (nmp) return nmp;
+    if (mp) return mp;
+    const catFee = cat?.registration_fee;
+    if (catFee !== undefined && catFee !== null) return catFee;
     return tournament.registration_fee || 0;
+  };
+
+  const checkMembership = async (phone: string) => {
+    if (!phone || !tournament.club_id) {
+      setPlayerIsMember(null);
+      return;
+    }
+    const normalized = normalizePhone(phone);
+    const { data: club } = await supabase
+      .from('clubs')
+      .select('owner_id')
+      .eq('id', tournament.club_id)
+      .maybeSingle();
+    if (!club) { setPlayerIsMember(null); return; }
+    const { data: membership } = await supabase
+      .from('member_subscriptions')
+      .select('id')
+      .eq('club_owner_id', club.owner_id)
+      .eq('member_phone', normalized)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    setPlayerIsMember(!!membership);
   };
 
   const getCategoryMaxSlots = () => {
@@ -456,6 +484,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         player1Email: account.email || '',
         player1Phone: normalizedPhone,
       }));
+      checkMembership(normalizedPhone);
       setStep('login');
     } else {
       setIsNewPlayer(true);
@@ -463,6 +492,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         ...prev,
         player1Phone: normalizedPhone,
       }));
+      checkMembership(normalizedPhone);
       setStep('register');
     }
 
@@ -511,6 +541,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       }
 
       setLoggedInPlayer(existingAccount);
+      checkMembership(existingAccount.phone_number);
       setStep('register');
     } catch (err) {
       setLoginError('Erro ao fazer login');
@@ -527,6 +558,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         player1Email: existingAccount.email || '',
         player1Phone: existingAccount.phone_number,
       }));
+      checkMembership(existingAccount.phone_number);
     }
     setStep('register');
   };
@@ -1385,7 +1417,17 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                     <option key={category.id} value={category.id} disabled={!!levelError}>
                       {category.name}
                       {category.max_teams && ` (max ${category.max_teams})`}
-                      {category.registration_fee && category.registration_fee > 0 && ` - ${category.registration_fee}EUR`}
+                      {(() => {
+                        const catMp = (category as any).member_price;
+                        const catNmp = (category as any).non_member_price;
+                        if (catMp || catNmp) {
+                          if (playerIsMember === true && catMp) return ` - ${catMp}€`;
+                          if (playerIsMember === false && catNmp) return ` - ${catNmp}€`;
+                          if (catNmp) return ` - ${catNmp}€`;
+                        }
+                        if (category.registration_fee && category.registration_fee > 0) return ` - ${category.registration_fee}€`;
+                        return '';
+                      })()}
                       {hasCatRestriction && ` [${category.accepted_levels!.join('/')}]`}
                       {hasRangeRestriction && ` (${category.min_level ?? '0.5'}–${category.max_level ?? '7.0'})`}
                       {levelError && ' - Nível incompatível'}
@@ -1424,14 +1466,28 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               <div className="flex items-start gap-3">
                 <CreditCard className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
-                  <p className="text-sm font-semibold text-blue-900">Taxa de Inscricao</p>
-                  {tournament.member_price || tournament.non_member_price ? (
+                  <p className="text-sm font-semibold text-blue-900">Preço de Inscrição</p>
+                  {(tournament.member_price || tournament.non_member_price) ? (
                     <div className="mt-1 space-y-1">
-                      {tournament.member_price !== undefined && tournament.member_price !== null && (
-                        <p className="text-sm text-blue-800">Membros: <span className="font-bold">{tournament.member_price}€</span></p>
-                      )}
-                      {tournament.non_member_price !== undefined && tournament.non_member_price !== null && (
-                        <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{tournament.non_member_price}€</span></p>
+                      {playerIsMember === true ? (
+                        <div>
+                          <p className="text-sm text-green-700 font-medium">Membro do clube</p>
+                          <p className="text-2xl font-bold text-green-600">{tournament.member_price || 0}€</p>
+                        </div>
+                      ) : playerIsMember === false ? (
+                        <div>
+                          <p className="text-sm text-gray-600">Não-Membro</p>
+                          <p className="text-2xl font-bold text-blue-600">{tournament.non_member_price || 0}€</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {tournament.member_price != null && tournament.member_price > 0 && (
+                            <p className="text-sm text-blue-800">Membros: <span className="font-bold">{tournament.member_price}€</span></p>
+                          )}
+                          {tournament.non_member_price != null && tournament.non_member_price > 0 && (
+                            <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{tournament.non_member_price}€</span></p>
+                          )}
+                        </div>
                       )}
                     </div>
                   ) : (

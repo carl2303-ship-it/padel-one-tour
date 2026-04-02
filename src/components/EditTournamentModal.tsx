@@ -30,7 +30,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     number_of_courts: (tournament as any).number_of_courts || 1,
     status: tournament.status,
     match_duration_minutes: (tournament as any).match_duration_minutes || 15,
-    registration_fee: (tournament as any).registration_fee || 0,
     member_price: (tournament as any).member_price || 0,
     non_member_price: (tournament as any).non_member_price || 0,
     allow_club_payment: (tournament as any).allow_club_payment || false,
@@ -297,7 +296,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         number_of_courts: selectedCourtNames.length > 0 ? selectedCourtNames.length : formData.number_of_courts,
         status: formData.status,
         match_duration_minutes: formData.match_duration_minutes,
-        registration_fee: formData.registration_fee,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
@@ -736,28 +734,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.tournament.registrationFee}
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={formData.registration_fee}
-              onChange={(e) =>
-                setFormData({ ...formData, registration_fee: parseFloat(e.target.value) || 0 })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="0.00"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              {t.tournament.registrationFeeHelper}
-            </p>
-          </div>
-
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="text-base font-semibold text-gray-900 mb-3">Preços no Clube</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>
             <p className="text-xs text-gray-500 mb-4">Defina preços diferenciados para membros e não-membros do clube</p>
             
             <div className="grid grid-cols-2 gap-4 mb-4">

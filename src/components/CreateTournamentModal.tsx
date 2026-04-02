@@ -25,7 +25,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     daily_start_time: '09:00',
     daily_end_time: '21:00',
     match_duration_minutes: 30,
-    registration_fee: 0,
     member_price: 0,
     non_member_price: 0,
     allow_club_payment: false,
@@ -236,7 +235,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
         match_duration_minutes: formData.match_duration_minutes,
-        registration_fee: formData.registration_fee,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
@@ -467,28 +465,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.registration.fee}
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={formData.registration_fee}
-              onChange={(e) =>
-                setFormData({ ...formData, registration_fee: parseFloat(e.target.value) || 0 })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="0.00"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              {t.registration.feeHelper}
-            </p>
-          </div>
-
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="text-base font-semibold text-gray-900 mb-3">Preços no Clube</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>
             <p className="text-xs text-gray-500 mb-4">Defina preços diferenciados para membros e não-membros do clube</p>
             
             <div className="grid grid-cols-2 gap-4 mb-4">
