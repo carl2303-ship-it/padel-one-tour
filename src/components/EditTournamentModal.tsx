@@ -29,7 +29,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     max_teams: tournament.max_teams,
     number_of_courts: (tournament as any).number_of_courts || 1,
     status: tournament.status,
-    match_duration_minutes: (tournament as any).match_duration_minutes || 15,
     member_price: (tournament as any).member_price || 0,
     non_member_price: (tournament as any).non_member_price || 0,
     allow_club_payment: (tournament as any).allow_club_payment || false,
@@ -295,7 +294,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
         number_of_courts: selectedCourtNames.length > 0 ? selectedCourtNames.length : formData.number_of_courts,
         status: formData.status,
-        match_duration_minutes: formData.match_duration_minutes,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
@@ -709,30 +707,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
           {/* Formato do torneio é definido nas categorias */}
 
 
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.tournament.matchDuration} *
-            </label>
-            <select
-              required
-              value={formData.match_duration_minutes}
-              onChange={(e) =>
-                setFormData({ ...formData, match_duration_minutes: parseInt(e.target.value) })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              {Array.from({ length: 13 }, (_, i) => i + 8).map((min) => (
-                <option key={min} value={min}>{min} minutes</option>
-              ))}
-              {Array.from({ length: 20 }, (_, i) => 25 + i * 5).map((min) => (
-                <option key={min} value={min}>{min} minutes</option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {t.tournament.matchDurationHelper}
-            </p>
-          </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>

@@ -24,7 +24,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     end_time: '12:00',
     daily_start_time: '09:00',
     daily_end_time: '21:00',
-    match_duration_minutes: 30,
     member_price: 0,
     non_member_price: 0,
     allow_club_payment: false,
@@ -234,7 +233,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         format: 'groups_knockout',
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
-        match_duration_minutes: formData.match_duration_minutes,
+        match_duration_minutes: 30,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
@@ -440,30 +439,6 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               </div>
             </div>
           )}
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t.tournament.matchDuration} *
-            </label>
-            <select
-              required
-              value={formData.match_duration_minutes}
-              onChange={(e) =>
-                setFormData({ ...formData, match_duration_minutes: parseInt(e.target.value) })
-              }
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              {Array.from({ length: 13 }, (_, i) => i + 8).map((min) => (
-                <option key={min} value={min}>{min} {t.tournament.minutes}</option>
-              ))}
-              {Array.from({ length: 20 }, (_, i) => 25 + i * 5).map((min) => (
-                <option key={min} value={min}>{min} {t.tournament.minutes}</option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {t.tournament.matchDurationHelper}
-            </p>
-          </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>
