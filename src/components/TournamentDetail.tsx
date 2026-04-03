@@ -4594,53 +4594,88 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const generateAmericanCombinations = (players: typeof individualPlayers): Array<{ p1: string; p2: string; p3: string; p4: string }> => {
         const n = players.length;
         if (n < 4) return [];
-        
+
+        // Baralhar para variedade
+        const ids = [...players].sort(() => Math.random() - 0.5).map(p => p.id);
+        const pKey = (a: string, b: string) => [a, b].sort().join('+');
         const combinations: Array<{ p1: string; p2: string; p3: string; p4: string }> = [];
-        const usedPartnerships = new Set<string>();
-        
-        const getPartnershipKey = (id1: string, id2: string): string => {
-          return [id1, id2].sort().join('+');
-        };
-        
-        // Generate all possible pairs
-        const allPairs: Array<{ p1: string; p2: string; key: string }> = [];
-        for (let i = 0; i < n; i++) {
-          for (let j = i + 1; j < n; j++) {
-            const key = getPartnershipKey(players[i].id, players[j].id);
-            allPairs.push({ p1: players[i].id, p2: players[j].id, key });
+
+        if (n === 4) {
+          // 4 jogadores → 3 jogos perfeitos (todos os 6 pares usados uma vez)
+          const [a, b, c, d] = ids;
+          combinations.push(
+            { p1: a, p2: b, p3: c, p4: d },
+            { p1: a, p2: c, p3: b, p4: d },
+            { p1: a, p2: d, p3: b, p4: c },
+          );
+        } else if (n === 5) {
+          // 5 jogadores → 5 jogos perfeitos, cada jogador joga 4 vezes (fica de fora 1 vez)
+          const [a, b, c, d, e] = ids;
+          combinations.push(
+            { p1: a, p2: b, p3: c, p4: d }, // e descansa
+            { p1: a, p2: c, p3: b, p4: e }, // d descansa
+            { p1: a, p2: e, p3: b, p4: d }, // c descansa
+            { p1: a, p2: d, p3: c, p4: e }, // b descansa
+            { p1: b, p2: c, p3: d, p4: e }, // a descansa
+          );
+        } else {
+          // n ≥ 6: algoritmo por ronda melhorado
+          const usedPairs = new Set<string>();
+          const playerMatchCount = new Map<string, number>();
+          ids.forEach(id => playerMatchCount.set(id, 0));
+
+          const maxRounds = Math.floor(n * (n - 1) / 4) + n;
+          let roundsWithoutMatch = 0;
+
+          for (let r = 0; r < maxRounds && roundsWithoutMatch < 3; r++) {
+            const byCount = [...ids].sort((a, b) =>
+              (playerMatchCount.get(a) || 0) - (playerMatchCount.get(b) || 0)
+            );
+
+            let bestMatch: { p1: string; p2: string; p3: string; p4: string } | null = null;
+            let bestScore = -Infinity;
+
+            outer:
+            for (let i = 0; i < byCount.length; i++) {
+              for (let j = i + 1; j < byCount.length; j++) {
+                for (let k = j + 1; k < byCount.length; k++) {
+                  for (let l = k + 1; l < byCount.length; l++) {
+                    const four = [byCount[i], byCount[j], byCount[k], byCount[l]];
+                    const pairings = [
+                      { p1: [four[0], four[1]], p2: [four[2], four[3]] },
+                      { p1: [four[0], four[2]], p2: [four[1], four[3]] },
+                      { p1: [four[0], four[3]], p2: [four[1], four[2]] },
+                    ];
+                    for (const opt of pairings) {
+                      const k1 = pKey(opt.p1[0], opt.p1[1]);
+                      const k2 = pKey(opt.p2[0], opt.p2[1]);
+                      if (usedPairs.has(k1) || usedPairs.has(k2)) continue;
+                      const score = -Math.max(...four.map(p => playerMatchCount.get(p) || 0));
+                      if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = { p1: opt.p1[0], p2: opt.p1[1], p3: opt.p2[0], p4: opt.p2[1] };
+                      }
+                    }
+                    if (bestMatch) break outer;
+                  }
+                }
+              }
+            }
+
+            if (bestMatch) {
+              usedPairs.add(pKey(bestMatch.p1, bestMatch.p2));
+              usedPairs.add(pKey(bestMatch.p3, bestMatch.p4));
+              [bestMatch.p1, bestMatch.p2, bestMatch.p3, bestMatch.p4].forEach(id =>
+                playerMatchCount.set(id, (playerMatchCount.get(id) || 0) + 1)
+              );
+              combinations.push(bestMatch);
+              roundsWithoutMatch = 0;
+            } else {
+              roundsWithoutMatch++;
+            }
           }
         }
-        
-        // Shuffle pairs for variety
-        const shuffledPairs = [...allPairs].sort(() => Math.random() - 0.5);
-        
-        // Try to create matches using unique partnerships
-        for (let i = 0; i < shuffledPairs.length; i++) {
-          const pair1 = shuffledPairs[i];
-          if (usedPartnerships.has(pair1.key)) continue;
-          
-          for (let j = i + 1; j < shuffledPairs.length; j++) {
-            const pair2 = shuffledPairs[j];
-            if (usedPartnerships.has(pair2.key)) continue;
-            
-            // Check that all 4 players are different
-            const allFour = new Set([pair1.p1, pair1.p2, pair2.p1, pair2.p2]);
-            if (allFour.size !== 4) continue;
-            
-            // Mark partnerships as used
-            usedPartnerships.add(pair1.key);
-            usedPartnerships.add(pair2.key);
-            
-            combinations.push({
-              p1: pair1.p1,
-              p2: pair1.p2,
-              p3: pair2.p1,
-              p4: pair2.p2
-            });
-            break;
-          }
-        }
-        
+
         return combinations;
       };
       

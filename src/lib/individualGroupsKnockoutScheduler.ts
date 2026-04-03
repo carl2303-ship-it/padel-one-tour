@@ -30,80 +30,119 @@ function generateAmericanMatchesForGroup(
 ): Array<{ player1_id: string; player2_id: string; player3_id: string; player4_id: string }> {
   console.log(`[AMERICAN GROUP ${groupName}] Generating schedule for ${players.length} players`);
 
-  if (players.length < 4) {
+  const n = players.length;
+  if (n < 4) {
     console.warn(`Group ${groupName} has fewer than 4 players, skipping matches`);
     return [];
   }
 
-  const matches: Array<{ player1_id: string; player2_id: string; player3_id: string; player4_id: string }> = [];
-  const usedPartnerships = new Set<string>();
+  // Baralhar jogadores aleatoriamente para variar o schedule
+  const ids = shuffle(players.map(p => p.id));
+  const pKey = (a: string, b: string) => [a, b].sort().join('+');
 
-  const getPartnershipKey = (p1: string, p2: string): string => {
-    return [p1, p2].sort().join('+');
-  };
+  type RawMatch = { player1_id: string; player2_id: string; player3_id: string; player4_id: string };
+  const matches: RawMatch[] = [];
 
-  const allPairs: Array<{ p1: string; p2: string; key: string }> = [];
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
-      const key = getPartnershipKey(players[i].id, players[j].id);
-      allPairs.push({ p1: players[i].id, p2: players[j].id, key });
+  if (n === 4) {
+    // 4 jogadores → 3 jogos perfeitos, cada jogador joga 3 vezes
+    // Cada par é usado exactamente uma vez (C(4,2)=6 pares, 3 jogos × 2 pares = 6)
+    const [a, b, c, d] = ids;
+    matches.push(
+      { player1_id: a, player2_id: b, player3_id: c, player4_id: d }, // ab vs cd
+      { player1_id: a, player2_id: c, player3_id: b, player4_id: d }, // ac vs bd
+      { player1_id: a, player2_id: d, player3_id: b, player4_id: c }, // ad vs bc
+    );
+  } else if (n === 5) {
+    // 5 jogadores → 5 jogos perfeitos, cada jogador joga 4 vezes (fica de fora 1 vez)
+    // Cada par é usado exactamente uma vez (C(5,2)=10 pares, 5 jogos × 2 pares = 10)
+    // Schedule óptimo derivado por design combinatorial:
+    const [a, b, c, d, e] = ids;
+    matches.push(
+      { player1_id: a, player2_id: b, player3_id: c, player4_id: d }, // ab vs cd  (e descansa)
+      { player1_id: a, player2_id: c, player3_id: b, player4_id: e }, // ac vs be  (d descansa)
+      { player1_id: a, player2_id: e, player3_id: b, player4_id: d }, // ae vs bd  (c descansa)
+      { player1_id: a, player2_id: d, player3_id: c, player4_id: e }, // ad vs ce  (b descansa)
+      { player1_id: b, player2_id: c, player3_id: d, player4_id: e }, // bc vs de  (a descansa)
+    );
+  } else {
+    // n ≥ 6: algoritmo por ronda com "quem descansa" rotativo
+    // Melhor cobertura de pares que o algoritmo guloso original
+    const usedPairs = new Set<string>();
+    const playerMatchCount = new Map<string, number>();
+    ids.forEach(id => playerMatchCount.set(id, 0));
+
+    // Para cada ronda, escolher os 4 jogadores com menos jogos
+    // e o melhor emparelhamento entre eles
+    const maxRounds = Math.floor(n * (n - 1) / 4) + n;
+    let roundsWithoutMatch = 0;
+
+    for (let r = 0; r < maxRounds && roundsWithoutMatch < 3; r++) {
+      // Ordenar jogadores por número de jogos (menos jogos primeiro)
+      const byCount = [...ids].sort((a, b) =>
+        (playerMatchCount.get(a) || 0) - (playerMatchCount.get(b) || 0)
+      );
+
+      // Tentar todos os grupos de 4 jogadores (priorizando quem jogou menos)
+      let bestMatch: RawMatch | null = null;
+      let bestScore = -Infinity;
+
+      for (let i = 0; i < byCount.length && bestMatch === null; i++) {
+        for (let j = i + 1; j < byCount.length; j++) {
+          for (let k = j + 1; k < byCount.length; k++) {
+            for (let l = k + 1; l < byCount.length; l++) {
+              const four = [byCount[i], byCount[j], byCount[k], byCount[l]];
+              // Tentar as 3 formas de emparelhar 4 jogadores
+              const pairings = [
+                { p1: [four[0], four[1]], p2: [four[2], four[3]] },
+                { p1: [four[0], four[2]], p2: [four[1], four[3]] },
+                { p1: [four[0], four[3]], p2: [four[1], four[2]] },
+              ];
+              for (const opt of pairings) {
+                const k1 = pKey(opt.p1[0], opt.p1[1]);
+                const k2 = pKey(opt.p2[0], opt.p2[1]);
+                if (usedPairs.has(k1) || usedPairs.has(k2)) continue;
+                const score = -Math.max(
+                  ...four.map(p => playerMatchCount.get(p) || 0)
+                );
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestMatch = {
+                    player1_id: opt.p1[0], player2_id: opt.p1[1],
+                    player3_id: opt.p2[0], player4_id: opt.p2[1],
+                  };
+                }
+              }
+              if (bestMatch) break;
+            }
+            if (bestMatch) break;
+          }
+          if (bestMatch) break;
+        }
+        if (bestMatch) break;
+      }
+
+      if (bestMatch) {
+        const k1 = pKey(bestMatch.player1_id, bestMatch.player2_id);
+        const k2 = pKey(bestMatch.player3_id, bestMatch.player4_id);
+        usedPairs.add(k1);
+        usedPairs.add(k2);
+        [bestMatch.player1_id, bestMatch.player2_id, bestMatch.player3_id, bestMatch.player4_id]
+          .forEach(id => playerMatchCount.set(id, (playerMatchCount.get(id) || 0) + 1));
+        matches.push(bestMatch);
+        roundsWithoutMatch = 0;
+      } else {
+        roundsWithoutMatch++;
+      }
     }
   }
-
-  const shuffledPairs = [...allPairs].sort(() => Math.random() - 0.5);
-  console.log(`[AMERICAN GROUP ${groupName}] Total pairs: ${shuffledPairs.length}`);
-
-  const maxMatches = Math.floor(allPairs.length / 2);
-  console.log(`[AMERICAN GROUP ${groupName}] Max matches: ${maxMatches}`);
 
   const playerMatchCount = new Map<string, number>();
   players.forEach(p => playerMatchCount.set(p.id, 0));
-
-  for (let i = 0; i < shuffledPairs.length && matches.length < maxMatches; i++) {
-    const pair1 = shuffledPairs[i];
-    if (usedPartnerships.has(pair1.key)) continue;
-
-    let bestPair2: typeof pair1 | null = null;
-    let bestScore = -Infinity;
-
-    for (let j = i + 1; j < shuffledPairs.length; j++) {
-      const pair2 = shuffledPairs[j];
-      if (usedPartnerships.has(pair2.key)) continue;
-
-      const allFour = new Set([pair1.p1, pair1.p2, pair2.p1, pair2.p2]);
-      if (allFour.size !== 4) continue;
-
-      const counts = [
-        playerMatchCount.get(pair1.p1) || 0,
-        playerMatchCount.get(pair1.p2) || 0,
-        playerMatchCount.get(pair2.p1) || 0,
-        playerMatchCount.get(pair2.p2) || 0,
-      ];
-      const score = -Math.max(...counts);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestPair2 = pair2;
-      }
-    }
-
-    if (bestPair2) {
-      usedPartnerships.add(pair1.key);
-      usedPartnerships.add(bestPair2.key);
-
-      playerMatchCount.set(pair1.p1, (playerMatchCount.get(pair1.p1) || 0) + 1);
-      playerMatchCount.set(pair1.p2, (playerMatchCount.get(pair1.p2) || 0) + 1);
-      playerMatchCount.set(bestPair2.p1, (playerMatchCount.get(bestPair2.p1) || 0) + 1);
-      playerMatchCount.set(bestPair2.p2, (playerMatchCount.get(bestPair2.p2) || 0) + 1);
-
-      matches.push({
-        player1_id: pair1.p1,
-        player2_id: pair1.p2,
-        player3_id: bestPair2.p1,
-        player4_id: bestPair2.p2,
-      });
-    }
-  }
+  matches.forEach(m => {
+    [m.player1_id, m.player2_id, m.player3_id, m.player4_id].forEach(id => {
+      playerMatchCount.set(id, (playerMatchCount.get(id) || 0) + 1);
+    });
+  });
 
   console.log(`[AMERICAN GROUP ${groupName}] Generated ${matches.length} matches`);
   playerMatchCount.forEach((count, playerId) => {
