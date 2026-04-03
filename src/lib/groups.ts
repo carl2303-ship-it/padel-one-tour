@@ -1213,14 +1213,49 @@ export async function populatePlacementMatches(
       .filter(m => !m.player1_individual_id && !m.player3_individual_id)
       .sort((a, b) => a.match_number - b.match_number);
 
-    // Cruzamento rotativo para RO16 (mesma lógica dos QFs)
     const nGroupsRo16 = sortedGroups.length;
-    const rankingsRo16 = sortedGroups.map(g => rankedByGroup.get(g)!);
+    const totalSlotsNeeded = unpopulatedRo16.length * 4;
+    const qualPerGroup = Math.floor(totalSlotsNeeded / nGroupsRo16);
+    const extraNeeded = totalSlotsNeeded - qualPerGroup * nGroupsRo16;
+
+    console.log(`[POPULATE_PLACEMENT] RO16: ${unpopulatedRo16.length} jogos × 4 = ${totalSlotsNeeded} jogadores, ${qualPerGroup}/grupo + ${extraNeeded} melhor(es) ${qualPerGroup + 1}°`);
+
+    const filteredRankings = new Map<string, string[]>();
+    sortedGroups.forEach(g => {
+      filteredRankings.set(g, (rankedByGroup.get(g) || []).slice(0, qualPerGroup));
+    });
+
+    if (extraNeeded > 0) {
+      const extraCandidates: Array<{ id: string; group: string; wins: number; diff: number }> = [];
+      sortedGroups.forEach(g => {
+        const fullRanking = rankedByGroup.get(g) || [];
+        if (fullRanking.length > qualPerGroup) {
+          const extraId = fullRanking[qualPerGroup];
+          const stats = playerStats.get(extraId);
+          if (stats) {
+            extraCandidates.push({
+              id: extraId,
+              group: g,
+              wins: stats.wins,
+              diff: stats.gamesWon - stats.gamesLost,
+            });
+          }
+        }
+      });
+      extraCandidates.sort((a, b) => {
+        if (a.wins !== b.wins) return b.wins - a.wins;
+        return b.diff - a.diff;
+      });
+      extraCandidates.slice(0, extraNeeded).forEach(e => {
+        filteredRankings.get(e.group)!.push(e.id);
+      });
+    }
+
+    const rankingsRo16 = sortedGroups.map(g => filteredRankings.get(g)!);
     const maxLenRo16 = Math.max(...rankingsRo16.map(r => r.length));
     const usedRo16 = new Set<string>();
     const allPairsRo16: Array<[string, string]> = [];
 
-    // Pares cruzados por camada de 2 posições
     for (let basePos = 0; basePos < maxLenRo16; basePos += 2) {
       const layerPairs: Array<[string, string]> = [];
       for (let g = 0; g < nGroupsRo16; g++) {
@@ -1234,26 +1269,25 @@ export async function populatePlacementMatches(
         }
       }
       if (layerPairs.length === 3) {
-        const tmp = layerPairs[1];
-        layerPairs[1] = layerPairs[2];
-        layerPairs[2] = tmp;
+        const tmp = layerPairs[1]; layerPairs[1] = layerPairs[2]; layerPairs[2] = tmp;
       }
       allPairsRo16.push(...layerPairs);
 
-      // Restantes desta camada
+      const remaining: string[] = [];
       for (let pos = basePos; pos < basePos + 2; pos++) {
         for (let g = 0; g < nGroupsRo16; g++) {
-          if (pos < rankingsRo16[g].length && !usedRo16.has(rankingsRo16[g][pos])) {
-            usedRo16.add(rankingsRo16[g][pos]);
-            // Guardar para emparelhar
-            const lastPair = allPairsRo16[allPairsRo16.length - 1];
-            if (lastPair && lastPair[1] === '') {
-              lastPair[1] = rankingsRo16[g][pos];
-            } else {
-              allPairsRo16.push([rankingsRo16[g][pos], '']);
-            }
+          const p = pos < rankingsRo16[g].length ? rankingsRo16[g][pos] : null;
+          if (p && !usedRo16.has(p)) {
+            remaining.push(p);
+            usedRo16.add(p);
           }
         }
+      }
+      for (let r = 0; r + 1 < remaining.length; r += 2) {
+        allPairsRo16.push([remaining[r], remaining[r + 1]]);
+      }
+      if (remaining.length % 2 === 1) {
+        allPairsRo16.push([remaining[remaining.length - 1], '']);
       }
     }
 

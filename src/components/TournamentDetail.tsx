@@ -431,11 +431,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     extraFromPosition: number;
   } => {
     if (isIndividual) {
+      // Jogadores individuais por fase (cada jogo = 4 jogadores)
       const individualKnockoutSizes: Record<string, number> = {
         'final': 4,
         'semifinals': 8,
         'quarterfinals': 16,
-        'round_of_16': 32,
+        'round_of_16': 16,
       };
 
       const totalQualified = individualKnockoutSizes[knockoutStage] || 8;
@@ -2484,6 +2485,67 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         await fetchTournamentData();
         alert(`Meias-finais mistas geradas!\n${groupA}1+${groupB}2 vs ${groupA}2+${groupB}1`);
       } else {
+        const ro16Matches = categoryMatches
+          .filter(m => m.round === 'round_of_16')
+          .sort((a, b) => a.match_number - b.match_number);
+        const hasUnpopulatedRo16 = ro16Matches.some(m =>
+          !m.player1_individual_id && !m.player3_individual_id
+        );
+
+        if (ro16Matches.length > 0 && hasUnpopulatedRo16) {
+          const confirmed = confirm(
+            `Atribuir ${qualifiedPlayers.length} jogadores qualificados a ${ro16Matches.length} oitavos de final?`
+          );
+          if (!confirmed) { setLoading(false); return; }
+
+          const usedInPairing = new Set<string>();
+          const ro16Pairs: Array<[string, string]> = [];
+
+          for (let g = 0; g < sortedGroupNames.length; g++) {
+            const gNext = (g + 1) % sortedGroupNames.length;
+            const playersG = qualifiedByGroup.get(sortedGroupNames[g]) || [];
+            const playersGNext = qualifiedByGroup.get(sortedGroupNames[gNext]) || [];
+            const pA = playersG.length > 0 && !usedInPairing.has(playersG[0]) ? playersG[0] : null;
+            const pB = playersGNext.length > 1 && !usedInPairing.has(playersGNext[1]) ? playersGNext[1] : null;
+            if (pA && pB) {
+              ro16Pairs.push([pA, pB]);
+              usedInPairing.add(pA);
+              usedInPairing.add(pB);
+            }
+          }
+
+          const remaining: string[] = [];
+          sortedGroupNames.forEach(gName => {
+            (qualifiedByGroup.get(gName) || []).slice(2).forEach(p => {
+              if (!usedInPairing.has(p)) { remaining.push(p); usedInPairing.add(p); }
+            });
+          });
+          qualifiedPlayers.forEach(p => {
+            if (!usedInPairing.has(p)) { remaining.push(p); usedInPairing.add(p); }
+          });
+          for (let r = 0; r + 1 < remaining.length; r += 2) {
+            ro16Pairs.push([remaining[r], remaining[r + 1]]);
+          }
+
+          const unpopulatedRo16 = ro16Matches.filter(m =>
+            !m.player1_individual_id && !m.player3_individual_id
+          );
+          for (let i = 0; i < unpopulatedRo16.length && (i * 2 + 1) < ro16Pairs.length; i++) {
+            const p1 = ro16Pairs[i * 2];
+            const p2 = ro16Pairs[i * 2 + 1];
+            if (!p1?.[0] || !p1?.[1] || !p2?.[0] || !p2?.[1]) break;
+            const { error } = await supabase.from('matches').update({
+              player1_individual_id: p1[0],
+              player2_individual_id: p1[1],
+              player3_individual_id: p2[0],
+              player4_individual_id: p2[1],
+            }).eq('id', unpopulatedRo16[i].id);
+            if (error) throw error;
+          }
+
+          await fetchTournamentData();
+          alert(`Oitavos gerados (${qualifiedPerGroup}/grupo + ${extraBestNeeded} melhor ${extraFromPosition}°).`);
+        } else {
         // Check if we have quarterfinal matches to populate first
         const quarterfinalMatches = categoryMatches
           .filter(m => m.round === 'quarterfinal' || m.round === 'quarter_final')
@@ -2623,6 +2685,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           await fetchTournamentData();
           alert('Semifinals generated with cross-group matchups!');
+        }
         }
       }
     } catch (error) {
@@ -5217,7 +5280,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           console.log(`[SCHEDULE] Knockout structure: ${numFirstRoundMatches} first-round matches (${totalQualifiedPlayers} players)`);
 
           if (categoryKnockoutStage === 'round_of_16') {
-            // Round of 16 → Quarterfinals → Semifinals → 3rd place + Final
+            // 16 jogadores → 4 oitavos → 2 meias → 3° + final (sem quartos)
             const numRo16 = numFirstRoundMatches;
             console.log(`[SCHEDULE] Creating ${numRo16} round_of_16 matches (${totalQualifiedPlayers} players)`);
             
@@ -5226,16 +5289,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
             advanceKoTime();
 
-            const numQuarters = Math.max(1, Math.ceil(numRo16 / 2));
-            console.log(`[SCHEDULE] Creating ${numQuarters} quarterfinal matches`);
-            
-            for (let i = 0; i < numQuarters; i++) {
-              addKoMatch('quarterfinal', courtName(i % numberOfCourts));
-            }
-            advanceKoTime();
-
-            const numSemis = Math.max(1, Math.ceil(numQuarters / 2));
-            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches`);
+            const numSemis = Math.max(2, Math.ceil(numRo16 / 2));
+            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (após oitavos)`);
             
             for (let i = 0; i < numSemis; i++) {
               addKoMatch('semifinal', courtName(i % numberOfCourts));
