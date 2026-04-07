@@ -127,6 +127,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [allRegistered, setAllRegistered] = useState<any[]>([]);
   const [payAtClubSelected, setPayAtClubSelected] = useState(false);
   const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
+  const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
 
   // Normalizar telefone: se não tem indicativo, adicionar +351
   const normalizePhone = (phone: string): string => {
@@ -216,6 +217,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     fetchTeamsCount();
     fetchCategories();
     checkLoggedInPlayer();
+    fetchClubPaymentMethod();
   }, [tournament.id]);
 
   useEffect(() => {
@@ -396,6 +398,27 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       setCategories(data);
     }
   };
+
+  const fetchClubPaymentMethod = async () => {
+    if (!tournament.club_id) return;
+    const { data } = await supabase
+      .from('clubs')
+      .select('payment_method')
+      .eq('id', tournament.club_id)
+      .maybeSingle();
+    if (data?.payment_method) {
+      setClubPaymentMethod(data.payment_method);
+      // If club only supports "at_club", pre-select it
+      if (data.payment_method === 'at_club') {
+        setPayAtClubSelected(true);
+      }
+    }
+  };
+
+  const clubSupportsOnline = !clubPaymentMethod || ['per_player', 'full_court', 'at_club_or_per_player', 'at_club_or_full_court', 'all'].includes(clubPaymentMethod);
+  const clubSupportsAtClub = !clubPaymentMethod || ['at_club', 'at_club_or_per_player', 'at_club_or_full_court', 'all'].includes(clubPaymentMethod);
+  const canPayOnline = clubSupportsOnline;
+  const canPayAtClub = clubSupportsAtClub && tournament.allow_club_payment === true;
 
   const getRegistrationFee = () => {
     const cat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
@@ -775,9 +798,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       }
 
       const registrationFee = getRegistrationFee();
-      const canPayAtClub = tournament.allow_club_payment === true;
+      const willPayAtClub = canPayAtClub && (payAtClubSelected || !canPayOnline);
 
-      if (registrationFee && registrationFee > 0 && !(canPayAtClub && payAtClubSelected)) {
+      if (registrationFee && registrationFee > 0 && !willPayAtClub) {
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-checkout-session`,
           {
@@ -1528,7 +1551,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 </div>
               </div>
 
-              {tournament.allow_club_payment && (
+              {canPayOnline && canPayAtClub && (
                 <div className="mt-4 border-t border-blue-200 pt-4">
                   <p className="text-sm font-medium text-blue-900 mb-3">Como pretende pagar?</p>
                   <div className="space-y-2">
@@ -1566,8 +1589,12 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 </div>
               )}
 
-              {!tournament.allow_club_payment && (
+              {canPayOnline && !canPayAtClub && (
                 <p className="text-xs text-blue-700 mt-2">Sera redirecionado para pagamento seguro via Stripe</p>
+              )}
+
+              {!canPayOnline && canPayAtClub && (
+                <p className="text-xs text-green-700 mt-2">Pagamento será efetuado diretamente no clube</p>
               )}
             </div>
           )}
@@ -1756,7 +1783,9 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               {loading
                 ? t.message.saving
                 : getRegistrationFee() > 0
-                  ? (payAtClubSelected ? 'Inscrever (Pagar no Clube)' : `Pagar ${getRegistrationFee()}€`)
+                  ? (payAtClubSelected || (!canPayOnline && canPayAtClub)
+                      ? 'Inscrever (Pagar no Clube)'
+                      : `Pagar ${getRegistrationFee()}€`)
                   : t.registration.submit
               }
             </button>
