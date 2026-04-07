@@ -1848,9 +1848,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           )}
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">{tournament.name}</h1>
           {tournament.description && (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto whitespace-pre-line">
-              {tournament.description.replace(/<[^>]*>/g, '')}
-            </p>
+            <div
+              className="text-lg text-gray-600 max-w-2xl mx-auto [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-1 [&_a]:text-blue-600 [&_a]:underline [&_br]:block [&_p]:mb-2"
+              dangerouslySetInnerHTML={{ __html: tournament.description }}
+            />
           )}
         </div>
 
