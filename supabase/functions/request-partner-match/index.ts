@@ -2,6 +2,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { deliverWebPushNotifications } from "../_shared/deliverPush.ts";
+import {
+  isPlayerEligibleForCategory,
+  type TournamentCategoryEligibility,
+} from "../_shared/categoryEligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -115,6 +119,26 @@ Deno.serve(async (req: Request) => {
       effectiveCategoryId = byProfile?.id ?? categories?.[0]?.id ?? null;
     }
 
+    let categoryForInvitees: TournamentCategoryEligibility | null = null;
+    if (effectiveCategoryId) {
+      const { data: catRow, error: catErr } = await admin
+        .from("tournament_categories")
+        .select("id, name, accepted_levels, min_level, max_level")
+        .eq("id", effectiveCategoryId)
+        .maybeSingle();
+      if (catErr) throw catErr;
+      if (!catRow) throw new Error("Tournament category not found");
+      categoryForInvitees = catRow as TournamentCategoryEligibility;
+      if (
+        !isPlayerEligibleForCategory(categoryForInvitees, {
+          player_category: requester.player_category,
+          level: requester.level,
+        })
+      ) {
+        throw new Error("A tua categoria não é elegível para esta categoria do torneio");
+      }
+    }
+
     let followingIds: string[] | null = null;
     if (targetMode === "following") {
       const { data: follows } = await admin
@@ -131,7 +155,7 @@ Deno.serve(async (req: Request) => {
 
     let candidatesQuery = admin
       .from("player_accounts")
-      .select("id, user_id, name, court_position")
+      .select("id, user_id, name, court_position, player_category, level")
       .not("user_id", "is", null)
       .neq("id", requester.id);
     if (followingIds) candidatesQuery = candidatesQuery.in("user_id", followingIds);
@@ -144,10 +168,32 @@ Deno.serve(async (req: Request) => {
     const compatible = (candidates || []).filter((c: any) => {
       if (!c.user_id || c.user_id === requester.user_id) return false;
       const pos = (c.court_position || "both") as string;
-      return pos === "both" || pos === desiredPartnerSide;
+      if (!(pos === "both" || pos === desiredPartnerSide)) return false;
+      if (categoryForInvitees) {
+        if (
+          !isPlayerEligibleForCategory(categoryForInvitees, {
+            player_category: c.player_category,
+            level: c.level,
+          })
+        ) {
+          return false;
+        }
+      }
+      return true;
     });
 
-    const candidateIds = compatible.map((c: any) => c.id);
+    // Uma linha por jogador (auth): vários player_accounts com o mesmo user_id → um convite; escolher id estável (menor UUID).
+    const byInviteeUserId = new Map<string, any[]>();
+    for (const c of compatible) {
+      const uid = c.user_id as string;
+      if (!byInviteeUserId.has(uid)) byInviteeUserId.set(uid, []);
+      byInviteeUserId.get(uid)!.push(c);
+    }
+    const compatibleOnePerUser = Array.from(byInviteeUserId.values()).map((rows) =>
+      rows.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))[0],
+    );
+
+    const candidateIds = compatibleOnePerUser.map((c: any) => c.id);
     const { data: alreadyPlayers } = candidateIds.length
       ? await admin
           .from("players")
@@ -156,7 +202,7 @@ Deno.serve(async (req: Request) => {
           .in("player_account_id", candidateIds)
       : { data: [] as any[] };
     const busySet = new Set((alreadyPlayers || []).map((p: any) => p.player_account_id));
-    const finalCandidates = compatible.filter((c: any) => !busySet.has(c.id)).slice(0, 10);
+    const finalCandidates = compatibleOnePerUser.filter((c: any) => !busySet.has(c.id)).slice(0, 10);
 
     const { data: requestRow, error: requestError } = await admin
       .from("partner_match_requests")
@@ -178,15 +224,48 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const inviteRows = finalCandidates.map((c: any) => ({
-      request_id: requestRow.id,
-      tournament_id: tournamentId,
-      category_id: effectiveCategoryId,
-      requester_user_id: requester.user_id,
-      requester_player_account_id: requester.id,
-      invitee_user_id: c.user_id,
-      invitee_player_account_id: c.id,
-    }));
+    const paIds = finalCandidates.map((c: any) => c.id as string);
+    const { data: paRows, error: paErr } = await admin
+      .from("player_accounts")
+      .select("id, user_id")
+      .in("id", paIds);
+    if (paErr) throw paErr;
+    const uidByAccountId = new Map<string, string>();
+    for (const r of paRows || []) {
+      const row = r as { id: string; user_id: string | null };
+      if (row.id && row.user_id) uidByAccountId.set(row.id, row.user_id);
+    }
+
+    const inviteRows: {
+      request_id: string;
+      tournament_id: string;
+      category_id: string | null;
+      requester_user_id: string;
+      requester_player_account_id: string;
+      invitee_user_id: string;
+      invitee_player_account_id: string;
+    }[] = [];
+
+    for (const c of finalCandidates) {
+      const cid = c.id as string;
+      const inviteeUid = uidByAccountId.get(cid) || (c.user_id as string | null);
+      if (!inviteeUid || inviteeUid === requester.user_id) continue;
+      inviteRows.push({
+        request_id: requestRow.id,
+        tournament_id: tournamentId,
+        category_id: effectiveCategoryId,
+        requester_user_id: requester.user_id,
+        requester_player_account_id: requester.id,
+        invitee_user_id: inviteeUid,
+        invitee_player_account_id: cid,
+      });
+    }
+
+    if (!inviteRows.length) {
+      return new Response(JSON.stringify({ success: true, requestId: requestRow.id, invitesSent: 0 }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const { data: invites, error: invitesError } = await admin
       .from("partner_match_invites")
       .insert(inviteRows)

@@ -25,11 +25,19 @@ Deno.serve(async (req: Request) => {
 
     const { data: invite } = await admin
       .from("partner_match_invites")
-      .select("id, invitee_user_id, status")
+      .select("id, invitee_user_id, invitee_player_account_id, status")
       .eq("id", inviteId)
       .maybeSingle();
     if (!invite) throw new Error("Invite not found");
-    if (invite.invitee_user_id !== userId) throw new Error("Forbidden");
+    const { data: inviteePa } = await admin
+      .from("player_accounts")
+      .select("user_id")
+      .eq("id", invite.invitee_player_account_id)
+      .maybeSingle();
+    const inviteeOwnerId = inviteePa?.user_id as string | undefined;
+    if (inviteeOwnerId !== userId && invite.invitee_user_id !== userId) {
+      throw new Error("Forbidden");
+    }
     if (invite.status !== "pending") throw new Error("Invite is not pending");
 
     const { error } = await admin

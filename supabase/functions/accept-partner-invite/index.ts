@@ -1,5 +1,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  isPlayerEligibleForCategory,
+  type TournamentCategoryEligibility,
+} from "../_shared/categoryEligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -31,12 +35,21 @@ Deno.serve(async (req: Request) => {
         *,
         request:partner_match_requests(*),
         tournament:tournaments(id, name, registration_fee, user_id, registration_redirect_url),
-        category:tournament_categories(id, name, registration_fee)
+        category:tournament_categories(id, name, registration_fee, accepted_levels, min_level, max_level)
       `)
       .eq("id", inviteId)
       .maybeSingle();
     if (inviteError || !invite) throw new Error("Invite not found");
-    if (invite.invitee_user_id !== userId) throw new Error("Forbidden");
+    const { data: inviteePa } = await admin
+      .from("player_accounts")
+      .select("user_id")
+      .eq("id", invite.invitee_player_account_id)
+      .maybeSingle();
+    const inviteeOwnerId = inviteePa?.user_id as string | undefined;
+    if (inviteeOwnerId !== userId && invite.invitee_user_id !== userId) {
+      throw new Error("Forbidden");
+    }
+    const effectiveInviteeUserId = inviteeOwnerId ?? invite.invitee_user_id;
     if (invite.status !== "pending") throw new Error("Invite is not pending");
     if (new Date(invite.expires_at).getTime() < Date.now()) throw new Error("Invite expired");
 
@@ -54,15 +67,43 @@ Deno.serve(async (req: Request) => {
 
     const { data: requesterAccount } = await admin
       .from("player_accounts")
-      .select("id, name, email, phone_number")
+      .select("id, name, email, phone_number, player_category, level")
       .eq("id", requesterId)
       .maybeSingle();
     const { data: inviteeAccount } = await admin
       .from("player_accounts")
-      .select("id, name, email, phone_number")
+      .select("id, name, email, phone_number, player_category, level")
       .eq("id", inviteeId)
       .maybeSingle();
     if (!requesterAccount || !inviteeAccount) throw new Error("Player account not found");
+
+    const catFromInvite = invite.category as
+      | (TournamentCategoryEligibility & { id: string; registration_fee?: number | null })
+      | null;
+    if (categoryId && catFromInvite?.name) {
+      const eligibility: TournamentCategoryEligibility = {
+        name: catFromInvite.name,
+        accepted_levels: catFromInvite.accepted_levels ?? null,
+        min_level: catFromInvite.min_level ?? null,
+        max_level: catFromInvite.max_level ?? null,
+      };
+      if (
+        !isPlayerEligibleForCategory(eligibility, {
+          player_category: requesterAccount.player_category,
+          level: requesterAccount.level,
+        })
+      ) {
+        throw new Error("A categoria do torneio não corresponde ao perfil do parceiro que convidou");
+      }
+      if (
+        !isPlayerEligibleForCategory(eligibility, {
+          player_category: inviteeAccount.player_category,
+          level: inviteeAccount.level,
+        })
+      ) {
+        throw new Error("Não és elegível para esta categoria do torneio");
+      }
+    }
 
     const { data: p1, error: p1Err } = await admin
       .from("players")
@@ -84,7 +125,7 @@ Deno.serve(async (req: Request) => {
         tournament_id: tournamentId,
         category_id: categoryId,
         player_account_id: inviteeId,
-        user_id: invite.invitee_user_id,
+        user_id: effectiveInviteeUserId,
         name: inviteeAccount.name,
         phone_number: inviteeAccount.phone_number || "",
       })
