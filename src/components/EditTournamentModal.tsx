@@ -37,6 +37,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     registration_deadline: (tournament as any).registration_deadline ? new Date((tournament as any).registration_deadline).toISOString().split('T')[0] : '',
     registration_redirect_url: (tournament as any).registration_redirect_url || '',
     mixed_knockout: (tournament as any).mixed_knockout || false,
+    format: tournament.format || 'round_robin',
+    round_robin_type: (tournament as any).round_robin_type || null,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -302,6 +304,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         registration_deadline: formData.registration_deadline ? new Date(formData.registration_deadline).toISOString() : null,
         registration_redirect_url: formData.registration_redirect_url || null,
         mixed_knockout: formData.mixed_knockout,
+        format: formData.format,
+        round_robin_type: formData.round_robin_type,
         club_id: selectedClubId || null,
         court_names: selectedCourtNames.length > 0 ? selectedCourtNames : null,
       })
@@ -704,9 +708,44 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             </div>
           )}
 
-          {/* Formato do torneio é definido nas categorias */}
-
-
+          {/* Formato do torneio */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">{t.tournament.format || 'Formato'}</h3>
+            <p className="text-xs text-gray-500 mb-4">{t.tournament.formatHelper || 'Escolha o formato principal do torneio.'}</p>
+            <div className="space-y-3">
+              <div>
+                <select
+                  value={formData.format === 'round_robin' && formData.round_robin_type === 'individual' ? 'round_robin_individual' : formData.format === 'round_robin' && formData.round_robin_type === 'teams' ? 'round_robin_teams' : formData.format}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === 'round_robin_individual') {
+                      setFormData({ ...formData, format: 'round_robin', round_robin_type: 'individual' });
+                    } else if (val === 'round_robin_teams') {
+                      setFormData({ ...formData, format: 'round_robin', round_robin_type: 'teams' });
+                    } else {
+                      setFormData({ ...formData, format: val, round_robin_type: null });
+                    }
+                  }}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <optgroup label={t.tournament.formatOptgroupIndividual}>
+                    <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
+                    <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
+                    <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
+                    <option value="mixed_american">{t.tournament.formatOption_mixed_american}</option>
+                    <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
+                  </optgroup>
+                  <optgroup label={t.tournament.formatOptgroupTeams}>
+                    <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
+                    <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                    <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
+                    <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
+                    <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+          </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>

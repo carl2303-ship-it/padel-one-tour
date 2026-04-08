@@ -63,12 +63,18 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
 
     const { data } = await supabase
       .from('players')
-      .select('id, name, email, phone_number')
+      .select('id, name, email, phone_number, tournament_id')
       .in('tournament_id', tournamentIds)
       .order('name');
 
     if (data) {
-      const uniquePlayers = data.reduce((acc: typeof data, player) => {
+      // Prioritize players from the current tournament when deduplicating
+      const sorted = [...data].sort((a, b) => {
+        const aInTournament = (a as any).tournament_id === tournamentId ? 0 : 1;
+        const bInTournament = (b as any).tournament_id === tournamentId ? 0 : 1;
+        return aInTournament - bInTournament;
+      });
+      const uniquePlayers = sorted.reduce((acc: typeof data, player) => {
         const key = player.phone_number?.replace(/\s+/g, '') || player.name;
         const existing = acc.find(p =>
           (p.phone_number?.replace(/\s+/g, '') === key) ||
@@ -529,12 +535,9 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
               >
                 <option value="">No Category</option>
                 {categories.map((category) => {
-                  const formatLabel = category.format === 'single_elimination' ? 'Single Elimination' :
-                    category.format === 'round_robin' ? 'Round Robin' :
-                    category.format === 'individual_groups_knockout' ? 'Individual Groups + Knockout' : 'Groups + Knockout';
                   return (
                     <option key={category.id} value={category.id}>
-                      {category.name} - {formatLabel}
+                      {category.name}
                     </option>
                   );
                 })}

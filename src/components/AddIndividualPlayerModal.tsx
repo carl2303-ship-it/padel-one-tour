@@ -358,15 +358,9 @@ export default function AddIndividualPlayerModal({
             >
               <option value="">Select a category...</option>
               {categories.map((category) => {
-                let formatLabel = 'Unknown';
-                if (category.format === 'round_robin') formatLabel = 'Round Robin';
-                else if (category.format === 'individual_groups_knockout') formatLabel = 'Groups + Knockout';
-                else if (category.format === 'crossed_playoffs') formatLabel = 'Crossed Playoffs';
-                else if (category.format === 'mixed_gender') formatLabel = 'Mixed Gender';
-                
                 return (
                   <option key={category.id} value={category.id}>
-                    {category.name} ({formatLabel})
+                    {category.name}
                   </option>
                 );
               })}

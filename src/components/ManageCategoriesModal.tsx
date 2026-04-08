@@ -18,7 +18,6 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [tournamentDates, setTournamentDates] = useState<{ start_date: string; end_date: string }>({ start_date: '', end_date: '' });
   const [newCategory, setNewCategory] = useState({
     name: '',
-    format: 'single_elimination' as 'single_elimination' | 'groups_knockout' | 'round_robin' | 'round_robin_teams' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'crossed_playoffs_teams' | 'mixed_gender' | 'mixed_american',
     number_of_groups: 0,
     max_teams: 16,
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
@@ -33,7 +32,13 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
   const ALL_PLAYER_LEVELS = ['M6', 'M5', 'M4', 'M3', 'M2', 'M1', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
+  const [tournamentFormat, setTournamentFormat] = useState<string>('groups_knockout');
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
+
+  const individualFormats = ['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'];
+  const isGroupsFormat = (fmt: string) => ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(fmt);
+  const isIndividualFormat = (fmt: string, rrType: string | null) =>
+    individualFormats.includes(fmt) || (fmt === 'round_robin' && rrType === 'individual');
 
   useEffect(() => {
     loadCategories();
@@ -44,10 +49,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const fetchTournamentType = async () => {
     const { data } = await supabase
       .from('tournaments')
-      .select('round_robin_type, start_date, end_date')
+      .select('format, round_robin_type, start_date, end_date')
       .eq('id', tournamentId)
       .single();
     if (data) {
+      setTournamentFormat((data as any).format || 'groups_knockout');
       setTournamentRoundRobinType((data as any).round_robin_type);
       setTournamentDates({
         start_date: (data as any).start_date || '',
@@ -130,18 +136,17 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
-      const dbFormat = newCategory.format === 'round_robin_teams' ? 'round_robin' : newCategory.format;
-      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(dbFormat);
+      const hasGroups = isGroupsFormat(tournamentFormat);
       const { error } = await supabase
         .from('tournament_categories')
         .insert({
           tournament_id: tournamentId,
           name: newCategory.name,
-          format: dbFormat,
-          number_of_groups: isGroupsFormat ? newCategory.number_of_groups : 0,
+          format: tournamentFormat,
+          number_of_groups: hasGroups ? newCategory.number_of_groups : 0,
           max_teams: newCategory.max_teams,
-          knockout_stage: isGroupsFormat ? newCategory.knockout_stage : null,
-          qualified_per_group: isGroupsFormat ? newCategory.qualified_per_group : null,
+          knockout_stage: hasGroups ? newCategory.knockout_stage : null,
+          qualified_per_group: hasGroups ? newCategory.qualified_per_group : null,
           court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
           category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
           match_duration_minutes: newCategory.match_duration_minutes || null,
@@ -152,18 +157,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
       if (error) throw error;
 
-      const { data: existingCats } = await supabase.from('tournament_categories').select('id').eq('tournament_id', tournamentId);
-      if (!existingCats || existingCats.length <= 1) {
-        const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
-        await supabase.from('tournaments').update({
-          format: tournamentFormat,
-          round_robin_type: newCategory.format === 'round_robin_teams' ? 'teams' : newCategory.format === 'round_robin_individual' ? 'individual' : null,
-        }).eq('id', tournamentId);
-      }
-
       setNewCategory({
         name: '',
-        format: 'single_elimination',
         number_of_groups: 0,
         max_teams: 16,
         knockout_stage: 'quarterfinals',
@@ -192,17 +187,16 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     setLoading(true);
 
     try {
-      const dbFormat = editingCategory.format === 'round_robin_teams' ? 'round_robin' : editingCategory.format;
-      const isGroupsFormat = ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(dbFormat);
+      const hasGroups = isGroupsFormat(tournamentFormat);
       const { error } = await supabase
         .from('tournament_categories')
         .update({
           name: editingCategory.name,
-          format: dbFormat,
-          number_of_groups: isGroupsFormat ? editingCategory.number_of_groups : 0,
+          format: tournamentFormat,
+          number_of_groups: hasGroups ? editingCategory.number_of_groups : 0,
           max_teams: editingCategory.max_teams,
-          knockout_stage: isGroupsFormat ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-          qualified_per_group: isGroupsFormat ? (editingCategory.qualified_per_group || 2) : null,
+          knockout_stage: hasGroups ? (editingCategory.knockout_stage || 'quarterfinals') : null,
+          qualified_per_group: hasGroups ? (editingCategory.qualified_per_group || 2) : null,
           court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
           category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
           match_duration_minutes: editingCategory.match_duration_minutes || null,
@@ -213,15 +207,6 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         .eq('id', editingCategory.id);
 
       if (error) throw error;
-
-      const { data: existingCats } = await supabase.from('tournament_categories').select('id').eq('tournament_id', tournamentId);
-      if (!existingCats || existingCats.length <= 1) {
-        const tournamentFormat = dbFormat === 'round_robin' ? 'round_robin' : dbFormat;
-        await supabase.from('tournaments').update({
-          format: tournamentFormat,
-          round_robin_type: editingCategory.format === 'round_robin_teams' ? 'teams' : editingCategory.format === 'round_robin_individual' ? 'individual' : null,
-        }).eq('id', tournamentId);
-      }
 
       setEditingCategory(null);
       await loadCategories();
@@ -293,38 +278,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t.category.format}
-                </label>
-                <select
-                  value={newCategory.format}
-                  onChange={(e) => setNewCategory({
-                    ...newCategory,
-                    format: e.target.value as any
-                  })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <optgroup label="Individual">
-                    <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
-                    <option value="round_robin">{(t.format as any).round_robin_individual || 'Americano Individual'}</option>
-                    <option value="mixed_american">{t.format.mixed_american}</option>
-                  </optgroup>
-                  <optgroup label="Equipas">
-                    <option value="round_robin_teams">{(t.format as any).round_robin_teams || 'Americano Equipas'}</option>
-                    <option value="groups_knockout">{t.format.groups_knockout}</option>
-                    <option value="single_elimination">{t.format.single_elimination}</option>
-                    <option value="super_teams">{t.format.super_teams}</option>
-                  </optgroup>
-                  <optgroup label="Especial">
-                    <option value="crossed_playoffs">{t.format.crossed_playoffs}</option>
-                    <option value="crossed_playoffs_teams">{t.format.crossed_playoffs_teams || 'Playoffs Cruzados (Equipas)'}</option>
-                    <option value="mixed_gender">{t.format.mixed_gender}</option>
-                  </optgroup>
-                </select>
-              </div>
-
-                          {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(newCategory.format)) && (
+                          {isGroupsFormat(tournamentFormat) && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -638,38 +592,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                             />
                           </div>
 
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              {t.category.format}
-                            </label>
-                            <select
-                              value={editingCategory.format}
-                              onChange={(e) => setEditingCategory({
-                                ...editingCategory,
-                                format: e.target.value as any
-                              })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            >
-                              <optgroup label="Individual">
-                                <option value="individual_groups_knockout">{t.format.individual_groups_knockout}</option>
-                                <option value="round_robin">{(t.format as any).round_robin_individual || 'Americano Individual'}</option>
-                                <option value="mixed_american">{t.format.mixed_american}</option>
-                              </optgroup>
-                              <optgroup label="Equipas">
-                                <option value="round_robin_teams">{(t.format as any).round_robin_teams || 'Americano Equipas'}</option>
-                                <option value="groups_knockout">{t.format.groups_knockout}</option>
-                                <option value="single_elimination">{t.format.single_elimination}</option>
-                                <option value="super_teams">{t.format.super_teams}</option>
-                              </optgroup>
-                              <optgroup label="Especial">
-                                <option value="crossed_playoffs">{t.format.crossed_playoffs}</option>
-                                <option value="crossed_playoffs_teams">{t.format.crossed_playoffs_teams || 'Playoffs Cruzados (Equipas)'}</option>
-                                <option value="mixed_gender">{t.format.mixed_gender}</option>
-                              </optgroup>
-                            </select>
-                          </div>
-
-                          {(['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(editingCategory.format)) && (
+                          {isGroupsFormat(tournamentFormat) && (
                             <>
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -978,17 +901,12 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                         <div>
                           <div className="font-semibold text-gray-900">{category.name}</div>
                           <div className="text-sm text-gray-600">
-                            {category.format === 'round_robin'
-                              ? (tournamentRoundRobinType === 'teams'
-                                ? ((t.format as any).round_robin_teams || 'Americano Equipas')
-                                : ((t.format as any).round_robin_individual || 'Americano Individual'))
-                              : ((t.format as any)[category.format] || category.format)}
-                            {category.number_of_groups > 0 && ` (${category.number_of_groups} ${t.category.groups.toLowerCase()})`}
+                            {category.number_of_groups > 0 && `${category.number_of_groups} ${t.category.groups.toLowerCase()}`}
                             {category.knockout_stage && (
-                              <> • {category.knockout_stage === 'round_of_16' ? 'R16' : category.knockout_stage === 'quarterfinals' ? 'QF' : category.knockout_stage === 'semifinals' ? 'SF' : 'F'}</>
+                              <>{category.number_of_groups > 0 ? ' • ' : ''}{category.knockout_stage === 'round_of_16' ? 'R16' : category.knockout_stage === 'quarterfinals' ? 'QF' : category.knockout_stage === 'semifinals' ? 'SF' : 'F'}</>
                             )}
-                            {' • '}
-                            Max {category.max_teams} {['round_robin', 'individual_groups_knockout', 'mixed_american', 'crossed_playoffs', 'mixed_gender'].includes(category.format) ? 'players' : 'teams'}
+                            {(category.number_of_groups > 0 || category.knockout_stage) ? ' • ' : ''}
+                            Max {category.max_teams} {isIndividualFormat(tournamentFormat, tournamentRoundRobinType) ? 'players' : 'teams'}
                             {category.court_names && category.court_names.length > 0 && (
                               <> • {category.court_names.length} campo{category.court_names.length !== 1 ? 's' : ''}</>
                             )}

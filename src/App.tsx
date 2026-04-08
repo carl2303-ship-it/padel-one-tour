@@ -6,6 +6,7 @@ import CreateTournamentModal from './components/CreateTournamentModal';
 import AddTeamModal from './components/AddTeamModal';
 import MatchModal from './components/MatchModal';
 import RegistrationLanding from './components/RegistrationLanding';
+import SuperTeamRegistration from './components/SuperTeamRegistration';
 import LanguageSelector from './components/LanguageSelector';
 import AuthForm from './components/AuthForm';
 import UserSettings from './components/UserSettings';
@@ -337,7 +338,9 @@ function App() {
           )}
 
           {view === 'registration' && selectedTournament && (
-            <RegistrationLanding tournament={selectedTournament} onClose={handleBack} />
+            selectedTournament.format === 'super_teams'
+              ? <SuperTeamRegistration tournament={selectedTournament} onClose={handleBack} />
+              : <RegistrationLanding tournament={selectedTournament} onClose={handleBack} />
           )}
 
           {view === 'leagues' && <LeagueManagement onBack={() => setView('list')} />}

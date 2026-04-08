@@ -267,7 +267,7 @@ export function generateAmericanSchedule(
         }
 
         if (bestCourt !== -1) {
-          match.scheduled_time = timeKey;
+          match.scheduled_time = matchDate.toISOString();
           match.court = String(bestCourt);
 
           playersInMatch.forEach(p => addPlayerUsage(p, bestCourt));

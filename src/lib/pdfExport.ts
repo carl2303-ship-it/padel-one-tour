@@ -248,11 +248,11 @@ export async function exportTournamentPDF(
   }, {} as Record<string, number>);
   console.log('[PDF] Match statuses:', matchStatuses);
 
-  // LÓGICA SIMPLES: o tipo de PDF = o tipo definido nas definições do torneio (format + round_robin_type)
+  // Tournament format is the single source of truth
   const format = (tournament as { format: string }).format;
   const roundRobinType = tournament.round_robin_type ?? null;
 
-  console.log('[PDF] Tipo do torneio (definições): format=', format, 'round_robin_type=', roundRobinType);
+  console.log('[PDF] Tipo do torneio: format=', format, 'round_robin_type=', roundRobinType);
 
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();

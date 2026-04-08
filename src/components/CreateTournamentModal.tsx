@@ -28,6 +28,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     non_member_price: 0,
     allow_club_payment: false,
     has_dinner_option: false,
+    format: 'round_robin' as string,
+    round_robin_type: 'teams' as string | null,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -230,7 +232,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         end_time: formData.daily_end_time,
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
-        format: 'groups_knockout',
+        format: formData.format,
+        round_robin_type: formData.round_robin_type,
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
         match_duration_minutes: 30,
@@ -306,6 +309,40 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Add tournament details, rules, or any additional information..."
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.format || 'Formato'}</label>
+            <p className="text-xs text-gray-500 mb-2">{t.tournament.formatHelper}</p>
+            <select
+              value={formData.format === 'round_robin' && formData.round_robin_type === 'individual' ? 'round_robin_individual' : formData.format === 'round_robin' && formData.round_robin_type === 'teams' ? 'round_robin_teams' : formData.format}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'round_robin_individual') {
+                  setFormData({ ...formData, format: 'round_robin', round_robin_type: 'individual' });
+                } else if (val === 'round_robin_teams') {
+                  setFormData({ ...formData, format: 'round_robin', round_robin_type: 'teams' });
+                } else {
+                  setFormData({ ...formData, format: val, round_robin_type: null });
+                }
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <optgroup label={t.tournament.formatOptgroupIndividual}>
+                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
+                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
+                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
+                <option value="mixed_american">{t.tournament.formatOption_mixed_american}</option>
+                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
+              </optgroup>
+              <optgroup label={t.tournament.formatOptgroupTeams}>
+                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
+                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
+                <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
+                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+              </optgroup>
+            </select>
           </div>
 
           <div>

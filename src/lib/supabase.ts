@@ -78,7 +78,7 @@ export type TournamentCategory = {
   id: string;
   tournament_id: string;
   name: string;
-  format: 'single_elimination' | 'groups_knockout' | 'round_robin' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs' | 'crossed_playoffs_teams' | 'mixed_gender' | 'mixed_american';
+  format?: string;
   number_of_groups: number;
   max_teams: number;
   registration_fee?: number;

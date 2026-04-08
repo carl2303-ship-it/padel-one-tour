@@ -180,37 +180,14 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   };
 
   const isIndividualFormat = () => {
-    // Formatos que são sempre individuais
-    if (tournament.format === 'mixed_american' || 
-        tournament.format === 'crossed_playoffs' || 
-        tournament.format === 'mixed_gender') {
+    const fmt = tournament.format;
+    if (['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(fmt)) {
       return true;
     }
-    if (formData.categoryId) {
-      const category = categories.find(c => c.id === formData.categoryId);
-      if (category) {
-        // crossed_playoffs_teams é formato de EQUIPAS, não individual
-        if (category.format === 'crossed_playoffs_teams') {
-          return false;
-        }
-        if (category.format === 'individual_groups_knockout' || category.format === 'mixed_american' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender') {
-          return true;
-        }
-        if (category.format === 'round_robin') {
-          return tournament.round_robin_type === 'individual';
-        }
-        return false;
-      }
+    if (fmt === 'round_robin' && tournament.round_robin_type === 'individual') {
+      return true;
     }
-    // crossed_playoffs_teams é para equipas, não individual
-    if (tournament.format === 'crossed_playoffs_teams') {
-      return false;
-    }
-    return (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
-           tournament.format === 'individual_groups_knockout' ||
-           tournament.format === 'mixed_american' ||
-           tournament.format === 'crossed_playoffs' ||
-           tournament.format === 'mixed_gender';
+    return false;
   };
 
   useEffect(() => {

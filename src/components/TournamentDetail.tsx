@@ -25,6 +25,7 @@ import { exportTournamentPDF } from '../lib/pdfExport';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
+import AddSuperTeamModal from './AddSuperTeamModal';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -124,6 +125,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedPlayer, setSelectedPlayer] = useState<Player | undefined>();
   const [showEditPlayer, setShowEditPlayer] = useState(false);
   const [currentTournament, setCurrentTournament] = useState<Tournament>(tournament);
+  const [resolvedFormat, setResolvedFormat] = useState<string>(tournament.format);
+  const [resolvedRoundRobinType, setResolvedRoundRobinType] = useState<string | null>((tournament as any).round_robin_type || null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [liveLinkCopied, setLiveLinkCopied] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -140,6 +143,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedLineupTeam, setSelectedLineupTeam] = useState<SuperTeamRow | null>(null);
   const [showEditSuperTeam, setShowEditSuperTeam] = useState(false);
   const [selectedSuperTeam, setSelectedSuperTeam] = useState<SuperTeamRow | null>(null);
+  const [showAddSuperTeam, setShowAddSuperTeam] = useState(false);
 
   // Ref to store match ID to scroll to after modal close + data refresh
   const scrollToMatchIdRef = useRef<string | null>(null);
@@ -285,12 +289,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     return () => document.removeEventListener('click', handleClickOutside);
   }, [showGroupDropdown]);
 
-  const isIndividualRoundRobin = currentTournament?.format === 'round_robin' && currentTournament?.round_robin_type === 'individual';
-  const isIndividualGroupsKnockout = currentTournament?.format === 'individual_groups_knockout' ||
-    currentTournament?.format === 'crossed_playoffs' ||
-    currentTournament?.format === 'mixed_gender' ||
-    currentTournament?.format === 'mixed_american';
-  const isSuperTeams = currentTournament?.format === 'super_teams';
+  const isIndividualRoundRobin = resolvedFormat === 'round_robin' && resolvedRoundRobinType === 'individual';
+  const isIndividualGroupsKnockout = resolvedFormat === 'individual_groups_knockout' ||
+    resolvedFormat === 'crossed_playoffs' ||
+    resolvedFormat === 'mixed_gender' ||
+    resolvedFormat === 'mixed_american';
+  const isSuperTeams = resolvedFormat === 'super_teams';
 
   // Early return if tournament is not loaded
   if (!currentTournament) {
@@ -396,31 +400,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const isIndividualFormat = () => {
-    // Formatos de torneio que são sempre individuais
-    // NOTA: crossed_playoffs_teams é para equipas, não individual
-    if (currentTournament?.format === 'crossed_playoffs_teams') {
-      return false; // Formato de equipas
-    }
-    if (currentTournament?.format === 'crossed_playoffs' || currentTournament?.format === 'mixed_gender' || currentTournament?.format === 'mixed_american') {
-      return true;
-    }
-    
-    // Verificar por categoria
-    if (selectedCategory && selectedCategory !== 'no-category') {
-      const category = categories.find(c => c.id === selectedCategory);
-      if (category) {
-        if (category.format === 'crossed_playoffs_teams') {
-          return false; // Formato de equipas
-        }
-        if (category.format === 'individual_groups_knockout' || category.format === 'crossed_playoffs' || category.format === 'mixed_gender' || category.format === 'mixed_american') {
-          return true;
-        }
-        if (category.format === 'round_robin') {
-          return currentTournament?.round_robin_type === 'individual';
-        }
-        return false;
-      }
-    }
     return isIndividualRoundRobin || isIndividualGroupsKnockout;
   };
 
@@ -1031,6 +1010,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     if (fetchDepthRef.current >= 3) {
       console.warn('[FETCH] Max recursive depth reached, aborting');
       fetchDepthRef.current = 0;
+      setLoading(false);
       return;
     }
     fetchDepthRef.current++;
@@ -1038,7 +1018,38 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
     if (!silent) setLoading(true);
 
-    if (currentTournament?.format === 'super_teams') {
+    // Tournament format is the single source of truth
+    const effectiveFormat = tournament.format;
+    let effectiveRoundRobinType = (tournament as any).round_robin_type;
+    const individualFormats = ['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'];
+
+    // Auto-detect round_robin type for legacy tournaments with null round_robin_type
+    if (effectiveFormat === 'round_robin' && !effectiveRoundRobinType) {
+      const [{ count: teamCount }, { count: playerCount }] = await Promise.all([
+        supabase.from('teams').select('id', { count: 'exact', head: true }).eq('tournament_id', tournament.id),
+        supabase.from('players').select('id', { count: 'exact', head: true }).eq('tournament_id', tournament.id),
+      ]);
+      if ((teamCount ?? 0) > 0) {
+        effectiveRoundRobinType = 'teams';
+      } else if ((playerCount ?? 0) > 0) {
+        effectiveRoundRobinType = 'individual';
+      }
+      if (effectiveRoundRobinType) {
+        console.log('[FETCH] Auto-detected round_robin_type:', effectiveRoundRobinType, '(teams:', teamCount, 'players:', playerCount, ')');
+        // Persist to DB so this only runs once
+        await supabase.from('tournaments').update({ round_robin_type: effectiveRoundRobinType }).eq('id', tournament.id);
+      }
+    }
+
+    const isEffectiveIndividual = individualFormats.includes(effectiveFormat) ||
+      (effectiveFormat === 'round_robin' && effectiveRoundRobinType === 'individual');
+
+    setResolvedFormat(effectiveFormat);
+    setResolvedRoundRobinType(effectiveRoundRobinType);
+
+    console.log('[FETCH] Effective format:', effectiveFormat, 'individual:', isEffectiveIndividual);
+
+    if (effectiveFormat === 'super_teams') {
       const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
         supabase
           .from('tournament_categories')
@@ -1067,7 +1078,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       setTeams([]);
       setMatches([]);
       setIndividualPlayers([]);
-    } else if (isIndividualGroupsKnockout || isIndividualRoundRobin) {
+    } else if (isEffectiveIndividual) {
       // Formatos individuais: individual_groups_knockout e round_robin+individual (Americano Individual)
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
@@ -1103,8 +1114,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         );
         setMatches(sortedMatches);
 
-        // Use tournament.format (prop) to avoid stale currentTournament state
-        if (tournament.format === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
+        if (effectiveFormat === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
@@ -1146,10 +1156,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const hasCrossedRounds = matchesResult.data.some((m: any) => m.round === 'crossed_r1_j1');
         const hasSemifinalRounds = matchesResult.data.some((m: any) => m.round === 'semifinal');
         
-        console.log('[FETCH-CHECK] Format:', currentTournament?.format, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
+        console.log('[FETCH-CHECK] Format:', effectiveFormat, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
         
         // AUTO-FIX: Se mixed_american/mixed_gender tem crossed rounds incorretos, corrigir imediatamente
-        if ((currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') && hasCrossedRounds) {
+        if ((effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') && hasCrossedRounds) {
           console.log('[FETCH-FIX] mixed_american/mixed_gender com crossed rounds incorretos - corrigindo...');
           await supabase.from('matches').delete()
             .eq('tournament_id', tournament.id)
@@ -1225,7 +1235,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // ================================================================
             // MIXED AMERICAN: popular meias-finais com cruzamento F + M
             // ================================================================
-            if (currentTournament?.format === 'mixed_american' || currentTournament?.format === 'mixed_gender') {
+            if (effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') {
               // Se tem rounds crossed errados (de torneio antigo), apagar e recriar
               if (hasCrossedRounds) {
                 console.log('[FETCH-FILL] MA: Apagando crossed rounds incorretos...');
@@ -1331,14 +1341,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // ================================================================
             // CROSSED PLAYOFFS: preencher R1 se vazio
             // ================================================================
-            if ((currentTournament?.format === 'crossed_playoffs') && hasCrossedRounds) {
+            if ((effectiveFormat === 'crossed_playoffs') && hasCrossedRounds) {
               const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
               
               // NOTA: crossed_playoffs_teams é tratado no bloco de TEAMS (mais abaixo)
               // Aqui só tratamos crossed_playoffs individual
               
               // Para formato individual (crossed_playoffs)
-              if (currentTournament?.format === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+              if (effectiveFormat === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
                 console.log('[FETCH-FILL] Filling crossed playoffs R1...');
                 
                 if (sortedCats.length === 3) {
@@ -1377,7 +1387,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
     
-    if (currentTournament?.format !== 'super_teams' && !isIndividualGroupsKnockout && !isIndividualRoundRobin) {
+    if (!isEffectiveIndividual && effectiveFormat !== 'super_teams') {
       setSuperTeams([]);
       setSuperTeamConfrontations([]);
       setSuperTeamStandings([]);
@@ -1445,11 +1455,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // ================================================================
       // AUTO-POPULATE CROSSED PLAYOFFS TEAMS quando todos os grupos estão completos
       // ================================================================
-      // Usar tournament.format diretamente em vez de currentTournament que pode estar desatualizado
-      const tournamentFormat = tournament.format || (currentTournament?.format);
-      console.log('[FETCH-CHECK-TEAMS] Tournament format from prop:', tournament.format);
-      console.log('[FETCH-CHECK-TEAMS] Tournament format from state:', currentTournament?.format);
-      console.log('[FETCH-CHECK-TEAMS] Using format:', tournamentFormat);
+      const tournamentFormat = effectiveFormat;
+      console.log('[FETCH-CHECK-TEAMS] Tournament format:', tournamentFormat);
       console.log('[FETCH-CHECK-TEAMS] Has matchesResult.data:', !!matchesResult.data);
       console.log('[FETCH-CHECK-TEAMS] Has teamsResult.data:', !!teamsResult.data);
       console.log('[FETCH-CHECK-TEAMS] Has categoriesResult.data:', !!categoriesResult.data);
@@ -1559,7 +1566,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const fixCourtNames: string[] = (currentTournament as any)?.court_names || [];
             const fixCourtName = (idx: number) => fixCourtNames[idx] || (idx + 1).toString();
             
-            const formatTime = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:00`;
+            const formatTime = (d: Date) => d.toISOString();
             
             const newPlayoffs: any[] = [];
             let currentTime = new Date(baseTime);
@@ -1644,7 +1651,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
         
-        console.log('[FETCH-CHECK-TEAMS] Format:', currentTournament?.format);
+        console.log('[FETCH-CHECK-TEAMS] Format:', effectiveFormat);
         console.log('[FETCH-CHECK-TEAMS] Total matches:', allMatchesLocal.length);
         console.log('[FETCH-CHECK-TEAMS] Group matches:', groupMatchesLocal.length);
         console.log('[FETCH-CHECK-TEAMS] All groups done:', allGroupsDoneLocal);
@@ -1876,22 +1883,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     } finally {
       fetchDepthRef.current = Math.max(0, fetchDepthRef.current - 1);
-    }
-    setLoading(false);
-    setRefreshKey(prev => prev + 1);
+      setLoading(false);
+      setRefreshKey(prev => prev + 1);
 
-    if (scrollToMatchIdRef.current) {
-      const matchId = scrollToMatchIdRef.current;
-      scrollToMatchIdRef.current = null;
-      requestAnimationFrame(() => {
-        const el = document.getElementById(`match-${matchId}`);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          // Brief highlight effect
-          el.classList.add('ring-2', 'ring-blue-400', 'ring-offset-2');
-          setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'ring-offset-2'), 2000);
-        }
-      });
+      if (scrollToMatchIdRef.current) {
+        const matchId = scrollToMatchIdRef.current;
+        scrollToMatchIdRef.current = null;
+        requestAnimationFrame(() => {
+          const el = document.getElementById(`match-${matchId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('ring-2', 'ring-blue-400', 'ring-offset-2');
+            setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'ring-offset-2'), 2000);
+          }
+        });
+      }
     }
   };
 
@@ -4609,7 +4615,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const dailySchedules = currentTournament.daily_schedules || [];
       
       console.log('[SCHEDULE] ====================================');
-      console.log('[SCHEDULE] Generating schedule for format:', currentTournament.format, 'type:', currentTournament.round_robin_type);
+      // Tournament format is the single source of truth
+      const schedFormat = currentTournament.format;
+      const schedRoundRobinType = currentTournament.round_robin_type;
+
+      console.log('[SCHEDULE] Generating schedule for format:', schedFormat, 'type:', schedRoundRobinType);
       console.log('[SCHEDULE] Tournament settings from DB:');
       console.log('[SCHEDULE]   - daily_start_time:', currentTournament.daily_start_time);
       console.log('[SCHEDULE]   - daily_end_time:', currentTournament.daily_end_time);
@@ -4742,7 +4752,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         return combinations;
       };
       
-      if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'individual') {
+      if (schedFormat === 'round_robin' && schedRoundRobinType === 'individual') {
         // Individual Round Robin (Americano SEM grupos) - todos jogam contra todos com parceiros rotativos
         console.log('[SCHEDULE] Using American scheduler (individual round robin) with', individualPlayers.length, 'players');
         
@@ -4779,7 +4789,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           };
         });
         
-      } else if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
+      } else if (schedFormat === 'mixed_american' || schedFormat === 'mixed_gender') {
         // ================================================================
         // AMERICANO MISTO / MIXED GENDER: Cada categoria joga separadamente nos grupos,
         // depois as fases finais cruzam F + M
@@ -4937,13 +4947,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
         console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + 3rd + Final)`);
 
-      } else if (currentTournament.format === 'individual_groups_knockout' ||
-                 currentTournament.format === 'crossed_playoffs') {
+      } else if (schedFormat === 'individual_groups_knockout' ||
+                 schedFormat === 'crossed_playoffs') {
         // Americano COM grupos + eliminatórias (inclui crossed_playoffs)
-        console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', currentTournament.format);
+        console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', schedFormat);
         
         // Verificar se é formato de playoffs cruzados (cada categoria = 1 grupo)
-        const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs';
+        const isCrossedPlayoffs = schedFormat === 'crossed_playoffs';
         
         if (isCrossedPlayoffs) {
           // PLAYOFFS CRUZADOS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
@@ -5340,7 +5350,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}). Total: ${matchesToInsert.length}`);
         }
         
-      } else if (currentTournament.format === 'round_robin' && currentTournament.round_robin_type === 'teams') {
+      } else if (schedFormat === 'round_robin' && schedRoundRobinType === 'teams') {
         // Equipas Round Robin - por categoria se existirem categorias
         console.log('[SCHEDULE] Using Teams Round Robin scheduler with', teams.length, 'teams');
         
@@ -5553,7 +5563,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           });
         }
         
-      } else if (currentTournament.format === 'crossed_playoffs_teams') {
+      } else if (schedFormat === 'crossed_playoffs_teams') {
         // PLAYOFFS CRUZADOS PARA EQUIPAS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
         console.log('[SCHEDULE] ====================================');
         console.log('[SCHEDULE] CROSSED PLAYOFFS TEAMS FORMAT DETECTED');
@@ -5687,7 +5697,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const day = String(currentTime.getDate()).padStart(2, '0');
           const hours = String(currentTime.getHours()).padStart(2, '0');
           const minutes = String(currentTime.getMinutes()).padStart(2, '0');
-          const scheduledTimeStr = `${year}-${month}-${day}T${hours}:${minutes}:00`;
+          const scheduledTimeStr = currentTime.toISOString();
           
           console.log(`[SCHEDULE] Slot ${slotNumber}: ${hours}:${minutes} on ${day}/${month}/${year}`);
           
@@ -5864,7 +5874,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         
         // RONDA 1 - Playoffs Cruzados (quartos de final ou meias-finais)
-        const r1TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+        const r1TimeStr = playoffsTime.toISOString();
         
         for (let i = 0; i < numR1Matches; i++) {
           matchesToInsert.push({
@@ -5898,7 +5908,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             playoffsTime.setHours(parseInt(nextDaySchedule.start.split(':')[0]), parseInt(nextDaySchedule.start.split(':')[1] || '0'), 0, 0);
           }
           
-          const r2TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+          const r2TimeStr = playoffsTime.toISOString();
           
           for (let i = 0; i < numR2Matches; i++) {
             matchesToInsert.push({
@@ -5932,7 +5942,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           playoffsTime.setHours(parseInt(nextDaySchedule.start.split(':')[0]), parseInt(nextDaySchedule.start.split(':')[1] || '0'), 0, 0);
         }
         
-        const r3TimeStr = `${playoffsTime.getFullYear()}-${String(playoffsTime.getMonth() + 1).padStart(2, '0')}-${String(playoffsTime.getDate()).padStart(2, '0')}T${String(playoffsTime.getHours()).padStart(2, '0')}:${String(playoffsTime.getMinutes()).padStart(2, '0')}:00`;
+        const r3TimeStr = playoffsTime.toISOString();
         
         matchesToInsert.push({
           tournament_id: currentTournament.id,
@@ -5996,7 +6006,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         // Se há categorias e não é round_robin puro, gerar quadros separados por categoria
         const hasCategories = categories.length > 0 && teams.some(t => t.category_id);
-        const isRoundRobin = currentTournament.format === 'round_robin' && !currentTournament.round_robin_type;
+        const isRoundRobin = schedFormat === 'round_robin' && !schedRoundRobinType;
         
         if (hasCategories && !isRoundRobin) {
           console.log('[SCHEDULE] Generating separate brackets for', categories.length, 'categories using multiCategoryScheduler');
@@ -6023,7 +6033,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               const catCourtNames = (category as any).court_names as string[] | null | undefined;
               const catSchedule = (category as any).category_schedule || null;
               const catMatchDuration = (category as any).match_duration_minutes || null;
-              const catFormat = currentTournament.format || 'single_elimination';
+              const catFormat = schedFormat || 'single_elimination';
               
               // Para groups_knockout, criar knockoutTeams TBD baseados no knockoutStage
               // Estes são placeholders que serão preenchidos depois da fase de grupos
@@ -6105,7 +6115,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             teams,
             numberOfCourts,
             startDate,
-            currentTournament.format || 'round_robin',
+            schedFormat || 'round_robin',
             startTime,
             endTime,
             matchDuration,
@@ -6711,6 +6721,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   <h3 className="text-lg font-semibold">Super Equipas</h3>
                   <div className="flex gap-2">
                     <button
+                      onClick={() => setShowAddSuperTeam(true)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Adicionar Equipa
+                    </button>
+                    <button
                       onClick={handleSuperTeamsDrawGroups}
                       disabled={loading}
                       className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition disabled:opacity-50"
@@ -6836,6 +6853,61 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     </div>
                   );
                 })}
+                {/* Equipas sem categoria */}
+                {(() => {
+                  const uncategorized = filteredSuperTeams.filter(st => !st.category_id);
+                  if (uncategorized.length === 0) return null;
+                  const byGroup = uncategorized.reduce<Record<string, SuperTeamRow[]>>((acc, st) => {
+                    const g = st.group_name || 'Sem grupo';
+                    if (!acc[g]) acc[g] = [];
+                    acc[g].push(st);
+                    return acc;
+                  }, {});
+                  return (
+                    <div className="rounded-xl overflow-hidden border border-gray-200">
+                      <div className="px-4 py-2 bg-gray-500 text-white font-semibold text-center">
+                        Sem categoria ({uncategorized.length} equipas)
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50">
+                        {Object.entries(byGroup).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, groupTeams]) => (
+                          <div key={groupName} className="bg-white border rounded-lg overflow-hidden">
+                            <div className="bg-gray-200 px-3 py-2 font-medium text-gray-800">Grupo {groupName}</div>
+                            <div className="p-3 space-y-2">
+                              {groupTeams.map(st => (
+                                <div 
+                                  key={st.id} 
+                                  className="p-2 bg-gray-50 rounded-lg hover:bg-purple-50 cursor-pointer transition border border-transparent hover:border-purple-200"
+                                  onClick={() => {
+                                    setSelectedSuperTeam(st);
+                                    setShowEditSuperTeam(true);
+                                  }}
+                                >
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium text-gray-900">{st.name}</span>
+                                    <Pencil className="w-4 h-4 text-gray-400" />
+                                  </div>
+                                  {st.super_team_players && st.super_team_players.length > 0 && (
+                                    <div className="mt-1 text-xs text-gray-500">
+                                      {st.super_team_players
+                                        .sort((a, b) => a.player_order - b.player_order)
+                                        .map((p, i) => (
+                                          <span key={p.id}>
+                                            {p.is_captain && '👑 '}
+                                            {p.name}
+                                            {i < st.super_team_players!.length - 1 && ', '}
+                                          </span>
+                                        ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {filteredSuperTeams.length === 0 && (
                   <div className="text-center py-12 text-gray-500">
                     <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -7493,9 +7565,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             <Standings
               key={refreshKey}
               tournamentId={currentTournament.id}
-              format={currentTournament.format}
+              format={resolvedFormat}
               categoryId={selectedCategory}
-              roundRobinType={currentTournament.round_robin_type}
+              roundRobinType={resolvedRoundRobinType}
               refreshKey={refreshKey}
               qualifiedPerGroup={calculateQualifiedPerGroup(
                 currentTournament.number_of_groups || 2,
@@ -7744,7 +7816,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               }}
               isIndividual={isIndividualFormat()}
               individualPlayers={filteredIndividualPlayers}
-              tournamentFormat={currentTournament?.format}
+              tournamentFormat={resolvedFormat}
             />
             )
           )}
@@ -7880,6 +7952,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           onSuccess={() => {
             setShowResultsModal(false);
             setSelectedConfrontation(null);
+            fetchTournamentData();
+          }}
+        />
+      )}
+
+      {isSuperTeams && showAddSuperTeam && (
+        <AddSuperTeamModal
+          tournamentId={currentTournament.id}
+          categories={categories}
+          selectedCategory={selectedCategory}
+          onClose={() => setShowAddSuperTeam(false)}
+          onSuccess={() => {
+            setShowAddSuperTeam(false);
             fetchTournamentData();
           }}
         />

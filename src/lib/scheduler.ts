@@ -20,6 +20,9 @@ export interface ScheduledMatch {
   court: string;
 }
 
+const toLocalDateStr = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 export interface DailySchedule {
   date: string;
   start_time: string;
@@ -104,7 +107,7 @@ export function validateTournamentTime(
 
   const current = new Date(start);
   while (current <= end) {
-    const dateStr = current.toISOString().split('T')[0];
+    const dateStr = toLocalDateStr(current);
     const schedule = getDaySchedule(dateStr, dailySchedules, dailyStartTime, dailyEndTime);
 
     const [startHour, startMin] = schedule.start_time.split(':').map(Number);
@@ -244,7 +247,7 @@ function generateSingleEliminationSchedule(
 
       const [year, month, day] = startDate.split('-').map(Number);
       const matchDate = new Date(year, month - 1, day + daysFromStart);
-      const matchDateStr = matchDate.toISOString().split('T')[0];
+      const matchDateStr = toLocalDateStr(matchDate);
       const daySchedule = getDaySchedule(matchDateStr, dailySchedules, startTime, endTime);
       const [dayStartHour, dayStartMinute] = daySchedule.start_time.split(':').map(Number);
 
@@ -365,12 +368,12 @@ function generateRoundRobinSchedule(
       let daysFromStart = 0;
       const [year, month, day] = startDate.split('-').map(Number);
       let slotDate = new Date(year, month - 1, day);
-      let dayConf = getDayConfig(slotDate.toISOString().split('T')[0]);
+      let dayConf = getDayConfig(toLocalDateStr(slotDate));
       while (remainSlots >= dayConf.slotsPerDay) {
         remainSlots -= dayConf.slotsPerDay;
         daysFromStart++;
         slotDate = new Date(year, month - 1, day + daysFromStart);
-        dayConf = getDayConfig(slotDate.toISOString().split('T')[0]);
+        dayConf = getDayConfig(toLocalDateStr(slotDate));
       }
       const totalMinutesFromStart = remainSlots * matchDurationMinutes;
       const hourOffset = Math.floor(totalMinutesFromStart / 60);
