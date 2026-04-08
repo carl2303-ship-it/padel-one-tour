@@ -16,7 +16,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { email, password, phone_number, name } = await req.json();
+    const { email, password, phone_number, name, player_category, level } = await req.json();
 
     if (!email || !password || !phone_number || !name) {
       return new Response(
@@ -46,6 +46,30 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (existingAccount) {
+      // If category/level are provided and missing in existing account, hydrate them.
+      if ((player_category && !existingAccount.player_category) || (level != null && existingAccount.level == null)) {
+        const { data: updatedAccount } = await supabaseAdmin
+          .from("player_accounts")
+          .update({
+            player_category: existingAccount.player_category ?? player_category ?? null,
+            level: existingAccount.level ?? level ?? null,
+          })
+          .eq("id", existingAccount.id)
+          .select("*")
+          .single();
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            account: updatedAccount || existingAccount,
+            isNew: false,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -104,6 +128,8 @@ Deno.serve(async (req: Request) => {
         user_id: userId,
         name,
         email: email.includes("@temp.player.com") ? null : email,
+        player_category: player_category ?? null,
+        level: level ?? null,
       })
       .select()
       .single();

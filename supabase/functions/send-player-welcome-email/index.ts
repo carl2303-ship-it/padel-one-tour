@@ -78,7 +78,7 @@ Deno.serve(async (req: Request) => {
     const normalizedPhone = finalPhone.replace(/\s+/g, '');
     const standardPassword = `Player${normalizedPhone.slice(-4)}!`;
 
-    const appUrl = Deno.env.get('APP_URL') || supabaseUrl;
+    const appUrl = Deno.env.get('PLAYER_APP_URL') || 'https://padel1.app';
 
     const emailHtml = `
 <!DOCTYPE html>
@@ -124,12 +124,12 @@ Deno.serve(async (req: Request) => {
               
               <div style="border-top: 1px solid #e5e7eb; margin: 30px 0;"></div>
               
-              <h3 style="margin: 0 0 15px; color: #1f2937; font-size: 18px; font-weight: 600;">📱 Aceda à Aplicação</h3>
+              <h3 style="margin: 0 0 15px; color: #1f2937; font-size: 18px; font-weight: 600;">📱 Aceda à App Player</h3>
               
               <table role="presentation" style="margin: 0 0 30px;">
                 <tr>
                   <td>
-                    <a href="${appUrl}" style="display: inline-block; background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Abrir Aplicação</a>
+                    <a href="${appUrl}" style="display: inline-block; background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Abrir App Player</a>
                   </td>
                 </tr>
               </table>
@@ -142,7 +142,7 @@ Deno.serve(async (req: Request) => {
                   1. Abra o link acima no Safari<br>
                   2. Toque no botão de partilha <span style="background-color: #e5e7eb; padding: 2px 6px; border-radius: 4px;">⬆️</span><br>
                   3. Escolha "Adicionar ao Ecrã Principal"<br>
-                  4. Faça login com modo "Jogador" usando as credenciais acima
+                  4. Faça login com as credenciais acima
                 </p>
                 
                 <p style="margin: 0; color: #4b5563; font-size: 14px; line-height: 1.6;">
@@ -150,13 +150,13 @@ Deno.serve(async (req: Request) => {
                   1. Abra o link acima no Chrome<br>
                   2. Toque no menu <span style="background-color: #e5e7eb; padding: 2px 6px; border-radius: 4px;">⋮</span> (três pontos)<br>
                   3. Escolha "Instalar aplicação" ou "Adicionar ao ecrã inicial"<br>
-                  4. Faça login com modo "Jogador" usando as credenciais acima
+                  4. Faça login com as credenciais acima
                 </p>
               </div>
               
               <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px; border-radius: 4px; margin: 0 0 20px;">
                 <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
-                  <strong>⚠️ Importante:</strong> Ao fazer login, escolha o modo <strong>"Jogador"</strong> e utilize o seu número de telefone e password fornecidos acima.
+                  <strong>⚠️ Importante:</strong> Utilize o seu número de telefone e password fornecidos acima.
                 </p>
               </div>
               

@@ -146,6 +146,23 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     return '+351' + cleaned;
   };
 
+  const getCategoryDefaults = (category: TournamentCategory | undefined): { playerCategory: string | null; level: number | null } => {
+    if (!category) return { playerCategory: null, level: null };
+
+    const accepted = category.accepted_levels && category.accepted_levels.length > 0
+      ? category.accepted_levels[0]
+      : null;
+
+    let level: number | null = null;
+    if (category.min_level != null) {
+      level = category.min_level;
+    } else if (category.max_level != null) {
+      level = category.max_level;
+    }
+
+    return { playerCategory: accepted, level };
+  };
+
   const checkPlayerLevel = (account: PlayerAccount | null, category: typeof categories[0] | undefined): string | null => {
     if (!category) return null;
 
@@ -613,7 +630,12 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     setPartnerLookupLoading(false);
   };
 
-  const createOrGetPlayerAccount = async (name: string, email: string, phone: string) => {
+  const createOrGetPlayerAccount = async (
+    name: string,
+    email: string,
+    phone: string,
+    defaults?: { playerCategory: string | null; level: number | null }
+  ) => {
     const normalizedPhone = normalizePhone(phone);
     const tempPassword = `Player${normalizedPhone.slice(-4)}!`;
     const userEmail = email || `${normalizedPhone}@temp.player.com`;
@@ -631,6 +653,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           password: tempPassword,
           phone_number: normalizedPhone,
           name,
+          player_category: defaults?.playerCategory ?? null,
+          level: defaults?.level ?? null,
         }),
       }
     );
@@ -736,10 +760,13 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         }
       }
 
+      const categoryDefaults = getCategoryDefaults(selectedCat);
+
       const player1Result = await createOrGetPlayerAccount(
         formData.player1Name,
         formData.player1Email,
-        formData.player1Phone
+        formData.player1Phone,
+        categoryDefaults
       );
 
       const credentials: {name: string, phone: string, password: string}[] = [];
@@ -757,7 +784,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         const player2Result = await createOrGetPlayerAccount(
           formData.player2Name,
           formData.player2Email,
-          formData.player2Phone
+          formData.player2Phone,
+          categoryDefaults
         );
         player2Account = player2Result.account;
 
