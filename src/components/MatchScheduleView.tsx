@@ -262,8 +262,8 @@ export default function MatchScheduleView({
       '21st_place': '21st/22nd Place',
       '23rd_place': '23rd/24th Place',
       // Playoffs Cruzados
-      'crossed_r1_j1': 'Quarto-Final 1',
-      'crossed_r1_j2': 'Quarto-Final 2',
+      'crossed_r1_j1': isDirectCrossedSemifinals ? 'Meia-Final 1' : 'Quarto-Final 1',
+      'crossed_r1_j2': isDirectCrossedSemifinals ? 'Meia-Final 2' : 'Quarto-Final 2',
       'crossed_r1_j3': 'Quarto-Final 3',
       'crossed_r2_j4': 'Meia-Final 1',
       'crossed_r2_j5': 'Meia-Final 2',
@@ -276,8 +276,10 @@ export default function MatchScheduleView({
       'crossed_r2_j2': 'Meia-Final 2',
       'crossed_r3_final': 'FINAL',
       'crossed_r3_3rd_place': '3°/4° Lugar',
-      'crossed_r4_5th': '5°/6° Lugar',
-      'crossed_r5_7th': '7°/8° Lugar',
+      'crossed_r4_5th': 'Classificação A',
+      'crossed_r5_7th': 'Classificação B',
+      'crossed_r6_5th_final': '5°/6° Lugar',
+      'crossed_r6_7th_final': '7°/8° Lugar',
     };
     return roundLabels[round] || round;
   };
@@ -686,6 +688,8 @@ export default function MatchScheduleView({
   };
 
   const sortedMatches = sortMatches(matches);
+  const hasR2Semifinals = matches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
+  const isDirectCrossedSemifinals = !hasR2Semifinals;
 
   const getGroupLabel = (match: MatchWithTeams): string => {
     if (match.team1?.group_name) return `Group ${match.team1.group_name}`;
@@ -724,8 +728,8 @@ export default function MatchScheduleView({
       '9th_place': '9°/10° Lugar',
       '11th_place': '11°/12° Lugar',
       // Playoffs Cruzados - Ronda 1
-      'crossed_r1_j1': 'Quarto-Final 1',
-      'crossed_r1_j2': 'Quarto-Final 2',
+      'crossed_r1_j1': isDirectCrossedSemifinals ? 'Meia-Final 1' : 'Quarto-Final 1',
+      'crossed_r1_j2': isDirectCrossedSemifinals ? 'Meia-Final 2' : 'Quarto-Final 2',
       'crossed_r1_j3': 'Quarto-Final 3',
       // Playoffs Cruzados - Ronda 1 (equipas - quartos)
       'crossed_r1_j4': 'Quarto-Final 4',
@@ -739,8 +743,10 @@ export default function MatchScheduleView({
       'crossed_r3_j7': 'FINAL',
       'crossed_r3_j8': '3°/4° Lugar',
       // Playoffs Cruzados - Classificação
-      'crossed_r4_5th': '5°/6° Lugar',
-      'crossed_r5_7th': '7°/8° Lugar',
+      'crossed_r4_5th': 'Classificação A',
+      'crossed_r5_7th': 'Classificação B',
+      'crossed_r6_5th_final': '5°/6° Lugar',
+      'crossed_r6_7th_final': '7°/8° Lugar',
       // Nomes compatibilidade
       'crossed_r2_semifinal1': 'Meia-Final 1',
       'crossed_r2_semifinal2': 'Meia-Final 2',

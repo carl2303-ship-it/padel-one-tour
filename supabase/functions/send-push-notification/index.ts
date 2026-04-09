@@ -12,6 +12,7 @@ interface SendPushRequest {
   userId?: string;
   playerAccountId?: string;
   payload: PushPayload;
+  appSource?: "tour" | "player" | "manager";
 }
 
 Deno.serve(async (req: Request) => {
@@ -37,6 +38,7 @@ Deno.serve(async (req: Request) => {
 
     const body: SendPushRequest = await req.json();
     const { userId, playerAccountId, payload } = body;
+    const appSource = body.appSource || "tour";
 
     if ((!userId && !playerAccountId) || !payload) {
       return new Response(JSON.stringify({ error: "userId or playerAccountId and payload are required" }), {
@@ -50,6 +52,7 @@ Deno.serve(async (req: Request) => {
       vapidPrivateKey,
       userId,
       playerAccountId,
+      appSource,
       payload,
     });
 

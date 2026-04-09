@@ -215,20 +215,26 @@ async function sendWebPush(
 /** Merge subscriptions by user_id and all player_accounts for that user (dedupe by endpoint). */
 export async function loadSubscriptionsForTarget(
   supabase: SupabaseClient,
-  opts: { userId?: string; playerAccountId?: string },
+  opts: { userId?: string; playerAccountId?: string; appSource?: string },
 ): Promise<SubscriptionRow[]> {
-  const { userId, playerAccountId } = opts;
+  const { userId, playerAccountId, appSource } = opts;
 
   if (userId) {
     const { data: accounts } = await supabase.from("player_accounts").select("id").eq("user_id", userId);
     const paIds = (accounts || []).map((a: { id: string }) => a.id);
 
-    const [byUser, byPa] = await Promise.all([
-      supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", userId),
-      paIds.length
-        ? supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds)
-        : Promise.resolve({ data: [] as SubscriptionRow[] }),
-    ]);
+    const byUserQuery = supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", userId);
+    const byUserFiltered = appSource ? byUserQuery.eq("app_source", appSource) : byUserQuery;
+    const byPaPromise = paIds.length
+      ? appSource
+        ? supabase
+            .from("push_subscriptions")
+            .select("endpoint, p256dh, auth")
+            .in("player_account_id", paIds)
+            .eq("app_source", appSource)
+        : supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds)
+      : Promise.resolve({ data: [] as SubscriptionRow[] });
+    const [byUser, byPa] = await Promise.all([byUserFiltered, byPaPromise]);
 
     const merged = [...(byUser.data || []), ...((byPa as { data?: SubscriptionRow[] }).data || [])];
     const seen = new Set<string>();
@@ -250,9 +256,11 @@ export async function loadSubscriptionsForTarget(
     if (uid) {
       const { data: accounts } = await supabase.from("player_accounts").select("id").eq("user_id", uid);
       const paIds = [...new Set([...(accounts || []).map((a: { id: string }) => a.id), playerAccountId])];
+      const byUserQuery = supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", uid);
+      const byPaQuery = supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds);
       const [byUser, byPa] = await Promise.all([
-        supabase.from("push_subscriptions").select("endpoint, p256dh, auth").eq("user_id", uid),
-        supabase.from("push_subscriptions").select("endpoint, p256dh, auth").in("player_account_id", paIds),
+        appSource ? byUserQuery.eq("app_source", appSource) : byUserQuery,
+        appSource ? byPaQuery.eq("app_source", appSource) : byPaQuery,
       ]);
       const merged = [...(byUser.data || []), ...(byPa.data || [])];
       const seen = new Set<string>();
@@ -263,10 +271,11 @@ export async function loadSubscriptionsForTarget(
       });
     }
 
-    const { data } = await supabase
+    const query = supabase
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
       .eq("player_account_id", playerAccountId);
+    const { data } = await (appSource ? query.eq("app_source", appSource) : query);
     return data || [];
   }
 
@@ -280,12 +289,13 @@ export async function deliverWebPushNotifications(
     vapidPrivateKey: string;
     userId?: string;
     playerAccountId?: string;
+    appSource?: string;
     payload: PushPayload;
   },
 ): Promise<{ sentCount: number; totalSubscriptions: number }> {
-  const { vapidPublicKey, vapidPrivateKey, userId, playerAccountId, payload } = opts;
+  const { vapidPublicKey, vapidPrivateKey, userId, playerAccountId, appSource, payload } = opts;
 
-  const subscriptions = await loadSubscriptionsForTarget(supabase, { userId, playerAccountId });
+  const subscriptions = await loadSubscriptionsForTarget(supabase, { userId, playerAccountId, appSource });
   if (subscriptions.length === 0) {
     return { sentCount: 0, totalSubscriptions: 0 };
   }

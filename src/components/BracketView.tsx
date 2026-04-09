@@ -20,6 +20,8 @@ type BracketViewProps = {
 
 export default function BracketView({ matches, onMatchClick, isIndividual = false, individualPlayers = [], tournamentFormat }: BracketViewProps) {
   const isMixedFormat = tournamentFormat === 'mixed_american' || tournamentFormat === 'mixed_gender';
+  const hasR2Semifinals = matches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
+  const isDirectCrossedSemifinals = !hasR2Semifinals;
   
   const getMatchWinner = (match: MatchWithTeams) => {
     if (match.status !== 'completed') return null;
@@ -39,6 +41,7 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
     'crossed_r3_j7', 'crossed_r3_j8',
     'crossed_r3_final', 'crossed_r3_3rd_place',
     'crossed_r4_5th', 'crossed_r5_7th',
+    'crossed_r6_5th_final', 'crossed_r6_7th_final',
     // Legacy names (backwards compatibility)
     'crossed_r2_semifinal1', 'crossed_r2_semifinal2', 'crossed_r2_5th_place',
     'crossed_playoff_categories', 'crossed_playoff',
@@ -86,8 +89,8 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       }
     }
     switch(round) {
-      case 'crossed_r1_j1': return 'Quarto-Final 1';
-      case 'crossed_r1_j2': return 'Quarto-Final 2';
+      case 'crossed_r1_j1': return isDirectCrossedSemifinals ? 'Meia-Final 1' : 'Quarto-Final 1';
+      case 'crossed_r1_j2': return isDirectCrossedSemifinals ? 'Meia-Final 2' : 'Quarto-Final 2';
       case 'crossed_r1_j3': return 'Quarto-Final 3';
       case 'crossed_r1_j4': return 'Quarto-Final 4';
       case 'crossed_r2_j1': return 'Meia-Final 1';
@@ -101,6 +104,8 @@ export default function BracketView({ matches, onMatchClick, isIndividual = fals
       case 'crossed_r3_3rd_place': return '3º/4º Lugar';
       case 'crossed_r4_5th': return '5º/6º Lugar';
       case 'crossed_r5_7th': return '7º/8º Lugar';
+      case 'crossed_r6_5th_final': return '5º/6º Lugar';
+      case 'crossed_r6_7th_final': return '7º/8º Lugar';
       // Legacy names (backwards compatibility)
       case 'crossed_r2_semifinal1': return 'Meia-Final 1';
       case 'crossed_r2_semifinal2': return 'Meia-Final 2';

@@ -53,8 +53,12 @@ export function ManualGroupAssignmentModal({
   onClose,
   onSuccess,
 }: ManualGroupAssignmentModalProps) {
-  const numberOfGroups = (tournament as any).number_of_groups || categories.length || 2;
-  const [selectedCategory, setSelectedCategory] = useState<string>(initialSelectedCategory || 'all');
+  const isCrossedFormat =
+    tournament.format === 'crossed_playoffs' ||
+    tournament.format === 'crossed_playoffs_teams';
+  const initialCategoryValue =
+    initialSelectedCategory || (isCrossedFormat && categories.length > 0 ? categories[0].id : 'all');
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialCategoryValue);
   const [assignments, setAssignments] = useState<Map<string, string>>(new Map());
   const [saving, setSaving] = useState(false);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
@@ -64,9 +68,14 @@ export function ManualGroupAssignmentModal({
     ? participants
     : participants.filter((p: any) => p.category_id === selectedCategory);
 
-  const categoryNumberOfGroups = selectedCategory !== 'all'
-    ? categories.find(c => c.id === selectedCategory)?.number_of_groups || numberOfGroups
-    : numberOfGroups;
+  // Em formatos cruzados, o comportamento correto é:
+  // - categoria selecionada => 1 grupo
+  // - "todas" => 1 grupo por categoria
+  const categoryNumberOfGroups = isCrossedFormat
+    ? (selectedCategory === 'all' ? Math.max(categories.length, 1) : 1)
+    : (selectedCategory !== 'all'
+      ? categories.find(c => c.id === selectedCategory)?.number_of_groups || ((tournament as any).number_of_groups || categories.length || 2)
+      : ((tournament as any).number_of_groups || categories.length || 2));
 
   const groupNames = GROUP_NAMES.slice(0, categoryNumberOfGroups);
 
@@ -77,8 +86,16 @@ export function ManualGroupAssignmentModal({
         initialAssignments.set(p.id, p.group_name);
       }
     });
-    setAssignments(initialAssignments);
-  }, [filteredParticipants, selectedCategory]);
+
+    // Avoid render loop: only update state when assignments actually changed.
+    setAssignments((prev) => {
+      if (prev.size !== initialAssignments.size) return initialAssignments;
+      for (const [id, group] of initialAssignments.entries()) {
+        if (prev.get(id) !== group) return initialAssignments;
+      }
+      return prev;
+    });
+  }, [participants, selectedCategory, isIndividual]);
 
   const getParticipantName = (p: any) => {
     if (isIndividual) {
@@ -277,7 +294,7 @@ export function ManualGroupAssignmentModal({
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
               >
-                <option value="all">Todas</option>
+                {!isCrossedFormat && <option value="all">Todas</option>}
                 {categories.map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.name}</option>
                 ))}

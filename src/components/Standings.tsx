@@ -1275,8 +1275,10 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
       const finalMatch = completedMatches.find(m => m.round === 'crossed_r3_final');
       const thirdPlaceMatch = completedMatches.find(m => m.round === 'crossed_r3_3rd_place');
-      const fifthPlaceMatch = completedMatches.find(m => m.round === 'crossed_r4_5th');
-      const seventhPlaceMatch = completedMatches.find(m => m.round === 'crossed_r5_7th');
+      const fifthPlaceMatch = completedMatches.find(m => m.round === 'crossed_r6_5th_final') ||
+        completedMatches.find(m => m.round === 'crossed_r4_5th');
+      const seventhPlaceMatch = completedMatches.find(m => m.round === 'crossed_r6_7th_final') ||
+        completedMatches.find(m => m.round === 'crossed_r5_7th');
 
       if (finalMatch) {
         const { winnerId, loserId } = getTeamWinnerLoser(finalMatch);
@@ -1354,14 +1356,24 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         'crossed_r1_j1', 'crossed_r1_j2', 'crossed_r1_j3', 'crossed_r1_j4',
         'crossed_r2_j1', 'crossed_r2_j2',
         'crossed_r3_final', 'crossed_r3_3rd_place',
-        'crossed_r4_5th', 'crossed_r5_7th'
+        'crossed_r4_5th', 'crossed_r5_7th',
+        'crossed_r6_5th_final', 'crossed_r6_7th_final'
       ];
+      const hasR2Semis = (allMatches || []).some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
+      const isDirectSemifinals = !hasR2Semis;
       const roundNames: Record<string, string> = {
-        'crossed_r1_j1': 'Quarto-Final 1', 'crossed_r1_j2': 'Quarto-Final 2',
-        'crossed_r1_j3': 'Quarto-Final 3', 'crossed_r1_j4': 'Quarto-Final 4',
-        'crossed_r2_j1': 'Meia-Final 1', 'crossed_r2_j2': 'Meia-Final 2',
-        'crossed_r3_final': 'FINAL', 'crossed_r3_3rd_place': '3º/4º Lugar',
-        'crossed_r4_5th': '5º/6º Lugar', 'crossed_r5_7th': '7º/8º Lugar'
+        'crossed_r1_j1': isDirectSemifinals ? 'Meia-Final 1' : 'Quarto-Final 1',
+        'crossed_r1_j2': isDirectSemifinals ? 'Meia-Final 2' : 'Quarto-Final 2',
+        'crossed_r1_j3': 'Quarto-Final 3',
+        'crossed_r1_j4': 'Quarto-Final 4',
+        'crossed_r2_j1': 'Meia-Final 1',
+        'crossed_r2_j2': 'Meia-Final 2',
+        'crossed_r3_final': 'FINAL',
+        'crossed_r3_3rd_place': '3º/4º Lugar',
+        'crossed_r4_5th': 'Classificação A',
+        'crossed_r5_7th': 'Classificação B',
+        'crossed_r6_5th_final': '5º/6º Lugar',
+        'crossed_r6_7th_final': '7º/8º Lugar'
       };
 
       const crossedKnockoutMatches = (allMatches || [])
@@ -1513,7 +1525,11 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             grouped.set(team.group_name, []);
           }
           const groupStats = calculateTeamStats(team, (match) => {
-            if (match.round !== 'group_stage') return false;
+            // Legacy tournaments use 'group_stage'; newer schedules use group-specific rounds (e.g. group_A, group_M4-A).
+            const isGroupRound =
+              match.round === 'group_stage' ||
+              (typeof match.round === 'string' && match.round.startsWith('group_'));
+            if (!isGroupRound) return false;
 
             const team1 = teamsData.find(t => t.id === match.team1_id);
             const team2 = teamsData.find(t => t.id === match.team2_id);
@@ -1524,7 +1540,10 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         }
       });
 
-      const groupStageMatches = matches?.filter(m => m.round === 'group_stage') || [];
+      const groupStageMatches = matches?.filter(m =>
+        m.round === 'group_stage' ||
+        (typeof m.round === 'string' && m.round.startsWith('group_'))
+      ) || [];
 
       grouped.forEach((groupTeams, groupName) => {
         const teamStatsForSort: TeamStats[] = groupTeams.map(t => ({
@@ -2135,7 +2154,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                   const pts = team.wins * 2 + (team.draws || 0);
                   const pos = team.final_position || (index + 1);
                   return (
-                    <tr key={team.id} className={
+                    <tr key={`${team.id}-${index}`} className={
                       pos === 1 ? 'bg-yellow-50' :
                       pos === 2 ? 'bg-gray-100' :
                       pos === 3 ? 'bg-amber-50' :
