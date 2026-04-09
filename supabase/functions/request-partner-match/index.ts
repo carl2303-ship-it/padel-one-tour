@@ -22,6 +22,36 @@ function isTeamTournament(format: string | null, roundRobinType: string | null):
   return !["individual_groups_knockout", "mixed_american"].includes(format);
 }
 
+async function fetchAllCandidateAccounts(
+  admin: SupabaseClient,
+  requesterId: string,
+  followingIds: string[] | null,
+): Promise<any[]> {
+  const pageSize = 1000;
+  let from = 0;
+  const allRows: any[] = [];
+
+  while (true) {
+    let q = admin
+      .from("player_accounts")
+      .select("id, user_id, name, court_position, player_category, level")
+      .not("user_id", "is", null)
+      .neq("id", requesterId)
+      .range(from, from + pageSize - 1);
+    if (followingIds) q = q.in("user_id", followingIds);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows.push(...rows);
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
+}
+
 async function sendPartnerInvitePush(
   admin: SupabaseClient,
   params: {
@@ -153,14 +183,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    let candidatesQuery = admin
-      .from("player_accounts")
-      .select("id, user_id, name, court_position, player_category, level")
-      .not("user_id", "is", null)
-      .neq("id", requester.id);
-    if (followingIds) candidatesQuery = candidatesQuery.in("user_id", followingIds);
-    const { data: candidates, error: candidatesError } = await candidatesQuery.limit(120);
-    if (candidatesError) throw candidatesError;
+    const candidates = await fetchAllCandidateAccounts(admin, requester.id, followingIds);
 
     // `sidePreference` represents requester's side.
     // Partner should be complementary side (right <-> left), with `both` always compatible.
@@ -202,7 +225,7 @@ Deno.serve(async (req: Request) => {
           .in("player_account_id", candidateIds)
       : { data: [] as any[] };
     const busySet = new Set((alreadyPlayers || []).map((p: any) => p.player_account_id));
-    const finalCandidates = compatibleOnePerUser.filter((c: any) => !busySet.has(c.id)).slice(0, 10);
+    const finalCandidates = compatibleOnePerUser.filter((c: any) => !busySet.has(c.id));
 
     const { data: requestRow, error: requestError } = await admin
       .from("partner_match_requests")
