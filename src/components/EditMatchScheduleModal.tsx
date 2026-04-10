@@ -26,10 +26,12 @@ export default function EditMatchScheduleModal({
     // Parse current scheduled time
     if (currentScheduledTime) {
       const dt = new Date(currentScheduledTime);
-      const dateStr = dt.toISOString().split('T')[0];
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
       const hours = String(dt.getHours()).padStart(2, '0');
       const minutes = String(dt.getMinutes()).padStart(2, '0');
-      setDate(dateStr);
+      setDate(`${y}-${m}-${d}`);
       setTime(`${hours}:${minutes}`);
     }
     setCourt(currentCourt || '1');
