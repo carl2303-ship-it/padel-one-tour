@@ -735,26 +735,32 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       const p1Phone = normalizePhone(formData.player1Phone);
       const isIndividual = isIndividualFormat();
       if (isIndividual) {
-        const { data: existingReg } = await supabase
+        let dupQuery = supabase
           .from('players')
           .select('id')
           .eq('tournament_id', tournament.id)
-          .eq('phone_number', p1Phone)
-          .maybeSingle();
+          .eq('phone_number', p1Phone);
+        if (formData.categoryId) {
+          dupQuery = dupQuery.eq('category_id', formData.categoryId);
+        }
+        const { data: existingReg } = await dupQuery.maybeSingle();
         if (existingReg) {
-          setError('Este jogador já está inscrito neste torneio.');
+          setError('Este jogador já está inscrito nesta categoria.');
           setLoading(false);
           return;
         }
       } else {
-        const { data: existingTeamReg } = await supabase
+        let dupTeamQuery = supabase
           .from('teams')
-          .select('id, players!inner(phone_number)')
+          .select('id, category_id, players!inner(phone_number)')
           .eq('tournament_id', tournament.id)
-          .eq('players.phone_number', p1Phone)
-          .maybeSingle();
+          .eq('players.phone_number', p1Phone);
+        if (formData.categoryId) {
+          dupTeamQuery = dupTeamQuery.eq('category_id', formData.categoryId);
+        }
+        const { data: existingTeamReg } = await dupTeamQuery.maybeSingle();
         if (existingTeamReg) {
-          setError('Este jogador já está inscrito numa equipa neste torneio.');
+          setError('Este jogador já está inscrito numa equipa nesta categoria.');
           setLoading(false);
           return;
         }
