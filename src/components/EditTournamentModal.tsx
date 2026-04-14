@@ -34,6 +34,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     allow_club_payment: (tournament as any).allow_club_payment || false,
     has_dinner_option: (tournament as any).has_dinner_option || false,
     allow_public_registration: (tournament as any).allow_public_registration || false,
+    visibility: (tournament as any).visibility || 'public',
     registration_deadline: (tournament as any).registration_deadline ? new Date((tournament as any).registration_deadline).toISOString().split('T')[0] : '',
     registration_redirect_url: (tournament as any).registration_redirect_url || '',
     mixed_knockout: (tournament as any).mixed_knockout || false,
@@ -300,7 +301,8 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
-        allow_public_registration: formData.allow_public_registration,
+        visibility: formData.visibility,
+        allow_public_registration: formData.visibility === 'invite_only' ? false : formData.allow_public_registration,
         registration_deadline: formData.registration_deadline ? new Date(formData.registration_deadline).toISOString() : null,
         registration_redirect_url: formData.registration_redirect_url || null,
         mixed_knockout: formData.mixed_knockout,
@@ -825,23 +827,63 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             <h3 className="text-lg font-semibold text-gray-900 mb-4">{t.tournament.publicRegistrationSettings}</h3>
 
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="allow_public_registration"
-                  checked={formData.allow_public_registration}
-                  onChange={(e) => setFormData({ ...formData, allow_public_registration: e.target.checked })}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                />
-                <label htmlFor="allow_public_registration" className="text-sm font-medium text-gray-700">
-                  {t.tournament.allowPublicRegistration}
+              {/* Visibility selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t.tournament.visibility || 'Visibilidade'}
                 </label>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, visibility: 'public' })}
+                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                      formData.visibility === 'public'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    🌐 {t.tournament.visibilityPublic || 'Público'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, visibility: 'invite_only' })}
+                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                      formData.visibility === 'invite_only'
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    🔒 {t.tournament.visibilityInviteOnly || 'Por Convite'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5">
+                  {formData.visibility === 'invite_only'
+                    ? (t.tournament.visibilityInviteOnlyHelper || 'Apenas jogadores convidados verão este torneio na app Player.')
+                    : (t.tournament.visibilityPublicHelper || 'Todos os jogadores podem ver este torneio na app Player.')}
+                </p>
               </div>
-              <p className="text-xs text-gray-500 -mt-2 ml-7">
-                {t.tournament.allowPublicRegistrationHelper}
-              </p>
 
-              {formData.allow_public_registration && (
+              {formData.visibility !== 'invite_only' && (
+                <>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="allow_public_registration"
+                      checked={formData.allow_public_registration}
+                      onChange={(e) => setFormData({ ...formData, allow_public_registration: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <label htmlFor="allow_public_registration" className="text-sm font-medium text-gray-700">
+                      {t.tournament.allowPublicRegistration}
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-500 -mt-2 ml-7">
+                    {t.tournament.allowPublicRegistrationHelper}
+                  </p>
+                </>
+              )}
+
+              {formData.visibility !== 'invite_only' && formData.allow_public_registration && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">

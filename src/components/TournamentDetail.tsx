@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, Tournament, Team, Player, Match, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail } from 'lucide-react';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
 import MatchModal from './MatchModal';
@@ -11,6 +11,7 @@ import EditIndividualPlayerModal from './EditIndividualPlayerModal';
 import Standings from './Standings';
 import BracketView from './BracketView';
 import ManageCategoriesModal from './ManageCategoriesModal';
+import ManageInvitesModal from './ManageInvitesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
 import { processAllUnratedMatches, awardTournamentRewardPoints } from '../lib/ratingEngine';
@@ -120,6 +121,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showEditTournament, setShowEditTournament] = useState(false);
   const [showEditTeam, setShowEditTeam] = useState(false);
   const [showManageCategories, setShowManageCategories] = useState(false);
+  const [showManageInvites, setShowManageInvites] = useState(false);
   const [selectedMatchId, setSelectedMatchId] = useState<string | undefined>();
   const [selectedTeam, setSelectedTeam] = useState<TeamWithPlayers | undefined>();
   const [selectedPlayer, setSelectedPlayer] = useState<Player | undefined>();
@@ -6809,7 +6811,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               <ArrowLeft className="w-6 h-6" />
             </button>
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">{currentTournament.name}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-2xl font-bold text-gray-900">{currentTournament.name}</h2>
+                {(currentTournament as any).visibility === 'invite_only' && (
+                  <span className="px-2.5 py-1 text-xs font-semibold bg-amber-100 text-amber-700 rounded-full">
+                    🔒 {t.tournament?.visibilityInviteOnly || 'Por Convite'}
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-600">
                 <span className="flex items-center gap-1">
                   <Calendar className="w-4 h-4" />
@@ -6869,6 +6878,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               <Pencil className="w-4 h-4" />
               Editar
             </button>
+            {(currentTournament as any).visibility === 'invite_only' && (
+              <button
+                onClick={() => setShowManageInvites(true)}
+                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition"
+              >
+                <Mail className="w-4 h-4" />
+                {t.tournament?.manageInvites || 'Gerir Convites'}
+              </button>
+            )}
             {currentTournament.status !== 'completed' && (
               <button
                 onClick={handleFinalizeTournament}
@@ -8340,6 +8358,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             setShowManualGroupAssignment(false);
             fetchTournamentData();
           }}
+        />
+      )}
+
+      {showManageInvites && (
+        <ManageInvitesModal
+          tournamentId={currentTournament.id}
+          tournamentName={currentTournament.name}
+          onClose={() => setShowManageInvites(false)}
         />
       )}
     </div>
