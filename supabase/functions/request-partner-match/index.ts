@@ -79,7 +79,7 @@ async function sendPartnerInvitePush(
       vapidPublicKey,
       vapidPrivateKey,
       userId: params.inviteeUserId,
-      appSource: "tour",
+      appSource: "player",
       payload,
     });
     if (sentCount > 0) return { sent: sentCount, via: "user_id" };
@@ -90,7 +90,7 @@ async function sendPartnerInvitePush(
       vapidPublicKey,
       vapidPrivateKey,
       playerAccountId: params.inviteePlayerAccountId,
-      appSource: "tour",
+      appSource: "player",
       payload,
     });
     if (sentCount > 0) return { sent: sentCount, via: "player_account_id" };

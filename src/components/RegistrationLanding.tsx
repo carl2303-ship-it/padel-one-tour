@@ -716,13 +716,11 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           .eq('phone_number', p2Normalized)
           .maybeSingle();
 
-        if (p2Account && p2Account.name?.toLowerCase() !== formData.player2Name.trim().toLowerCase()) {
-          setError(`O número do parceiro já está registado para "${p2Account.name}". Verifique o número ou o nome.`);
-          setLoading(false);
-          return;
-        }
-
         if (p2Account) {
+          if (p2Account.name) {
+            formData.player2Name = p2Account.name;
+          }
+
           const p2LevelError = checkPlayerLevel(p2Account as PlayerAccount, selectedCat);
           if (p2LevelError) {
             setError(p2LevelError);
