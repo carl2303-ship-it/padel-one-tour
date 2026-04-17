@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Match, Team, Player, IndividualPlayer, TournamentCategory } from '../lib/supabase';
-import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2 } from 'lucide-react';
+import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2, LayoutGrid } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import EditMatchScheduleModal from './EditMatchScheduleModal';
 
@@ -14,7 +14,7 @@ type MatchWithTeams = Match & {
   team2: TeamWithPlayers | null;
 };
 
-type SortOption = 'time' | 'court' | 'group';
+type SortOption = 'time' | 'court' | 'group' | 'courts_grid';
 
 type MatchScheduleViewProps = {
   matches: MatchWithTeams[];
@@ -691,6 +691,189 @@ export default function MatchScheduleView({
   const hasR2Semifinals = matches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
   const isDirectCrossedSemifinals = !hasR2Semifinals;
 
+  // ---------------------------------------------------------------------
+  // Courts Grid Model: per day, distinct start times as rows, courts as cols.
+  // Each cell shows the match scheduled on (time, court) — or empty.
+  // ---------------------------------------------------------------------
+  const buildCourtsGridModel = (list: MatchWithTeams[]) => {
+    type Cell = MatchWithTeams | null;
+    type Row = { time: string; timeLabel: string; byCourt: Record<string, Cell> };
+    type DayBlock = { dayKey: string; dayLabel: string; courts: string[]; rows: Row[] };
+
+    const byDay = new Map<string, MatchWithTeams[]>();
+    for (const m of list) {
+      if (!m.scheduled_time) continue;
+      const d = new Date(m.scheduled_time);
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+      byDay.get(dayKey)!.push(m);
+    }
+
+    const sortedDayKeys = [...byDay.keys()].sort();
+    const result: DayBlock[] = [];
+
+    for (const dayKey of sortedDayKeys) {
+      const dayMatches = byDay.get(dayKey)!;
+      const courtSet = new Set<string>();
+      dayMatches.forEach(m => {
+        if (m.court && m.court.trim()) courtSet.add(m.court.trim());
+      });
+      const courts = [...courtSet].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+      const timeMap = new Map<string, Row>();
+      for (const m of dayMatches) {
+        const iso = m.scheduled_time!;
+        if (!timeMap.has(iso)) {
+          const d = new Date(iso);
+          const timeLabel = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+          const byCourt: Record<string, Cell> = {};
+          courts.forEach(c => { byCourt[c] = null; });
+          timeMap.set(iso, { time: iso, timeLabel, byCourt });
+        }
+        const court = (m.court || '').trim();
+        if (court) timeMap.get(iso)!.byCourt[court] = m;
+      }
+      const rows = [...timeMap.values()].sort((a, b) => a.time.localeCompare(b.time));
+
+      const [y, mo, da] = dayKey.split('-').map(Number);
+      const dayLabel = new Date(y, mo - 1, da).toLocaleDateString('pt-PT', {
+        weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric',
+      });
+      result.push({ dayKey, dayLabel, courts, rows });
+    }
+    return result;
+  };
+
+  const renderMatchCell = (match: MatchWithTeams) => {
+    const categoryColor = match.category_id ? getCategoryColor(match.category_id) : '#6B7280';
+    const bgColor = match.category_id ? `${categoryColor}18` : '#f3f4f6';
+    const roundLabel = getRoundLabel(match);
+    const groupLabel = getGroupLabel(match);
+    const categoryLabel = getCategoryLabel(match);
+    const isCompleted = match.status === 'completed';
+
+    const side1 = isIndividualRoundRobin
+      ? `${getPlayerName((match as any).player1_individual_id)} / ${getPlayerName((match as any).player2_individual_id)}`
+      : (match.team1?.name ?? 'TBD');
+    const side2 = isIndividualRoundRobin
+      ? `${getPlayerName((match as any).player3_individual_id)} / ${getPlayerName((match as any).player4_individual_id)}`
+      : (match.team2?.name ?? 'TBD');
+
+    return (
+      <div
+        onClick={() => onMatchClick(match.id)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onMatchClick(match.id); }}
+        className={`h-full w-full p-2 rounded-md border-l-4 cursor-pointer hover:ring-2 hover:ring-blue-400 transition text-[11px] leading-tight ${isCompleted ? 'opacity-70' : ''}`}
+        style={{ borderLeftColor: categoryColor, backgroundColor: bgColor }}
+      >
+        <div className="flex items-center justify-between gap-1 mb-1">
+          <span className="font-bold text-gray-700">#{match.match_number}</span>
+          <div className="flex items-center gap-1">
+            {roundLabel && (
+              <span className="px-1 py-0.5 rounded bg-orange-100 text-orange-800 font-semibold text-[10px]">{roundLabel}</span>
+            )}
+            {categoryLabel && (
+              <span className="px-1 py-0.5 rounded font-semibold text-[10px]" style={{ backgroundColor: `${categoryColor}30`, color: categoryColor }}>{categoryLabel}</span>
+            )}
+          </div>
+        </div>
+        <p className="font-semibold text-gray-900 truncate" title={side1}>{side1}</p>
+        <p className="text-center text-gray-400 text-[10px] my-0.5">vs</p>
+        <p className="font-semibold text-gray-900 truncate" title={side2}>{side2}</p>
+        {(groupLabel || isCompleted) && (
+          <div className="flex items-center gap-1 mt-1">
+            {groupLabel && (
+              <span className="px-1 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold text-[10px]">{groupLabel}</span>
+            )}
+            {isCompleted && (
+              <span className="px-1 py-0.5 rounded bg-green-100 text-green-800 font-semibold text-[10px]">{getMatchScore(match)}</span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderCourtsGrid = (list: MatchWithTeams[]) => {
+    const model = buildCourtsGridModel(list);
+    if (model.length === 0) {
+      return (
+        <div className="text-center py-12 text-gray-500">
+          <LayoutGrid className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p>Nenhum jogo agendado para mostrar na grelha.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-8">
+        {model.map(({ dayKey, dayLabel, courts, rows }) => {
+          const gridTemplate = `minmax(70px, 90px) repeat(${courts.length}, minmax(180px, 1fr))`;
+          return (
+            <div key={dayKey} className="bg-white rounded-xl border border-gray-200 shadow-sm">
+              <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 rounded-t-xl flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                <h4 className="text-base font-semibold text-gray-900 capitalize">{dayLabel}</h4>
+                <span className="text-sm text-gray-500 ml-2">({courts.length} campos · {rows.length} horários)</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <div style={{ minWidth: `calc(90px + ${courts.length} * 180px)` }}>
+                  <div
+                    className="grid bg-gray-100 sticky top-0 z-10 border-b border-gray-200 text-xs font-semibold text-gray-700"
+                    style={{ gridTemplateColumns: gridTemplate }}
+                  >
+                    <div className="px-2 py-2 flex items-center justify-center">
+                      <Clock className="w-4 h-4 mr-1 text-gray-500" />
+                      Hora
+                    </div>
+                    {courts.map(c => (
+                      <div key={c} className="px-2 py-2 text-center border-l border-gray-200 truncate" title={`Campo ${c}`}>
+                        Campo {c}
+                      </div>
+                    ))}
+                  </div>
+
+                  {rows.map((row, idx) => (
+                    <div
+                      key={row.time}
+                      className={`grid border-b border-gray-100 ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/60'}`}
+                      style={{ gridTemplateColumns: gridTemplate }}
+                    >
+                      <div className="px-2 py-2 text-sm font-bold text-gray-800 flex items-center justify-center">
+                        {row.timeLabel}
+                      </div>
+                      {courts.map(c => (
+                        <div key={c} className="border-l border-gray-100 p-1 min-h-[72px]">
+                          {row.byCourt[c] ? renderMatchCell(row.byCourt[c]!) : (
+                            <div className="h-full w-full rounded-md border border-dashed border-gray-200 text-[10px] text-gray-300 flex items-center justify-center">livre</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Full-width breakout: escapes the parent max-w-7xl container so the grid
+  // can use the entire viewport width. Disabled in other view modes.
+  const fullWidthBreakoutStyle: React.CSSProperties = {
+    position: 'relative',
+    width: '100vw',
+    marginLeft: 'calc(50% - 50vw)',
+    marginRight: 'calc(50% - 50vw)',
+    paddingLeft: '1rem',
+    paddingRight: '1rem',
+  };
+
   const getGroupLabel = (match: MatchWithTeams): string => {
     if (match.team1?.group_name) return `Group ${match.team1.group_name}`;
     if (match.round.startsWith('group_') && match.round !== 'group_stage') {
@@ -950,6 +1133,18 @@ export default function MatchScheduleView({
             >
               {t.match.sortByGroup}
             </button>
+            <button
+              onClick={() => setSortBy('courts_grid')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                sortBy === 'courts_grid'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+              title="Vista em grelha: todos os campos lado a lado"
+            >
+              <LayoutGrid className="w-4 h-4 inline mr-1" />
+              Grelha de campos
+            </button>
           </div>
         </div>
 
@@ -962,7 +1157,7 @@ export default function MatchScheduleView({
         </button>
       </div>
 
-      <div ref={printAreaRef}>
+      <div ref={printAreaRef} style={sortBy === 'courts_grid' ? fullWidthBreakoutStyle : undefined}>
         <div className="hidden print:block print-only mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">{printTitle || t.match.schedule}</h1>
           <p className="text-sm text-gray-600">
@@ -970,7 +1165,9 @@ export default function MatchScheduleView({
           </p>
         </div>
 
-        {(() => {
+        {sortBy === 'courts_grid' ? (
+          renderCourtsGrid(sortedMatches)
+        ) : (() => {
           const { groupStage, knockoutStage } = groupMatchesByPhase(sortedMatches);
           const hasGroupStage = groupStage.length > 0;
           const hasKnockoutStage = knockoutStage.length > 0;

@@ -20,7 +20,7 @@ import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
 import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, advanceKnockoutWinner } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
-import { scheduleMultipleCategories } from '../lib/multiCategoryScheduler';
+import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
@@ -814,6 +814,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         // Determinar quantas partidas de cada fase baseado no número de qualificados
         // Para equipas: cada jogo tem 2 equipas
+        // NOTA: jogo de 3º/4º lugar deixou de ser gerado automaticamente.
+        // Por isso numFinals representa apenas 1 Final por categoria.
         let numQuarters = 0, numSemis = 0, numFinals = 0;
         
         if (knockoutStage === 'quarterfinals') {
@@ -821,15 +823,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           numQuarters = Math.ceil(totalQualified / 2);
           // Meias: vencedores dos quartos / 2
           numSemis = Math.ceil(numQuarters / 2);
-          numFinals = 2; // Final + 3º lugar
+          numFinals = 1; // Apenas Final (3º/4º não é gerado)
           console.log(`[SUPER-SCHEDULE] QFs: ${numQuarters}, SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'semifinals') {
           // Meias: totalQualified / 2 jogos
           numSemis = Math.ceil(totalQualified / 2);
-          numFinals = 2; // Final + 3º lugar
+          numFinals = 1; // Apenas Final (3º/4º não é gerado)
           console.log(`[SUPER-SCHEDULE] SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'final') {
-          numFinals = 2; // Final + 3º lugar
+          numFinals = 1; // Apenas Final (3º/4º não é gerado)
           console.log(`[SUPER-SCHEDULE] Finals: ${numFinals}`);
         }
         
@@ -910,30 +912,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
         
-        // Criar 3º lugar e final
+        // Criar apenas a Final (jogo de 3º/4º intencionalmente NÃO gerado)
         if (numFinals >= 1) {
-          // 3º lugar
-          const thirdPlaceDate = new Date(startDate);
-          thirdPlaceDate.setDate(thirdPlaceDate.getDate() + currentDayIndex);
-          const totalMinutes3rd = currentTimeSlot * matchDurationMinutes;
-          const hour3rd = startHours + Math.floor((startMinutes + totalMinutes3rd) / 60);
-          const minute3rd = (startMinutes + totalMinutes3rd) % 60;
-          thirdPlaceDate.setHours(hour3rd, minute3rd, 0, 0);
-          
-          knockoutConfronts.push({
-            tournament_id: tournament.id,
-            category_id: cat.id,
-            round: '3rd_place',
-            group_name: null,
-            super_team_1_id: null,
-            super_team_2_id: null,
-            scheduled_time: thirdPlaceDate.toISOString(),
-            court_name: availableCourts[0],
-          });
-        }
-        
-        if (numFinals >= 2) {
-          // Final (no mesmo slot mas campo diferente, ou slot seguinte)
           const finalDate = new Date(startDate);
           finalDate.setDate(finalDate.getDate() + currentDayIndex);
           const totalMinutesFinal = currentTimeSlot * matchDurationMinutes;
@@ -949,7 +929,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             super_team_1_id: null,
             super_team_2_id: null,
             scheduled_time: finalDate.toISOString(),
-            court_name: numCourts > 1 ? availableCourts[1] : availableCourts[0],
+            court_name: availableCourts[0],
           });
           
           currentTimeSlot++;
@@ -3758,9 +3738,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       .filter(m => m.round === 'semifinal')
       .sort((a, b) => a.match_number - b.match_number);
     const finalMatch = currentMatches.find(m => m.round === 'final');
+    // O jogo de 3º/4º lugar pode NÃO existir (deixou de ser gerado por defeito).
+    // Se não existir, apenas avançamos a Final e ignoramos o 3º lugar.
     const thirdPlaceMatch = currentMatches.find(m => m.round === '3rd_place');
     
-    if (sfMatches.length < 2 || !finalMatch || !thirdPlaceMatch) {
+    if (sfMatches.length < 2 || !finalMatch) {
       console.log('[AUTO_ADVANCE_SF] Missing matches: SF=', sfMatches.length, 'Final=', !!finalMatch, '3rd=', !!thirdPlaceMatch);
       return;
     }
@@ -3805,15 +3787,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         player4_individual_id: sf2Result.winner.p2,
       }).eq('id', finalMatch.id);
       
-      // 3°/4° lugar: Perdedor SF1 vs Perdedor SF2
-      await supabase.from('matches').update({
-        player1_individual_id: sf1Result.loser.p1,
-        player2_individual_id: sf1Result.loser.p2,
-        player3_individual_id: sf2Result.loser.p1,
-        player4_individual_id: sf2Result.loser.p2,
-      }).eq('id', thirdPlaceMatch.id);
-      
-      console.log('[AUTO_ADVANCE_SF] Final and 3rd place populated! Refreshing...');
+      // 3°/4° lugar: preencher apenas se o match existir (é opcional agora).
+      if (thirdPlaceMatch) {
+        await supabase.from('matches').update({
+          player1_individual_id: sf1Result.loser.p1,
+          player2_individual_id: sf1Result.loser.p2,
+          player3_individual_id: sf2Result.loser.p1,
+          player4_individual_id: sf2Result.loser.p2,
+        }).eq('id', thirdPlaceMatch.id);
+        console.log('[AUTO_ADVANCE_SF] Final and 3rd place populated! Refreshing...');
+      } else {
+        console.log('[AUTO_ADVANCE_SF] Final populated (no 3rd place match). Refreshing...');
+      }
       await fetchTournamentData();
     } catch (err) {
       console.error('[AUTO_ADVANCE_SF] Error:', err);
@@ -5171,7 +5156,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           scheduled_time: knockoutTime.toISOString(), court: courtName(1), status: 'scheduled'
         });
 
-        // 3rd + Final (após SFs)
+        // Final (após SFs). Jogo de 3º/4º intencionalmente NÃO gerado.
         knockoutTime = new Date(knockoutTime.getTime() + matchDuration * 60000);
         if (knockoutTime >= endOfDay) {
           knockoutTime.setDate(knockoutTime.getDate() + 1);
@@ -5179,20 +5164,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
-          round: '3rd_place', match_number: matchNumber++,
+          round: 'final', match_number: matchNumber++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
           scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
-        matchesToInsert.push({
-          tournament_id: currentTournament.id, category_id: null,
-          round: 'final', match_number: matchNumber++,
-          player1_individual_id: null, player2_individual_id: null,
-          player3_individual_id: null, player4_individual_id: null,
-          scheduled_time: knockoutTime.toISOString(), court: courtName(1), status: 'scheduled'
-        });
 
-        console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + 3rd + Final)`);
+        console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + Final, no 3rd/4th)`);
 
       } else if (schedFormat === 'individual_groups_knockout' ||
                  schedFormat === 'crossed_playoffs') {
@@ -5588,13 +5566,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating final match only`);
           }
 
-          // Always create 3rd place and final matches
-          addKoMatch('3rd_place', courtName(0));
-          addKoMatch('final', courtName(1));
+          // Create final match only (3rd/4th place match intentionally NOT generated)
+          addKoMatch('final', courtName(0));
 
           // No extra placement matches needed - consolation match already created above for QF losers
 
-          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}). Total: ${matchesToInsert.length}`);
+          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}, no 3rd/4th). Total: ${matchesToInsert.length}`);
         }
         
       } else if (schedFormat === 'round_robin' && schedRoundRobinType === 'teams') {
@@ -6465,6 +6442,46 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       console.log('[SCHEDULE] Generated', matchesToInsert.length, 'matches');
       
       if (matchesToInsert.length > 0) {
+        // Pre-insert validation: block inserts that violate structural rules
+        // (overbooking, KO before groups, same team twice in a slot, matches outside category windows).
+        const validation = validateGeneratedSchedule(
+          matchesToInsert as any,
+          numberOfCourts,
+          categories.map(c => ({
+            id: c.id,
+            name: c.name,
+            category_schedule: (c as any).category_schedule || null,
+            match_duration_minutes: (c as any).match_duration_minutes || null,
+          }))
+        );
+
+        if (validation.errors.length > 0) {
+          console.error('[SCHEDULE] Validation FAILED:', validation.errors);
+          const preview = validation.errors.slice(0, 15).join('\n');
+          const more = validation.errors.length > 15
+            ? `\n\n... e mais ${validation.errors.length - 15} violações.`
+            : '';
+          alert(
+            'Não foi possível guardar o calendário. Foram detectadas as seguintes violações:\n\n' +
+            preview + more +
+            '\n\nVerifique os horários por categoria, o número de campos e tente gerar de novo.'
+          );
+          setLoading(false);
+          return;
+        }
+
+        if (validation.warnings.length > 0) {
+          console.warn('[SCHEDULE] Validation warnings:', validation.warnings);
+          const preview = validation.warnings.slice(0, 10).join('\n');
+          const more = validation.warnings.length > 10
+            ? `\n\n... e mais ${validation.warnings.length - 10} avisos.`
+            : '';
+          if (!confirm('Calendário gerado com avisos:\n\n' + preview + more + '\n\nContinuar a guardar?')) {
+            setLoading(false);
+            return;
+          }
+        }
+
         const { error } = await supabase.from('matches').insert(matchesToInsert);
         if (error) throw error;
         console.log('[SCHEDULE] Inserted matches into database');
