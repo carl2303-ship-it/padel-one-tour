@@ -1146,34 +1146,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         console.log('[FETCH-CHECK] Format:', effectiveFormat, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
         
-        // AUTO-FIX: Se mixed_american/mixed_gender tem crossed rounds incorretos, corrigir imediatamente
-        if ((effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') && hasCrossedRounds) {
-          console.log('[FETCH-FIX] mixed_american/mixed_gender com crossed rounds incorretos - corrigindo...');
-          await supabase.from('matches').delete()
-            .eq('tournament_id', tournament.id)
-            .like('round', 'crossed_%');
-          
-          if (!hasSemifinalRounds) {
-            const maxNum = Math.max(...matchesResult.data!.map((m: any) => m.match_number || 0));
-            const matchDur = currentTournament.match_duration_minutes || 30;
-            const lastGroupMatch = [...groupMatchesLocal].sort((a, b) => 
-              new Date(b.scheduled_time || 0).getTime() - new Date(a.scheduled_time || 0).getTime())[0];
-            const koTime = lastGroupMatch?.scheduled_time 
-              ? new Date(new Date(lastGroupMatch.scheduled_time).getTime() + matchDur * 60000).toISOString()
-              : new Date().toISOString();
-            
-            const cn = (currentTournament as any)?.court_names || [];
-            const cName = (idx: number) => cn[idx] || (idx + 1).toString();
-            await supabase.from('matches').insert([
-              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: koTime, court: cName(0), status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: koTime, court: cName(1), status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: koTime, court: cName(0), status: 'scheduled' },
-              { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: koTime, court: cName(1), status: 'scheduled' },
-            ]);
-            console.log('[FETCH-FIX] Crossed rounds apagados, 4 knockout corretos criados. Refetching...');
-            await fetchTournamentData(); return;
-          }
-        }
+        // [DISABLED] AUTO-FIX que apagava crossed rounds e recriava knockouts em cada fetch.
+        // Causava alteração contínua de campos/horários sempre que se abria a app.
+        // Para regenerar manualmente, use o botão "Gerar Calendário".
+        // if ((effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') && hasCrossedRounds) {
+        //   ...
+        // }
         
         if (allGroupsDoneLocal) {
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
@@ -1224,35 +1202,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // MIXED AMERICAN: popular meias-finais com cruzamento F + M
             // ================================================================
             if (effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') {
-              // Se tem rounds crossed errados (de torneio antigo), apagar e recriar
-              if (hasCrossedRounds) {
-                console.log('[FETCH-FILL] MA: Apagando crossed rounds incorretos...');
-                await supabase.from('matches').delete()
-                  .eq('tournament_id', tournament.id)
-                  .like('round', 'crossed_%');
-                
-                // Criar os 4 matches corretos se não existem
-                if (!hasSemifinalRounds) {
-                  const maxNum = Math.max(...matchesResult.data!.map((m: any) => m.match_number || 0));
-                  const matchDuration = currentTournament.match_duration_minutes || 30;
-                  const lastGroup = groupMatchesLocal.sort((a, b) => 
-                    new Date(b.scheduled_time || 0).getTime() - new Date(a.scheduled_time || 0).getTime())[0];
-                  const knockoutTime = lastGroup?.scheduled_time 
-                    ? new Date(new Date(lastGroup.scheduled_time).getTime() + matchDuration * 60000).toISOString()
-                    : new Date().toISOString();
-                  
-                  const cn2 = (currentTournament as any)?.court_names || [];
-                  const cName2 = (idx: number) => cn2[idx] || (idx + 1).toString();
-                  await supabase.from('matches').insert([
-                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 1, scheduled_time: knockoutTime, court: cName2(0), status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: 'semifinal', match_number: maxNum + 2, scheduled_time: knockoutTime, court: cName2(1), status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: '3rd_place', match_number: maxNum + 3, scheduled_time: knockoutTime, court: cName2(0), status: 'scheduled' },
-                    { tournament_id: tournament.id, category_id: null, round: 'final', match_number: maxNum + 4, scheduled_time: knockoutTime, court: cName2(1), status: 'scheduled' },
-                  ]);
-                  console.log('[FETCH-FILL] MA: Criados 4 matches knockout corretos. Refetching...');
-                  await fetchTournamentData(); return;
-                }
-              }
+              // [DISABLED] Apagar crossed rounds e recriar knockouts em cada fetch.
+              // Causava alteração contínua de campos/horários sempre que se abria a app.
+              // if (hasCrossedRounds) { ... }
               
               // Popular meias-finais (verificar sempre para corrigir populações incorretas)
               if (hasSemifinalRounds && sortedCats.length >= 2) {
@@ -1526,7 +1478,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         console.log(`[FETCH-CHECK-TEAMS] Playoff structure: expected=${expectedTotal} (R1:${expectedR1} R2:${expectedR2} R3:${expectedR3} R4:${expectedR4} R5:${expectedR5}), existing=${existingTotal} (R1:${existingR1} R2:${existingR2} R3:${existingR3} R4:${existingR4} R5:${existingR5})`);
         
-        if (hasCrossedRounds && existingTotal < expectedTotal) {
+        // [DISABLED] AUTO-FIX que apagava TODOS os playoffs e recriava em cada fetch.
+        // Causava alteração contínua de campos/horários sempre que se abria a app.
+        // Para regenerar, use o botão "Gerar Calendário" manualmente.
+        if (false && hasCrossedRounds && existingTotal < expectedTotal) {
           console.log('[FETCH-AUTOFIX] ====================================');
           console.log(`[FETCH-AUTOFIX] Playoff structure incomplete: ${existingTotal}/${expectedTotal}. Auto-fixing...`);
           
