@@ -115,6 +115,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'teams' | 'matches' | 'standings' | 'knockout'>('teams');
+  const [isMatchGridView, setIsMatchGridView] = useState(false);
   const [showAddTeam, setShowAddTeam] = useState(false);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
@@ -133,6 +134,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [liveLinkCopied, setLiveLinkCopied] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [matchViewSortBy, setMatchViewSortBy] = useState<'time' | 'court' | 'group' | 'courts_grid'>('time');
   const [showManualGroupAssignment, setShowManualGroupAssignment] = useState(false);
   const [showGroupDropdown, setShowGroupDropdown] = useState(false);
   // Super Teams (format === 'super_teams')
@@ -7816,7 +7818,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               {/* Lista de jogos */}
               {filteredMatches.length > 0 ? (
                 <MatchScheduleView
-                  key={refreshKey}
                   matches={filteredMatches}
                   isIndividualRoundRobin={isIndividualFormat()}
                   individualPlayers={individualPlayers}
@@ -7827,7 +7828,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   categories={categories}
                   showCategoryLabels={categories.length > 1}
                   printTitle={currentTournament.name}
-                  onScheduleUpdate={fetchTournamentData}
+                  onScheduleUpdate={() => fetchTournamentData(true)}
+                  onViewModeChange={setIsMatchGridView}
+                  controlledSortBy={matchViewSortBy}
+                  onSortByChange={setMatchViewSortBy}
+                  matchDurationMinutes={currentTournament.match_duration_minutes || 30}
+                  dayStartTime={currentTournament.start_time || '09:00'}
                 />
               ) : (
                 <div className="text-center py-12 text-gray-500">

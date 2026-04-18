@@ -864,9 +864,11 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
           );
         }
 
-        if (currentMatch?.round !== 'group_stage' && !currentMatch?.category_id) {
-          await rescheduleRemainingMatches(tournamentId);
-        }
+        // Disabled: do not auto-reschedule remaining matches when a result is entered
+        // The grid view supports manual drag-and-drop instead, and the function had a runtime bug.
+        // if (currentMatch?.round !== 'group_stage' && !currentMatch?.category_id) {
+        //   await rescheduleRemainingMatches(tournamentId);
+        // }
       }
 
       // CROSSED PLAYOFFS TEAMS - Handle progression for crossed playoff rounds

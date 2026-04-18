@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Match, Team, Player, IndividualPlayer, TournamentCategory } from '../lib/supabase';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Match, Team, Player, IndividualPlayer, TournamentCategory, supabase } from '../lib/supabase';
 import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2, LayoutGrid } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import EditMatchScheduleModal from './EditMatchScheduleModal';
@@ -25,6 +25,11 @@ type MatchScheduleViewProps = {
   showCategoryLabels?: boolean;
   printTitle?: string;
   onScheduleUpdate?: () => void;
+  onViewModeChange?: (isGrid: boolean) => void;
+  controlledSortBy?: SortOption;
+  onSortByChange?: (sortBy: SortOption) => void;
+  matchDurationMinutes?: number;
+  dayStartTime?: string;
 };
 
 export default function MatchScheduleView({
@@ -36,11 +41,127 @@ export default function MatchScheduleView({
   showCategoryLabels = false,
   printTitle,
   onScheduleUpdate,
+  onViewModeChange,
+  controlledSortBy,
+  onSortByChange,
+  matchDurationMinutes = 30,
+  dayStartTime = '09:00',
 }: MatchScheduleViewProps) {
   const { t } = useI18n();
-  const [sortBy, setSortBy] = useState<SortOption>('time');
+  const [internalSortBy, setInternalSortBy] = useState<SortOption>('time');
+  const sortBy = controlledSortBy ?? internalSortBy;
+  const setSortBy = useCallback((v: SortOption) => {
+    setInternalSortBy(v);
+    onSortByChange?.(v);
+  }, [onSortByChange]);
   const printAreaRef = useRef<HTMLDivElement>(null);
   const [editingMatch, setEditingMatch] = useState<{ id: string; scheduledTime: string; court: string } | null>(null);
+
+  const [localMatches, setLocalMatches] = useState<MatchWithTeams[]>(matches);
+  const pendingDropRef = useRef(false);
+  useEffect(() => {
+    if (pendingDropRef.current) {
+      pendingDropRef.current = false;
+      return;
+    }
+    setLocalMatches(matches);
+  }, [matches]);
+
+  useEffect(() => {
+    onViewModeChange?.(sortBy === 'courts_grid');
+  }, [sortBy, onViewModeChange]);
+
+  // ── Drag-and-drop state for courts grid ──
+  const [dragMatchId, setDragMatchId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ time: string; court: string } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const wasDraggedRef = useRef(false);
+
+  const handleDragStart = useCallback((e: React.DragEvent, matchId: string) => {
+    e.dataTransfer.setData('text/plain', matchId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDragMatchId(matchId);
+    setIsDragging(true);
+    wasDraggedRef.current = true;
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDragMatchId(null);
+    setDropTarget(null);
+    setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, time: string, court: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTarget({ time, court });
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDropTarget(null);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, targetTime: string, targetCourt: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(null);
+    setIsDragging(false);
+    setDragMatchId(null);
+
+    const matchId = e.dataTransfer.getData('text/plain');
+    if (!matchId) return;
+
+    const draggedMatch = localMatches.find(m => m.id === matchId);
+    if (!draggedMatch) return;
+
+    const targetTs = new Date(targetTime).getTime();
+    const draggedTs = new Date(draggedMatch.scheduled_time || '').getTime();
+    const samePosition = draggedTs === targetTs && (draggedMatch.court || '').trim() === targetCourt;
+    if (samePosition) return;
+
+    const existingMatch = localMatches.find(m => {
+      if (m.id === matchId) return false;
+      const mTs = new Date(m.scheduled_time || '').getTime();
+      return mTs === targetTs && (m.court || '').trim() === targetCourt;
+    });
+
+    const prevTime = draggedMatch.scheduled_time;
+    const prevCourt = draggedMatch.court;
+
+    pendingDropRef.current = true;
+    setLocalMatches(prev => prev.map(m => {
+      if (m.id === matchId) return { ...m, scheduled_time: targetTime, court: targetCourt };
+      if (existingMatch && m.id === existingMatch.id) return { ...m, scheduled_time: prevTime!, court: prevCourt! };
+      return m;
+    }));
+
+    try {
+      if (existingMatch) {
+        const { error: e1 } = await supabase.from('matches').update({
+          scheduled_time: prevTime,
+          court: prevCourt,
+        }).eq('id', existingMatch.id);
+        if (e1) throw e1;
+      }
+
+      const { error: e2 } = await supabase.from('matches').update({
+        scheduled_time: targetTime,
+        court: targetCourt,
+      }).eq('id', matchId);
+      if (e2) throw e2;
+
+      onScheduleUpdate?.();
+    } catch (err) {
+      console.error('Drag-drop update failed:', err);
+      pendingDropRef.current = false;
+      setLocalMatches(prev => prev.map(m => {
+        if (m.id === matchId) return { ...m, scheduled_time: prevTime!, court: prevCourt! };
+        if (existingMatch && m.id === existingMatch.id) return { ...m, scheduled_time: targetTime, court: targetCourt };
+        return m;
+      }));
+      alert('Erro ao mover o jogo. Tente novamente.');
+    }
+  }, [localMatches, onScheduleUpdate]);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -687,8 +808,8 @@ export default function MatchScheduleView({
     }, 250);
   };
 
-  const sortedMatches = sortMatches(matches);
-  const hasR2Semifinals = matches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
+  const sortedMatches = sortMatches(localMatches);
+  const hasR2Semifinals = localMatches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
   const isDirectCrossedSemifinals = !hasR2Semifinals;
 
   // ---------------------------------------------------------------------
@@ -696,7 +817,7 @@ export default function MatchScheduleView({
   // Each cell shows the match scheduled on (time, court) — or empty.
   // ---------------------------------------------------------------------
   const buildCourtsGridModel = (list: MatchWithTeams[]) => {
-    type Cell = MatchWithTeams | null;
+    type Cell = MatchWithTeams[];
     type Row = { time: string; timeLabel: string; byCourt: Record<string, Cell> };
     type DayBlock = { dayKey: string; dayLabel: string; courts: string[]; rows: Row[] };
 
@@ -711,6 +832,7 @@ export default function MatchScheduleView({
 
     const sortedDayKeys = [...byDay.keys()].sort();
     const result: DayBlock[] = [];
+    const durationMs = matchDurationMinutes * 60 * 1000;
 
     for (const dayKey of sortedDayKeys) {
       const dayMatches = byDay.get(dayKey)!;
@@ -720,20 +842,68 @@ export default function MatchScheduleView({
       });
       const courts = [...courtSet].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
-      const timeMap = new Map<string, Row>();
+      const [yy, mm, dd] = dayKey.split('-').map(Number);
+      const [startH, startM] = (dayStartTime || '09:00').split(':').map(Number);
+      const anchorTs = new Date(yy, mm - 1, dd, startH || 0, startM || 0, 0, 0).getTime();
+
+      const snapToSlot = (matchTs: number): number => {
+        const offset = matchTs - anchorTs;
+        const slotIndex = Math.floor(offset / durationMs);
+        return anchorTs + slotIndex * durationMs;
+      };
+
+      const occupiedSlotsByCourt = new Map<string, Set<number>>();
+      const matchSlots = new Map<string, number>();
       for (const m of dayMatches) {
-        const iso = m.scheduled_time!;
-        if (!timeMap.has(iso)) {
-          const d = new Date(iso);
-          const timeLabel = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-          const byCourt: Record<string, Cell> = {};
-          courts.forEach(c => { byCourt[c] = null; });
-          timeMap.set(iso, { time: iso, timeLabel, byCourt });
-        }
         const court = (m.court || '').trim();
-        if (court) timeMap.get(iso)!.byCourt[court] = m;
+        if (!court) continue;
+        const mTs = new Date(m.scheduled_time!).getTime();
+        const slotTs = snapToSlot(mTs);
+        matchSlots.set(m.id, slotTs);
+        if (!occupiedSlotsByCourt.has(court)) occupiedSlotsByCourt.set(court, new Set());
+        occupiedSlotsByCourt.get(court)!.add(slotTs);
       }
-      const rows = [...timeMap.values()].sort((a, b) => a.time.localeCompare(b.time));
+
+      const allUsedSlots = new Set<number>();
+      for (const ts of matchSlots.values()) allUsedSlots.add(ts);
+
+      const sortedUsed = [...allUsedSlots].sort((a, b) => a - b);
+      const minSlot = sortedUsed[0];
+      const maxSlot = sortedUsed[sortedUsed.length - 1];
+
+      const slotTimestamps: number[] = [];
+      for (let ts = minSlot; ts <= maxSlot; ts += durationMs) {
+        slotTimestamps.push(ts);
+      }
+      if (slotTimestamps.length === 0) slotTimestamps.push(minSlot);
+
+      const slotCells = new Map<number, Record<string, Cell>>();
+      for (const ts of slotTimestamps) {
+        const byCourt: Record<string, Cell> = {};
+        courts.forEach(c => { byCourt[c] = []; });
+        slotCells.set(ts, byCourt);
+      }
+
+      const sortedDayMatches = [...dayMatches].sort((a, b) => {
+        const ta = new Date(a.scheduled_time!).getTime();
+        const tb = new Date(b.scheduled_time!).getTime();
+        if (ta !== tb) return ta - tb;
+        return (a.match_number || 0) - (b.match_number || 0);
+      });
+
+      for (const m of sortedDayMatches) {
+        const court = (m.court || '').trim();
+        if (!court) continue;
+        const slotTs = matchSlots.get(m.id)!;
+        slotCells.get(slotTs)![court].push(m);
+      }
+
+      const rows: Row[] = slotTimestamps.map(ts => {
+        const d = new Date(ts);
+        const iso = d.toISOString();
+        const timeLabel = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        return { time: iso, timeLabel, byCourt: slotCells.get(ts)! };
+      });
 
       const [y, mo, da] = dayKey.split('-').map(Number);
       const dayLabel = new Date(y, mo - 1, da).toLocaleDateString('pt-PT', {
@@ -751,6 +921,7 @@ export default function MatchScheduleView({
     const groupLabel = getGroupLabel(match);
     const categoryLabel = getCategoryLabel(match);
     const isCompleted = match.status === 'completed';
+    const beingDragged = dragMatchId === match.id;
 
     const side1 = isIndividualRoundRobin
       ? `${getPlayerName((match as any).player1_individual_id)} / ${getPlayerName((match as any).player2_individual_id)}`
@@ -761,11 +932,17 @@ export default function MatchScheduleView({
 
     return (
       <div
-        onClick={() => onMatchClick(match.id)}
+        draggable
+        onDragStart={(e) => handleDragStart(e, match.id)}
+        onDragEnd={handleDragEnd}
+        onClick={() => {
+          if (wasDraggedRef.current) { wasDraggedRef.current = false; return; }
+          onMatchClick(match.id);
+        }}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onMatchClick(match.id); }}
-        className={`h-full w-full p-2 rounded-md border-l-4 cursor-pointer hover:ring-2 hover:ring-blue-400 transition text-[11px] leading-tight ${isCompleted ? 'opacity-70' : ''}`}
+        className={`h-full w-full p-2 rounded-md border-l-4 cursor-grab active:cursor-grabbing hover:ring-2 hover:ring-blue-400 transition text-[11px] leading-tight ${isCompleted ? 'opacity-70' : ''} ${beingDragged ? 'opacity-40 ring-2 ring-blue-500 scale-95' : ''}`}
         style={{ borderLeftColor: categoryColor, backgroundColor: bgColor }}
       >
         <div className="flex items-center justify-between gap-1 mb-1">
@@ -845,13 +1022,31 @@ export default function MatchScheduleView({
                       <div className="px-2 py-2 text-sm font-bold text-gray-800 flex items-center justify-center">
                         {row.timeLabel}
                       </div>
-                      {courts.map(c => (
-                        <div key={c} className="border-l border-gray-100 p-1 min-h-[72px]">
-                          {row.byCourt[c] ? renderMatchCell(row.byCourt[c]!) : (
-                            <div className="h-full w-full rounded-md border border-dashed border-gray-200 text-[10px] text-gray-300 flex items-center justify-center">livre</div>
-                          )}
-                        </div>
-                      ))}
+                      {courts.map(c => {
+                        const isOver = dropTarget?.time === row.time && dropTarget?.court === c;
+                        const cellMatches = row.byCourt[c];
+                        return (
+                          <div
+                            key={c}
+                            className={`border-l border-gray-100 p-1 min-h-[72px] transition-colors ${isOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' : ''} ${isDragging && !isOver ? 'bg-opacity-60' : ''}`}
+                            onDragOver={(e) => handleDragOver(e, row.time, c)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleDrop(e, row.time, c)}
+                          >
+                            {cellMatches.length > 0 ? (
+                              <div className="space-y-1">
+                                {cellMatches.map(m => (
+                                  <div key={m.id}>{renderMatchCell(m)}</div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className={`h-full w-full rounded-md border border-dashed ${isOver ? 'border-blue-400 bg-blue-50 text-blue-500' : 'border-gray-200 text-gray-300'} text-[10px] flex items-center justify-center transition-colors`}>
+                                {isOver ? '↓ Largar aqui' : 'livre'}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -863,16 +1058,7 @@ export default function MatchScheduleView({
     );
   };
 
-  // Full-width breakout: escapes the parent max-w-7xl container so the grid
-  // can use the entire viewport width. Disabled in other view modes.
-  const fullWidthBreakoutStyle: React.CSSProperties = {
-    position: 'relative',
-    width: '100vw',
-    marginLeft: 'calc(50% - 50vw)',
-    marginRight: 'calc(50% - 50vw)',
-    paddingLeft: '1rem',
-    paddingRight: '1rem',
-  };
+  const isGridView = sortBy === 'courts_grid';
 
   const getGroupLabel = (match: MatchWithTeams): string => {
     if (match.team1?.group_name) return `Group ${match.team1.group_name}`;
@@ -1094,80 +1280,104 @@ export default function MatchScheduleView({
     );
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4 print:hidden">
-        <div className="flex items-center gap-2">
-          <ArrowUpDown className="w-5 h-5 text-gray-500" />
-          <span className="text-sm font-medium text-gray-700">{t.match.sortBy}:</span>
-          <div className="flex gap-2">
+  const sortToolbar = (
+    <div className="flex items-center justify-between gap-4 print:hidden">
+      <div className="flex items-center gap-2 flex-wrap">
+        <ArrowUpDown className="w-5 h-5 text-gray-500" />
+        <span className="text-sm font-medium text-gray-700">{t.match.sortBy}:</span>
+        <div className="flex gap-2 flex-wrap">
+          {(['time', 'court', 'group', 'courts_grid'] as const).map(opt => {
+            const labels: Record<SortOption, { icon: typeof Calendar; label: string }> = {
+              time:        { icon: Calendar,   label: t.match.sortByTime },
+              court:       { icon: Users,      label: t.match.court },
+              group:       { icon: Calendar,   label: t.match.sortByGroup },
+              courts_grid: { icon: LayoutGrid, label: 'Grelha de campos' },
+            };
+            const { icon: Icon, label } = labels[opt];
+            return (
+              <button
+                key={opt}
+                onClick={() => setSortBy(opt)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  sortBy === opt
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Icon className="w-4 h-4 inline mr-1" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <button
+        onClick={handlePrint}
+        className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors font-medium"
+      >
+        <Printer className="w-4 h-4" />
+        {t.match.printSchedule}
+      </button>
+    </div>
+  );
+
+  if (isGridView) {
+    return (
+      <>
+        {sortToolbar}
+        <div
+          className="fixed inset-0 z-40 bg-[#f7f7f7] overflow-y-auto"
+          style={{ paddingTop: '0.5rem' }}
+        >
+          <div className="sticky top-0 z-50 bg-white/95 backdrop-blur border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <LayoutGrid className="w-5 h-5 text-blue-600" />
+              <h2 className="text-lg font-bold text-gray-900">{printTitle || 'Grelha de Campos'}</h2>
+              <span className="text-sm text-gray-500">{localMatches.length} jogos</span>
+            </div>
             <button
               onClick={() => setSortBy('time')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'time'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition text-sm font-medium"
             >
-              <Calendar className="w-4 h-4 inline mr-1" />
-              {t.match.sortByTime}
+              ✕ Fechar grelha
             </button>
-            <button
-              onClick={() => setSortBy('court')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'court'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Users className="w-4 h-4 inline mr-1" />
-              {t.match.court}
-            </button>
-            <button
-              onClick={() => setSortBy('group')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'group'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              {t.match.sortByGroup}
-            </button>
-            <button
-              onClick={() => setSortBy('courts_grid')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                sortBy === 'courts_grid'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Vista em grelha: todos os campos lado a lado"
-            >
-              <LayoutGrid className="w-4 h-4 inline mr-1" />
-              Grelha de campos
-            </button>
+          </div>
+          <div className="px-4 py-4" ref={printAreaRef}>
+            {renderCourtsGrid(sortedMatches)}
           </div>
         </div>
 
-        <button
-          onClick={handlePrint}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors font-medium"
-        >
-          <Printer className="w-4 h-4" />
-          {t.match.printSchedule}
-        </button>
-      </div>
+        {editingMatch && (
+          <EditMatchScheduleModal
+            matchId={editingMatch.id}
+            currentScheduledTime={editingMatch.scheduledTime}
+            currentCourt={editingMatch.court}
+            onClose={() => setEditingMatch(null)}
+            onSuccess={() => {
+              if (onScheduleUpdate) {
+                onScheduleUpdate();
+              }
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
-      <div ref={printAreaRef} style={sortBy === 'courts_grid' ? fullWidthBreakoutStyle : undefined}>
+  return (
+    <div className="space-y-4">
+      {sortToolbar}
+
+      <div ref={printAreaRef}>
         <div className="hidden print:block print-only mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">{printTitle || t.match.schedule}</h1>
           <p className="text-sm text-gray-600">
-            {matches.length} {t.match.matchesCount}
+            {localMatches.length} {t.match.matchesCount}
           </p>
         </div>
 
-        {sortBy === 'courts_grid' ? (
-          renderCourtsGrid(sortedMatches)
-        ) : (() => {
+        {(() => {
           const { groupStage, knockoutStage } = groupMatchesByPhase(sortedMatches);
           const hasGroupStage = groupStage.length > 0;
           const hasKnockoutStage = knockoutStage.length > 0;
