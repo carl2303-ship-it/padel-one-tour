@@ -29,6 +29,7 @@ interface Team {
   id: string;
   team_name: string;
   group_name: string | null;
+  category_id?: string | null;
 }
 
 interface Player {
@@ -61,6 +62,7 @@ interface Standing {
   entity_name: string;
   entity_type: string;
   group_name: string;
+  category_id: string | null;
   wins: number;
   draws: number;
   losses: number;
@@ -81,80 +83,134 @@ const getMatchScores = (match: Match): { team1: number | null; team2: number | n
   };
 };
 
-const calculateStandings = (matches: Match[], teams: Team[], players: Player[]): Standing[] => {
-  const standings = new Map<string, Standing>();
-  const isIndividual = teams.length === 0 && players.length > 0;
+// Calcula classificacoes APENAS sobre matches de fase de grupos
+// (round 'group_stage' ou 'group_*'). Knockouts nao contam.
+const isGroupRound = (round: string | null | undefined): boolean => {
+  if (!round) return false;
+  return round === 'group_stage' || round.startsWith('group_');
+};
 
-  if (isIndividual) {
-    players.forEach(player => {
-      standings.set(player.id, {
-        entity_id: player.id,
-        entity_name: player.name,
-        entity_type: 'player',
-        group_name: player.group_name || 'Geral',
-        wins: 0, draws: 0, losses: 0,
-        points_for: 0, points_against: 0, points_diff: 0,
-        points: 0, position: 0
-      });
-    });
+// Para cada categoria do torneio (ou para o "default" se nao houver
+// categorias) calcula as standings de forma independente. Cada categoria
+// decide isoladamente se eh team-based ou individual-based pelos matches
+// que tem. Isto resolve o caso de torneios mistos onde uma categoria
+// tem equipas e outra tem jogadores individuais.
+const calculateStandings = (
+  matches: Match[],
+  teams: Team[],
+  players: Player[],
+  categories: Category[]
+): Standing[] => {
+  const result: Standing[] = [];
 
-    matches.forEach(match => {
-      const scores = getMatchScores(match);
-      if (match.status !== 'completed' || scores.team1 === null || scores.team2 === null) return;
-
-      const t1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
-      const t2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
-      const isDraw = scores.team1 === scores.team2;
-      const t1Won = scores.team1! > scores.team2!;
-
-      t1Players.forEach(pid => {
-        const s = standings.get(pid!);
-        if (s) {
-          s.points_for += scores.team1!;
-          s.points_against += scores.team2!;
-          if (isDraw) { s.draws++; s.points += 1; }
-          else if (t1Won) { s.wins++; s.points += 2; }
-          else { s.losses++; }
-          s.points_diff = s.points_for - s.points_against;
-        }
-      });
-
-      t2Players.forEach(pid => {
-        const s = standings.get(pid!);
-        if (s) {
-          s.points_for += scores.team2!;
-          s.points_against += scores.team1!;
-          if (isDraw) { s.draws++; s.points += 1; }
-          else if (!t1Won) { s.wins++; s.points += 2; }
-          else { s.losses++; }
-          s.points_diff = s.points_for - s.points_against;
-        }
-      });
-    });
+  const catBuckets: Array<{ id: string | null; matches: Match[] }> = [];
+  if (categories.length === 0) {
+    catBuckets.push({ id: null, matches: matches.slice() });
   } else {
-    teams.forEach(team => {
-      standings.set(team.id, {
-        entity_id: team.id,
-        entity_name: team.team_name,
-        entity_type: 'team',
-        group_name: team.group_name || 'Geral',
-        wins: 0, draws: 0, losses: 0,
-        points_for: 0, points_against: 0, points_diff: 0,
-        points: 0, position: 0
+    for (const cat of categories) {
+      catBuckets.push({
+        id: cat.id,
+        matches: matches.filter(m => m.category_id === cat.id),
       });
-    });
+    }
+    const noCatMatches = matches.filter(m => !m.category_id);
+    if (noCatMatches.length > 0) {
+      catBuckets.push({ id: null, matches: noCatMatches });
+    }
+  }
 
-    matches.forEach(match => {
-      const scores = getMatchScores(match);
-      if (match.status !== 'completed' || scores.team1 === null || scores.team2 === null) return;
+  for (const bucket of catBuckets) {
+    const catId = bucket.id;
+    const catMatches = bucket.matches.filter(m => isGroupRound(m.round));
+    if (catMatches.length === 0) continue;
 
-      const s1 = standings.get(match.team1_id || '');
-      const s2 = standings.get(match.team2_id || '');
+    const hasTeam = catMatches.some(m => m.team1_id || m.team2_id);
+    const hasIndividual = catMatches.some(
+      m => m.player1_individual_id || m.player3_individual_id
+    );
 
-      if (s1 && s2) {
+    const standings = new Map<string, Standing>();
+
+    if (hasIndividual) {
+      const catPlayers = catId
+        ? players.filter(p => p.category_id === catId)
+        : players.filter(p => !p.category_id);
+
+      catPlayers.forEach(p => {
+        standings.set(p.id, {
+          entity_id: p.id,
+          entity_name: p.name,
+          entity_type: 'player',
+          group_name: p.group_name || 'Geral',
+          category_id: catId,
+          wins: 0, draws: 0, losses: 0,
+          points_for: 0, points_against: 0, points_diff: 0,
+          points: 0, position: 0,
+        });
+      });
+
+      catMatches.forEach(match => {
+        const scores = getMatchScores(match);
+        if (match.status !== 'completed' || scores.team1 === null || scores.team2 === null) return;
+
+        const t1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean) as string[];
+        const t2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean) as string[];
+        const isDraw = scores.team1 === scores.team2;
+        const t1Won = scores.team1! > scores.team2!;
+
+        t1Players.forEach(pid => {
+          const s = standings.get(pid);
+          if (s) {
+            s.points_for += scores.team1!;
+            s.points_against += scores.team2!;
+            if (isDraw) { s.draws++; s.points += 1; }
+            else if (t1Won) { s.wins++; s.points += 2; }
+            else { s.losses++; }
+            s.points_diff = s.points_for - s.points_against;
+          }
+        });
+        t2Players.forEach(pid => {
+          const s = standings.get(pid);
+          if (s) {
+            s.points_for += scores.team2!;
+            s.points_against += scores.team1!;
+            if (isDraw) { s.draws++; s.points += 1; }
+            else if (!t1Won) { s.wins++; s.points += 2; }
+            else { s.losses++; }
+            s.points_diff = s.points_for - s.points_against;
+          }
+        });
+      });
+    }
+
+    if (hasTeam) {
+      const catTeams = catId
+        ? teams.filter(t => t.category_id === catId)
+        : teams.filter(t => !t.category_id);
+
+      catTeams.forEach(team => {
+        standings.set(team.id, {
+          entity_id: team.id,
+          entity_name: team.team_name,
+          entity_type: 'team',
+          group_name: team.group_name || 'Geral',
+          category_id: catId,
+          wins: 0, draws: 0, losses: 0,
+          points_for: 0, points_against: 0, points_diff: 0,
+          points: 0, position: 0,
+        });
+      });
+
+      catMatches.forEach(match => {
+        const scores = getMatchScores(match);
+        if (match.status !== 'completed' || scores.team1 === null || scores.team2 === null) return;
+
+        const s1 = standings.get(match.team1_id || '');
+        const s2 = standings.get(match.team2_id || '');
+        if (!s1 || !s2) return;
+
         s1.points_for += scores.team1; s1.points_against += scores.team2;
         s2.points_for += scores.team2; s2.points_against += scores.team1;
-
         if (scores.team1 > scores.team2) {
           s1.wins++; s1.points += 2; s2.losses++;
         } else if (scores.team2 > scores.team1) {
@@ -164,30 +220,29 @@ const calculateStandings = (matches: Match[], teams: Team[], players: Player[]):
         }
         s1.points_diff = s1.points_for - s1.points_against;
         s2.points_diff = s2.points_for - s2.points_against;
-      }
+      });
+    }
+
+    const grouped = new Map<string, Standing[]>();
+    standings.forEach(s => {
+      if (!grouped.has(s.group_name)) grouped.set(s.group_name, []);
+      grouped.get(s.group_name)!.push(s);
+    });
+
+    grouped.forEach(groupStandings => {
+      groupStandings.sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        if (b.points !== a.points) return b.points - a.points;
+        if (b.points_diff !== a.points_diff) return b.points_diff - a.points_diff;
+        if (b.points_for !== a.points_for) return b.points_for - a.points_for;
+        return (a.entity_name || '').localeCompare(b.entity_name || '');
+      });
+      groupStandings.forEach((s, i) => {
+        s.position = i + 1;
+        result.push(s);
+      });
     });
   }
-
-  const grouped = new Map<string, Standing[]>();
-  standings.forEach(s => {
-    if (!grouped.has(s.group_name)) grouped.set(s.group_name, []);
-    grouped.get(s.group_name)!.push(s);
-  });
-
-  const result: Standing[] = [];
-  grouped.forEach(groupStandings => {
-    groupStandings.sort((a, b) => {
-      if (b.wins !== a.wins) return b.wins - a.wins;
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.points_diff !== a.points_diff) return b.points_diff - a.points_diff;
-      if (b.points_for !== a.points_for) return b.points_for - a.points_for;
-      return (a.entity_name || '').localeCompare(b.entity_name || '');
-    });
-    groupStandings.forEach((s, i) => {
-      s.position = i + 1;
-      result.push(s);
-    });
-  });
 
   return result;
 };
@@ -238,7 +293,7 @@ export default function LiveTournamentView() {
 
       const { data: teamsData } = await supabase
         .from('teams')
-        .select('id, team_name:name, group_name')
+        .select('id, team_name:name, group_name, category_id')
         .eq('tournament_id', tournamentId);
       setTeams(teamsData || []);
 
@@ -249,13 +304,24 @@ export default function LiveTournamentView() {
       setPlayers(playersData || []);
 
       if (matchesData) {
-        setStandings(calculateStandings(matchesData, teamsData || [], playersData || []));
+        const newStandings = calculateStandings(
+          matchesData,
+          teamsData || [],
+          playersData || [],
+          catData || []
+        );
+        setStandings(newStandings);
+        console.log(
+          `[LIVE-TV] Refreshed: ${matchesData.length} matches, ` +
+          `${(teamsData || []).length} teams, ${(playersData || []).length} players, ` +
+          `${(catData || []).length} cats -> ${newStandings.length} standings`
+        );
       }
 
       setLastUpdate(new Date());
       setLoading(false);
     } catch (err) {
-      console.error('Error fetching tournament data:', err);
+      console.error('[LIVE-TV] Error fetching tournament data:', err);
       setError('Erro ao carregar dados do torneio');
       setLoading(false);
     }
@@ -264,18 +330,46 @@ export default function LiveTournamentView() {
   useEffect(() => {
     fetchTournamentData();
 
+    // Channel name unico por sessao para nao colidir com outras tabs
+    // abertas no mesmo browser/torneio (Supabase rejeita o segundo
+    // subscribe para o mesmo channel name e a tab fica sem realtime).
+    const sessionTag = Math.random().toString(36).slice(2, 8);
+    const channelName = `live-tv-${tournamentId}-${sessionTag}`;
     const channel = supabase
-      .channel(`live-tv-${tournamentId}`)
+      .channel(channelName)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'matches',
-        filter: `tournament_id=eq.${tournamentId}`
-      }, () => {
+        filter: `tournament_id=eq.${tournamentId}`,
+      }, (payload) => {
+        console.log('[LIVE-TV] Realtime matches:', (payload as any).eventType);
         fetchTournamentData();
       })
-      .subscribe();
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'teams',
+        filter: `tournament_id=eq.${tournamentId}`,
+      }, (payload) => {
+        console.log('[LIVE-TV] Realtime teams:', (payload as any).eventType);
+        fetchTournamentData();
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'players',
+        filter: `tournament_id=eq.${tournamentId}`,
+      }, (payload) => {
+        console.log('[LIVE-TV] Realtime players:', (payload as any).eventType);
+        fetchTournamentData();
+      })
+      .subscribe((status, err) => {
+        console.log('[LIVE-TV] Channel', channelName, 'status:', status, err || '');
+      });
 
+    // Polling de seguranca: se o realtime falhar (RLS, rede,
+    // tabela sem realtime habilitado), o ecra continua a atualizar.
     const pollInterval = setInterval(() => {
       fetchTournamentData();
     }, 15000);
@@ -355,12 +449,6 @@ export default function LiveTournamentView() {
     return round;
   };
 
-  const groupedStandings = standings.reduce((acc, s) => {
-    if (!acc[s.group_name]) acc[s.group_name] = [];
-    acc[s.group_name].push(s);
-    return acc;
-  }, {} as Record<string, Standing[]>);
-
   const completedMatches = matches.filter(m => m.status === 'completed');
   const inProgressMatches = matches.filter(m => m.status === 'in_progress');
   const upcomingMatches = matches.filter(m => m.status === 'scheduled');
@@ -373,12 +461,11 @@ export default function LiveTournamentView() {
     ...upcomingMatches.sort((a, b) => a.match_number - b.match_number),
   ];
 
+  // Quando ha mais do que uma categoria, mostramos uma de cada vez
+  // (rotacionada automaticamente). Como cada Standing ja tem o
+  // category_id resolvido em calculateStandings, basta filtrar por isso.
   const filteredStandings = categories.length > 1 && categories[activeCategory]
-    ? (() => {
-        const catId = categories[activeCategory].id;
-        const catPlayerIds = new Set(players.filter(p => p.category_id === catId).map(p => p.id));
-        return standings.filter(s => catPlayerIds.has(s.entity_id));
-      })()
+    ? standings.filter(s => s.category_id === categories[activeCategory].id)
     : standings;
 
   const filteredGroupedStandings = filteredStandings.reduce((acc, s) => {
