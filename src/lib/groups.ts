@@ -2178,3 +2178,244 @@ export async function advanceKnockoutWinner(
   console.log('[ADVANCE_WINNER] Done processing advancement');
 }
 
+/**
+ * Popula matches de knockout (semi_final, quarter_final, round_of_16) com TEAMS
+ * a partir do ranking dos grupos. Funciona por categoria.
+ *
+ * Cenários:
+ *   • Sem categoria → processa todas as categorias do torneio.
+ *   • Com categoria → processa apenas essa categoria.
+ *
+ * Só preenche matches que estejam VAZIOS (team1_id ou team2_id null) — nunca
+ * sobrescreve atribuições manuais.  Só corre quando todos os jogos de grupos
+ * dessa categoria estiverem completos.
+ */
+export async function populateTeamPlacementMatches(
+  tournamentId: string,
+  categoryId?: string | null
+): Promise<void> {
+  console.log('[POPULATE_TEAM_PLACEMENT] Start tournament:', tournamentId, 'category:', categoryId || '(all)');
+
+  const { data: allMatches, error: matchesError } = await supabase
+    .from('matches')
+    .select('*')
+    .eq('tournament_id', tournamentId);
+
+  if (matchesError || !allMatches) {
+    console.error('[POPULATE_TEAM_PLACEMENT] Error fetching matches:', matchesError);
+    return;
+  }
+
+  const { data: allTeams, error: teamsError } = await supabase
+    .from('teams')
+    .select('id, name, category_id')
+    .eq('tournament_id', tournamentId);
+
+  if (teamsError || !allTeams) {
+    console.error('[POPULATE_TEAM_PLACEMENT] Error fetching teams:', teamsError);
+    return;
+  }
+
+  const categoryIds = categoryId
+    ? [categoryId]
+    : Array.from(new Set(allTeams.map(t => t.category_id).filter(Boolean) as string[]));
+
+  if (categoryIds.length === 0) {
+    console.log('[POPULATE_TEAM_PLACEMENT] No categories with teams found, nothing to do');
+    return;
+  }
+
+  for (const catId of categoryIds) {
+    await populateTeamPlacementForCategory(catId, allMatches, allTeams);
+  }
+
+  console.log('[POPULATE_TEAM_PLACEMENT] Done');
+}
+
+async function populateTeamPlacementForCategory(
+  categoryId: string,
+  allMatches: any[],
+  allTeams: Array<{ id: string; name: string; category_id: string | null }>
+): Promise<void> {
+  const catTeams = allTeams.filter(t => t.category_id === categoryId);
+  if (catTeams.length < 2) {
+    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: only ${catTeams.length} team(s), skip`);
+    return;
+  }
+
+  const catMatches = allMatches.filter(m => m.category_id === categoryId);
+  const groupMatches = catMatches.filter(m => typeof m.round === 'string' && m.round.startsWith('group_'));
+  if (groupMatches.length === 0) {
+    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: no group matches, skip`);
+    return;
+  }
+
+  const hasResult = (m: any) => {
+    const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+    const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+    return m.status === 'completed' || t1 > 0 || t2 > 0;
+  };
+  const allGroupsDone = groupMatches.every(hasResult);
+
+  // Knockout / placement rounds for the category (extended to cover the full
+  // bracket so reverts cascade all the way down to the final / 3rd-place).
+  const ko = catMatches.filter(m =>
+    m.round === 'round_of_16' ||
+    m.round === 'quarter_final' ||
+    m.round === 'quarterfinal' ||
+    m.round === 'semi_final' ||
+    m.round === 'semifinal' ||
+    m.round === 'final' ||
+    m.round === '3rd_place'
+  );
+
+  // If the group stage is not yet fully resolved we MUST also clear the
+  // knockout slots so the bracket reflects reality (e.g. user reverted a
+  // group result -> previously-qualified teams should disappear). We only
+  // protect KO matches that have *real* scores entered, never just because
+  // status happens to be 'completed' (that flag may be leftover state).
+  const hasRealScores = (m: any) => {
+    const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+    const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+    return t1 > 0 || t2 > 0;
+  };
+  if (!allGroupsDone) {
+    const done = groupMatches.filter(hasResult).length;
+    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: groups not all done (${done}/${groupMatches.length}) -> clearing unplayed knockouts`);
+    let cleared = 0;
+    for (const m of ko) {
+      if (hasRealScores(m)) {
+        console.log(`[POPULATE_TEAM_PLACEMENT] Skip ${m.round} #${m.match_number} - has real scores`);
+        continue;
+      }
+      if (!m.team1_id && !m.team2_id) continue;
+      const { error: updErr } = await supabase
+        .from('matches')
+        .update({ team1_id: null, team2_id: null, winner_id: null, status: 'scheduled' })
+        .eq('id', m.id);
+      if (updErr) {
+        console.error(`[POPULATE_TEAM_PLACEMENT] Error clearing ${m.round} #${m.match_number}:`, updErr);
+      } else {
+        cleared++;
+        console.log(`[POPULATE_TEAM_PLACEMENT] Cleared ${m.round} #${m.match_number}`);
+      }
+    }
+    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: cleared ${cleared} knockout match(es)`);
+    return;
+  }
+
+  if (ko.length === 0) {
+    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: no knockout matches, skip`);
+    return;
+  }
+
+  type Stats = { id: string; name: string; group: string; wins: number; gd: number; gf: number };
+  const stats = new Map<string, Stats>();
+  catTeams.forEach(t => stats.set(t.id, { id: t.id, name: t.name, group: '', wins: 0, gd: 0, gf: 0 }));
+
+  groupMatches.forEach(m => {
+    const t1g = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+    const t2g = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+    const t1Won = t1g > t2g;
+    const groupName = typeof m.round === 'string' ? m.round.replace('group_', '') : '';
+
+    const s1 = m.team1_id ? stats.get(m.team1_id) : undefined;
+    const s2 = m.team2_id ? stats.get(m.team2_id) : undefined;
+    if (s1) {
+      if (!s1.group) s1.group = groupName;
+      s1.gf += t1g;
+      s1.gd += t1g - t2g;
+      if (t1Won) s1.wins++;
+    }
+    if (s2) {
+      if (!s2.group) s2.group = groupName;
+      s2.gf += t2g;
+      s2.gd += t2g - t1g;
+      if (!t1Won) s2.wins++;
+    }
+  });
+
+  const teamsByGroup = new Map<string, Stats[]>();
+  Array.from(stats.values()).forEach(s => {
+    const g = s.group || 'A';
+    if (!teamsByGroup.has(g)) teamsByGroup.set(g, []);
+    teamsByGroup.get(g)!.push(s);
+  });
+
+  const sortedGroupNames = Array.from(teamsByGroup.keys()).sort();
+  const rankedByGroup = new Map<string, Stats[]>();
+  sortedGroupNames.forEach(g => {
+    const arr = (teamsByGroup.get(g) || []).slice().sort((a, b) => {
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      if (a.gd !== b.gd) return b.gd - a.gd;
+      return b.gf - a.gf;
+    });
+    rankedByGroup.set(g, arr);
+    console.log(`[POPULATE_TEAM_PLACEMENT] Cat ${categoryId} group ${g}:`, arr.map((t, i) => `${i + 1}° ${t.name} (W${t.wins}/GD${t.gd})`));
+  });
+
+  const overallRanking: Stats[] = [];
+  const maxLen = Math.max(...Array.from(rankedByGroup.values()).map(a => a.length));
+  for (let pos = 0; pos < maxLen; pos++) {
+    for (const g of sortedGroupNames) {
+      const arr = rankedByGroup.get(g)!;
+      if (pos < arr.length) overallRanking.push(arr[pos]);
+    }
+  }
+
+  const semis = ko.filter(m => m.round === 'semi_final' || m.round === 'semifinal').sort((a, b) => a.match_number - b.match_number);
+  const qfs = ko.filter(m => m.round === 'quarter_final' || m.round === 'quarterfinal').sort((a, b) => a.match_number - b.match_number);
+  const ro16 = ko.filter(m => m.round === 'round_of_16').sort((a, b) => a.match_number - b.match_number);
+
+  const isEmpty = (m: any) => !m.team1_id || !m.team2_id;
+
+  const buildCrossPairs = (teams: Stats[], n: number): Array<[Stats, Stats]> => {
+    const pool = teams.slice(0, n);
+    const pairs: Array<[Stats, Stats]> = [];
+    for (let i = 0; i < pool.length / 2; i++) {
+      const top = pool[i];
+      const bot = pool[pool.length - 1 - i];
+      if (top && bot && top.id !== bot.id) pairs.push([top, bot]);
+    }
+    return pairs;
+  };
+
+  if (ro16.length > 0 && ro16.some(isEmpty) && overallRanking.length >= 2) {
+    const need = ro16.length * 2;
+    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
+    for (let i = 0; i < ro16.length && i < pairs.length; i++) {
+      const m = ro16[i];
+      if (!isEmpty(m)) continue;
+      const [a, b] = pairs[i];
+      await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
+      console.log(`[POPULATE_TEAM_PLACEMENT] RO16 ${m.match_number}: ${a.name} vs ${b.name}`);
+    }
+    return;
+  }
+
+  if (qfs.length > 0 && qfs.some(isEmpty) && overallRanking.length >= 2) {
+    const need = qfs.length * 2;
+    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
+    for (let i = 0; i < qfs.length && i < pairs.length; i++) {
+      const m = qfs[i];
+      if (!isEmpty(m)) continue;
+      const [a, b] = pairs[i];
+      await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
+      console.log(`[POPULATE_TEAM_PLACEMENT] QF ${m.match_number}: ${a.name} vs ${b.name}`);
+    }
+    return;
+  }
+
+  if (semis.length > 0 && semis.some(isEmpty) && overallRanking.length >= 2) {
+    const need = semis.length * 2;
+    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
+    for (let i = 0; i < semis.length && i < pairs.length; i++) {
+      const m = semis[i];
+      if (!isEmpty(m)) continue;
+      const [a, b] = pairs[i];
+      await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
+      console.log(`[POPULATE_TEAM_PLACEMENT] SF ${m.match_number}: ${a.name} vs ${b.name}`);
+    }
+  }
+}
+

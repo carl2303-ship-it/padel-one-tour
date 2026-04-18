@@ -365,6 +365,7 @@ function App() {
       {showMatchModal && selectedTournament && (
         <MatchModal
           tournamentId={selectedTournament.id}
+          tournament={selectedTournament}
           onClose={() => setShowMatchModal(false)}
           onSuccess={handleTeamSuccess}
         />

@@ -18,7 +18,7 @@ import { processAllUnratedMatches, awardTournamentRewardPoints } from '../lib/ra
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
-import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, advanceKnockoutWinner } from '../lib/groups';
+import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
@@ -178,13 +178,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const { eventType, new: newRecord, old: oldRecord } = payload;
     console.log('[REALTIME] Match change:', eventType);
     if (eventType === 'UPDATE' && newRecord) {
-      const cn: string[] = (currentTournament as any)?.court_names || (tournament as any)?.court_names || [];
-      if (newRecord.court && cn.length > 0) {
-        const num = parseInt(newRecord.court);
-        if (!isNaN(num) && num >= 1 && num <= cn.length) {
-          newRecord.court = cn[num - 1];
-        }
-      }
+      // Use the value coming from DB literally. Any normalization of
+      // numeric court ("1" -> "Court A") happens once at fetch time via
+      // normalizeNumericCourtsInDB, so the realtime payload is already
+      // in the correct shape.
       setMatches(prev => {
         const updated = prev.map(m => m.id === newRecord.id ? { ...m, ...newRecord } : m);
         const hasResultScores = (m: any) =>
@@ -979,21 +976,57 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
-  const fixMatchCourts = (matchList: MatchWithTeams[]): MatchWithTeams[] => {
+  // Normalize purely-numeric court strings ("1", "2", ...) directly in the
+  // database to the matching court_names[i-1]. Runs at most once per
+  // tournament load: if everything is already a name, this is a no-op and
+  // does not touch the DB.
+  // We deliberately ONLY rewrite courts that are *purely numeric*. Strings
+  // like "1-Estrella LandsCoping" are real, user-defined names and must be
+  // left untouched (rewriting them was the source of "matches jumping
+  // between courts" between renders).
+  const courtsNormalizedRef = useRef<Set<string>>(new Set());
+  const normalizeNumericCourtsInDB = async (
+    matchList: Array<{ id: string; court: string | null }>,
+  ): Promise<boolean> => {
+    if (courtsNormalizedRef.current.has(tournament.id)) return false;
     const cn: string[] = (currentTournament as any)?.court_names || (tournament as any)?.court_names || [];
-    if (cn.length === 0) return matchList;
-    return matchList.map(m => {
-      if (m.court) {
-        const num = parseInt(m.court);
-        if (!isNaN(num) && num >= 1 && num <= cn.length) {
-          return { ...m, court: cn[num - 1] };
-        }
+    if (cn.length === 0) {
+      courtsNormalizedRef.current.add(tournament.id);
+      return false;
+    }
+    const updates = matchList
+      .filter(m => m.court && /^\d+$/.test(m.court.trim()))
+      .map(m => {
+        const num = parseInt(m.court!.trim(), 10);
+        if (num < 1 || num > cn.length) return null;
+        return { id: m.id, newCourt: cn[num - 1] };
+      })
+      .filter((u): u is { id: string; newCourt: string } => u !== null);
+
+    if (updates.length === 0) {
+      courtsNormalizedRef.current.add(tournament.id);
+      return false;
+    }
+
+    console.log(`[NORMALIZE-COURTS] Found ${updates.length} match(es) with purely-numeric court. Persisting names to DB...`);
+    for (const u of updates) {
+      const { error } = await supabase
+        .from('matches')
+        .update({ court: u.newCourt })
+        .eq('id', u.id);
+      if (error) {
+        console.error('[NORMALIZE-COURTS] Update failed for', u.id, error);
       }
-      return m;
-    });
+    }
+    courtsNormalizedRef.current.add(tournament.id);
+    console.log('[NORMALIZE-COURTS] Done. Refetching...');
+    return true;
   };
 
   const fetchDepthRef = useRef(0);
+  // Fingerprint per category to avoid an infinite "auto-sync -> populate -> fetch -> auto-sync" loop
+  // when populate cannot resolve the desired state (e.g. group has too few teams to fill the bracket).
+  const gkSyncFingerprintRef = useRef<Map<string, string>>(new Map());
   const fetchTournamentData = async (silent = false) => {
     if (fetchDepthRef.current >= 3) {
       console.warn('[FETCH] Max recursive depth reached, aborting');
@@ -1095,12 +1128,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (matchesResult.data) {
         console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
         console.log('[FETCH] First match:', matchesResult.data[0]);
-        const sortedMatches = fixMatchCourts(
-          (matchesResult.data as unknown as MatchWithTeams[]).sort(
-            (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
-          )
+        const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
+        // One-shot DB normalization for purely-numeric courts ("1" -> court_names[0]).
+        // Once done, the DB is consistent and renders are deterministic.
+        const didNormalize = await normalizeNumericCourtsInDB(rawMatches as any);
+        if (didNormalize) {
+          await fetchTournamentData(silent);
+          return;
+        }
+        const sortedMatches = rawMatches.slice().sort(
+          (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
         );
         setMatches(sortedMatches);
+        try {
+          const fp = (matchesResult.data as any[])
+            .slice()
+            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))
+            .map((m: any) => `#${m.match_number}|${(m.court || '').toString().trim()}|${m.scheduled_time || ''}`)
+            .join('\n');
+          console.log('[FETCH-FP] Schedule fingerprint (BD raw):\n' + fp);
+          (window as any).__matchesFP = fp;
+          (window as any).__matches = matchesResult.data;
+        } catch {}
 
         if (effectiveFormat === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
@@ -1125,6 +1174,60 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             populatePlacementMatches(tournament.id).then(() => {
               fetchTournamentData();
             });
+            return;
+          }
+        }
+
+        if (effectiveFormat === 'groups_knockout' && categoriesResult.data && categoriesResult.data.length > 0) {
+          // Detect categories whose knockout state is OUT OF SYNC with the
+          // current group results, in either direction:
+          //   (a) groups all done + knockouts still empty -> POPULATE
+          //   (b) groups NOT all done + knockouts still hold teams -> CLEAR
+          // populateTeamPlacementMatches handles both branches internally.
+          const categoriesNeedingSync: string[] = [];
+          const hasResultLocal = (m: any) => {
+            const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+            const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+            return m.status === 'completed' || t1 > 0 || t2 > 0;
+          };
+          for (const cat of categoriesResult.data as Array<{ id: string }>) {
+            const catGroupMatches = matchesResult.data.filter((m: any) => m.category_id === cat.id && typeof m.round === 'string' && m.round.startsWith('group_'));
+            if (catGroupMatches.length === 0) continue;
+            const allDone = catGroupMatches.every(hasResultLocal);
+
+            const catKnockouts = matchesResult.data.filter((m: any) =>
+              m.category_id === cat.id && (
+                m.round === 'round_of_16' ||
+                m.round === 'quarter_final' || m.round === 'quarterfinal' ||
+                m.round === 'semi_final' || m.round === 'semifinal' ||
+                m.round === 'final' ||
+                m.round === '3rd_place'
+              )
+            );
+            if (catKnockouts.length === 0) continue;
+
+            const hasEmpty = catKnockouts.some((m: any) => !m.team1_id || !m.team2_id);
+            const hasStaleTeams = catKnockouts.some((m: any) => {
+              if (hasResultLocal(m)) return false; // protege resultados reais
+              return !!(m.team1_id || m.team2_id);
+            });
+
+            if (allDone && hasEmpty) {
+              categoriesNeedingSync.push(cat.id);
+            } else if (!allDone && hasStaleTeams) {
+              categoriesNeedingSync.push(cat.id);
+            }
+          }
+
+          if (categoriesNeedingSync.length > 0) {
+            console.log('[FETCH] groups_knockout TEAMS: syncing knockouts for categories:', categoriesNeedingSync);
+            (async () => {
+              for (const cId of categoriesNeedingSync) {
+                try { await populateTeamPlacementMatches(tournament.id, cId); }
+                catch (err) { console.error('[FETCH] populateTeamPlacementMatches error:', err); }
+              }
+              await fetchTournamentData();
+            })();
             return;
           }
         }
@@ -1380,16 +1483,106 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             team2_name: m.team2?.name
           })));
         }
-        const sortedMatches = fixMatchCourts(
-          (matchesResult.data as unknown as MatchWithTeams[]).sort(
-            (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
-          )
+        const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
+        const didNormalize = await normalizeNumericCourtsInDB(rawMatches as any);
+        if (didNormalize) {
+          await fetchTournamentData(silent);
+          return;
+        }
+        const sortedMatches = rawMatches.slice().sort(
+          (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
         );
         setMatches(sortedMatches);
+        try {
+          const fp = (matchesResult.data as any[])
+            .slice()
+            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))
+            .map((m: any) => `#${m.match_number}|${(m.court || '').toString().trim()}|${m.scheduled_time || ''}`)
+            .join('\n');
+          console.log('[FETCH-FP] Schedule fingerprint (BD raw):\n' + fp);
+          (window as any).__matchesFP = fp;
+          (window as any).__matches = matchesResult.data;
+        } catch {}
       }
       if (categoriesResult.data) {
         console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
+      }
+
+      // ================================================================
+      // AUTO-SYNC groups_knockout TEAMS (per category)
+      // Detecta categorias com format='groups_knockout' onde os knockouts
+      // estão fora de sincro com o estado dos grupos:
+      //   (a) grupos completos + knockouts vazios -> POPULATE
+      //   (b) grupos NÃO completos + knockouts ainda têm equipas -> CLEAR
+      // Funciona mesmo quando o torneio top-level NÃO é groups_knockout
+      // (e.g. torneio misto com várias categorias de formats diferentes).
+      // ================================================================
+      if (matchesResult.data && categoriesResult.data && categoriesResult.data.length > 0) {
+        const gkCategories = (categoriesResult.data as any[]).filter(c => c.format === 'groups_knockout');
+        if (gkCategories.length > 0) {
+          const hasResultLocal = (m: any) => {
+            const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+            const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+            return m.status === 'completed' || t1 > 0 || t2 > 0;
+          };
+          const categoriesNeedingSync: string[] = [];
+          for (const cat of gkCategories) {
+            const catGroupMatches = matchesResult.data.filter((m: any) => m.category_id === cat.id && typeof m.round === 'string' && m.round.startsWith('group_'));
+            if (catGroupMatches.length === 0) continue;
+            const allDone = catGroupMatches.every(hasResultLocal);
+
+            const catKnockouts = matchesResult.data.filter((m: any) =>
+              m.category_id === cat.id && (
+                m.round === 'round_of_16' ||
+                m.round === 'quarter_final' || m.round === 'quarterfinal' ||
+                m.round === 'semi_final' || m.round === 'semifinal' ||
+                m.round === 'final' ||
+                m.round === '3rd_place'
+              )
+            );
+            if (catKnockouts.length === 0) continue;
+
+            const hasEmpty = catKnockouts.some((m: any) => !m.team1_id || !m.team2_id);
+            const hasStaleTeams = catKnockouts.some((m: any) => {
+              if (hasResultLocal(m)) return false; // protege resultados reais
+              return !!(m.team1_id || m.team2_id);
+            });
+
+            console.log(`[FETCH-GK] Category ${cat.name}: groups ${allDone ? 'all done' : 'NOT all done'}, knockouts ${hasEmpty ? 'have empty' : 'all filled'}${hasStaleTeams ? ', has stale teams' : ''}`);
+
+            const needsPopulate = allDone && hasEmpty;
+            const needsClear = !allDone && hasStaleTeams;
+            if (!needsPopulate && !needsClear) continue;
+
+            // Build a fingerprint of the relevant state. If we already tried to
+            // sync this exact state and nothing changed, the populate clearly
+            // can't resolve it (e.g. too few teams) — skip to break the loop.
+            const doneCount = catGroupMatches.filter(hasResultLocal).length;
+            const koEmptyCount = catKnockouts.filter((m: any) => !m.team1_id || !m.team2_id).length;
+            const koStaleCount = catKnockouts.filter((m: any) => !hasResultLocal(m) && (m.team1_id || m.team2_id)).length;
+            const fingerprint = `${doneCount}/${catGroupMatches.length}|emp:${koEmptyCount}|stale:${koStaleCount}|action:${needsPopulate ? 'pop' : 'clr'}`;
+            const lastFingerprint = gkSyncFingerprintRef.current.get(cat.id);
+            if (lastFingerprint === fingerprint) {
+              console.log(`[FETCH-GK] Skip ${cat.name}: same state as last attempt (${fingerprint}) - populate cannot resolve, breaking loop`);
+              continue;
+            }
+            gkSyncFingerprintRef.current.set(cat.id, fingerprint);
+            categoriesNeedingSync.push(cat.id);
+          }
+
+          if (categoriesNeedingSync.length > 0) {
+            console.log('[FETCH-GK] Syncing groups_knockout categories:', categoriesNeedingSync);
+            (async () => {
+              for (const cId of categoriesNeedingSync) {
+                try { await populateTeamPlacementMatches(tournament.id, cId); }
+                catch (err) { console.error('[FETCH-GK] populateTeamPlacementMatches error:', err); }
+              }
+              await fetchTournamentData();
+            })();
+            return;
+          }
+        }
       }
 
       // ================================================================
@@ -8162,6 +8355,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showMatchModal && (
         <MatchModal
           tournamentId={tournament.id}
+          tournament={currentTournament}
           matchId={selectedMatchId}
           onClose={() => {
             // Save match ID for scroll restoration

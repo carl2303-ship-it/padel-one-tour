@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase, Team, Player, IndividualPlayer } from '../lib/supabase';
 import { X, RotateCcw } from 'lucide-react';
 import { rescheduleRemainingMatches } from '../lib/reschedule';
 import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from '../lib/leagueStandings';
-import { advanceKnockoutWinner, populatePlacementMatches } from '../lib/groups';
+import { advanceKnockoutWinner, populatePlacementMatches, populateTeamPlacementMatches } from '../lib/groups';
 import { processMatchRating } from '../lib/ratingEngine';
 import { useI18n } from '../lib/i18nContext';
 
@@ -642,6 +642,7 @@ async function checkAndScheduleNextRound(
 
 type MatchModalProps = {
   tournamentId: string;
+  tournament?: any;
   matchId?: string;
   onClose: () => void;
   onSuccess: () => void;
@@ -654,7 +655,7 @@ type TeamWithPlayers = Team & {
   player2: Player;
 };
 
-export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, isIndividualRoundRobin = false, individualPlayers = [] }: MatchModalProps) {
+export default function MatchModal({ tournamentId, tournament, matchId, onClose, onSuccess, isIndividualRoundRobin = false, individualPlayers = [] }: MatchModalProps) {
   const { t } = useI18n();
   const [teams, setTeams] = useState<TeamWithPlayers[]>([]);
   const [matchData, setMatchData] = useState<any>(null);
@@ -675,6 +676,14 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Snapshot of the schedule fields as they were when the modal opened.
+  // Used to avoid re-writing scheduled_time / court when the user only changed
+  // the score: re-writing them turns the timezone-less datetime-local string
+  // back into ISO and was shifting matches across time slots / courts.
+  const matchData_initial = useRef<{ scheduled_time: string; court: string }>({
+    scheduled_time: '',
+    court: '',
+  });
 
   useEffect(() => {
     const loadData = async () => {
@@ -718,13 +727,28 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
     }
     if (data) {
       setMatchData(data);
+      // CRITICAL: <input type="datetime-local"> uses LOCAL timezone.
+      // Using toISOString().slice(0,16) keeps the value in UTC, which then
+      // gets re-interpreted as local on submit and shifts the match by the
+      // local UTC offset (-1h or -2h depending on DST) every save.
+      const toLocalInput = (iso: string): string => {
+        const d = new Date(iso);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const initialScheduled = data.scheduled_time ? toLocalInput(data.scheduled_time) : '';
+      const initialCourt = data.court || '';
+      matchData_initial.current = {
+        scheduled_time: initialScheduled,
+        court: initialCourt,
+      };
       setFormData({
         team1_id: data.team1_id || '',
         team2_id: data.team2_id || '',
         round: data.round,
         match_number: data.match_number,
-        scheduled_time: data.scheduled_time ? new Date(data.scheduled_time).toISOString().slice(0, 16) : '',
-        court: data.court || '',
+        scheduled_time: initialScheduled,
+        court: initialCourt,
         team1_score_set1: data.team1_score_set1,
         team2_score_set1: data.team2_score_set1,
         team1_score_set2: data.team1_score_set2,
@@ -775,8 +799,6 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
       tournament_id: tournamentId,
       round: formData.round,
       match_number: formData.match_number,
-      scheduled_time: formData.scheduled_time || null,
-      court: formData.court || null,
       status: finalStatus,
       team1_score_set1: formData.team1_score_set1,
       team2_score_set1: formData.team2_score_set1,
@@ -790,6 +812,45 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
     if (!isIndividualRoundRobin) {
       matchData.team1_id = formData.team1_id || null;
       matchData.team2_id = formData.team2_id || null;
+    }
+
+    // CRITICAL FIX: Only persist scheduled_time/court when the user explicitly
+    // changed them in the form. Re-writing them blindly (the form's
+    // datetime-local string has no timezone) was shifting matches across
+    // timezone boundaries and reshuffling the grid every time a result was saved.
+    // Normalise to first 16 chars (YYYY-MM-DDTHH:mm) so any browser-added
+    // seconds / milliseconds don't make the comparison falsely "different".
+    const norm = (s: string) => (s || '').slice(0, 16);
+    const initialScheduled = norm(matchData_initial.current.scheduled_time);
+    const initialCourt = matchData_initial.current.court;
+    const currentScheduled = norm(formData.scheduled_time);
+    const scheduledChanged = currentScheduled !== initialScheduled;
+    const courtChanged = (formData.court || '') !== (initialCourt || '');
+    console.log('[MATCH_MODAL] schedule diff check:', {
+      initialScheduled, currentScheduled, scheduledChanged,
+      initialCourt, currentCourt: formData.court, courtChanged,
+    });
+    if (scheduledChanged) {
+      matchData.scheduled_time = formData.scheduled_time
+        ? new Date(formData.scheduled_time).toISOString()
+        : null;
+    }
+    if (courtChanged) {
+      matchData.court = formData.court || null;
+    }
+
+    // For inserts (no matchId yet) we still need to push schedule info even if
+    // the user didn't touch the inputs, otherwise the new row would be created
+    // with NULL court/time.
+    if (!matchId) {
+      if (matchData.scheduled_time === undefined) {
+        matchData.scheduled_time = formData.scheduled_time
+          ? new Date(formData.scheduled_time).toISOString()
+          : null;
+      }
+      if (matchData.court === undefined) {
+        matchData.court = formData.court || null;
+      }
     }
 
     let result;
@@ -862,6 +923,18 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
             currentMatch.category_id,
             tournament
           );
+
+          if (
+            typeof currentMatch.round === 'string' &&
+            currentMatch.round.startsWith('group_')
+          ) {
+            try {
+              console.log('[MATCH_MODAL] Group match done, populating SF/QF/RO16 from rankings (defensive)');
+              await populateTeamPlacementMatches(tournamentId, currentMatch.category_id || null);
+            } catch (err) {
+              console.error('[MATCH_MODAL] populateTeamPlacementMatches failed:', err);
+            }
+          }
         }
 
         // Disabled: do not auto-reschedule remaining matches when a result is entered
@@ -1137,6 +1210,23 @@ export default function MatchModal({ tournamentId, matchId, onClose, onSuccess, 
               console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared consolation ${isFirst ? 'team1' : 'team2'}`);
             }
           }
+        }
+      }
+
+      // GROUPS_KNOCKOUT TEAMS - if a group result was reverted, recompute
+      // (clear) the dependent knockout matches so phantom team names disappear
+      // from the SF / Final / 3rd-place brackets.
+      // Run for any group_* revert: the function is defensive and safely
+      // skips categories that have no knockout matches.
+      if (
+        typeof matchData.round === 'string' &&
+        matchData.round.startsWith('group_')
+      ) {
+        try {
+          console.log('[MATCH_MODAL] Group match reverted, refreshing knockouts (defensive)');
+          await populateTeamPlacementMatches(tournamentId, matchData.category_id || null);
+        } catch (err) {
+          console.error('[MATCH_MODAL] populateTeamPlacementMatches (revert) failed:', err);
         }
       }
 
