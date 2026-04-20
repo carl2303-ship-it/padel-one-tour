@@ -414,8 +414,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     totalQualified: number;
     extraFromPosition: number;
   } => {
+    if (knockoutStage === 'none') {
+      return { qualifiedPerGroup: 0, extraBestNeeded: 0, totalQualified: 0, extraFromPosition: 0 };
+    }
+
     if (isIndividual) {
-      // Jogadores individuais por fase (cada jogo = 4 jogadores)
       const individualKnockoutSizes: Record<string, number> = {
         'final': 4,
         'semifinals': 8,
@@ -431,7 +434,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition: qualifiedPerGroup + 1 };
     }
 
-    // Team format
     const teamKnockoutSizes: Record<string, number> = {
       'final': 2,
       'semifinals': 4,
@@ -817,20 +819,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         // Por isso numFinals representa apenas 1 Final por categoria.
         let numQuarters = 0, numSemis = 0, numFinals = 0;
         
-        if (knockoutStage === 'quarterfinals') {
-          // Quartos: precisamos de totalQualified / 2 jogos (cada jogo tem 2 equipas)
+        if (knockoutStage === 'none') {
+          console.log(`[SUPER-SCHEDULE] Category ${cat.name}: groups only, no knockout`);
+        } else if (knockoutStage === 'quarterfinals') {
           numQuarters = Math.ceil(totalQualified / 2);
-          // Meias: vencedores dos quartos / 2
           numSemis = Math.ceil(numQuarters / 2);
-          numFinals = 1; // Apenas Final (3º/4º não é gerado)
+          numFinals = 1;
           console.log(`[SUPER-SCHEDULE] QFs: ${numQuarters}, SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'semifinals') {
-          // Meias: totalQualified / 2 jogos
           numSemis = Math.ceil(totalQualified / 2);
-          numFinals = 1; // Apenas Final (3º/4º não é gerado)
+          numFinals = 1;
           console.log(`[SUPER-SCHEDULE] SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'final') {
-          numFinals = 1; // Apenas Final (3º/4º não é gerado)
+          numFinals = 1;
           console.log(`[SUPER-SCHEDULE] Finals: ${numFinals}`);
         }
         
@@ -2141,8 +2142,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     // crossed_playoffs_teams é formato de EQUIPAS, não individual
     const participantLabel = isIndividualFormat ? 'players' : 'teams';
 
+    const scopeLabel = selectedCategory
+      ? `na categoria "${categories.find(c => c.id === selectedCategory)?.name || selectedCategory}"`
+      : 'em TODAS as categorias';
     const confirmed = confirm(
-      `This will randomly assign ${participantLabel} to groups. Any existing group assignments will be overwritten. Continue?`
+      `Vai sortear ${participantLabel} ${scopeLabel}. As atribuições de grupo existentes serão substituídas. Continuar?`
     );
 
     if (!confirmed) return;
@@ -2177,7 +2181,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           // Para mixed_american / mixed_gender, cada categoria = 1 grupo (A, B)
           if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
-            const sortedCatsMA = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+            const allCatsMA = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+            const sortedCatsMA = selectedCategory
+              ? allCatsMA.filter(c => c.id === selectedCategory)
+              : allCatsMA;
             const allPlayersWithCatGroups: any[] = [];
             sortedCatsMA.forEach((cat, catIdx) => {
               const groupName = String.fromCharCode(65 + catIdx); // A, B
@@ -2198,7 +2205,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || currentTournament.format === 'crossed_playoffs_teams';
           
           // Ordenar categorias por nome para consistência (primeira = A, segunda = B, terceira = C)
-          const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+          const allSortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+          const sortedCategories = selectedCategory
+            ? allSortedCategories.filter(c => c.id === selectedCategory)
+            : allSortedCategories;
 
           for (let catIndex = 0; catIndex < sortedCategories.length; catIndex++) {
             const category = sortedCategories[catIndex];
@@ -2299,7 +2309,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         if (categories.length > 0) {
           const allTeamsWithGroups: any[] = [];
           const tournamentNumberOfGroups = (latestTournament as any).number_of_groups || 4;
-          const sortedTeamCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+          const allTeamCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
+          const sortedTeamCategories = selectedCategory
+            ? allTeamCategories.filter(c => c.id === selectedCategory)
+            : allTeamCategories;
 
           for (const category of sortedTeamCategories) {
             const categoryTeams = teams.filter(t => t.category_id === category.id);
@@ -4989,6 +5002,37 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     
     setLoading(true);
     try {
+      // Carregar jogos existentes para preservar os completed
+      const { data: existingMatchesRaw } = await supabase
+        .from('matches')
+        .select('id, team1_id, team2_id, round, status, category_id, scheduled_time, court, match_number')
+        .eq('tournament_id', currentTournament.id);
+
+      const completedMatches = (existingMatchesRaw || []).filter(m => m.status === 'completed');
+      const nonCompletedIds = (existingMatchesRaw || []).filter(m => m.status !== 'completed').map(m => m.id);
+
+      // Apagar apenas jogos nao terminados
+      if (nonCompletedIds.length > 0) {
+        console.log(`[SCHEDULE] Removing ${nonCompletedIds.length} non-completed matches (preserving ${completedMatches.length} completed)`);
+        const batchSize = 100;
+        for (let i = 0; i < nonCompletedIds.length; i += batchSize) {
+          const batch = nonCompletedIds.slice(i, i + batchSize);
+          await supabase.from('matches').delete().in('id', batch);
+        }
+      }
+
+      // Set de pares ja jogados (completed) para nao duplicar
+      const completedPairs = new Set(
+        completedMatches
+          .filter(m => m.team1_id && m.team2_id)
+          .map(m => [m.team1_id, m.team2_id].sort().join('|'))
+      );
+      const maxCompletedMatchNumber = completedMatches.length > 0
+        ? Math.max(...completedMatches.map(m => m.match_number || 0))
+        : 0;
+
+      console.log(`[SCHEDULE] ${completedPairs.size} completed pairs preserved, next match_number starts at ${maxCompletedMatchNumber + 1}`);
+
       const numberOfCourts = currentTournament.number_of_courts || 2;
       const startDate = currentTournament.start_date || new Date().toISOString().split('T')[0];
       const startTime = currentTournament.daily_start_time || '09:00';
@@ -6482,7 +6526,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               // Estes são placeholders que serão preenchidos depois da fase de grupos
               // NÃO criar para single_elimination (já gera eliminação direta em generateCategoryMatches)
               let knockoutTeams: Array<{ id: string; name: string }> | undefined;
-              if (catFormat === 'groups_knockout') {
+              if (catFormat === 'groups_knockout' && catKnockoutStage !== 'none') {
                 const knockoutTeamCounts: Record<string, number> = {
                   'final': 2,
                   'semifinals': 4,
@@ -6589,6 +6633,24 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       }
       
+      // Filtrar pares que ja tem jogo completed (nao duplicar)
+      const beforeFilter = matchesToInsert.length;
+      matchesToInsert = matchesToInsert.filter(m => {
+        if (!m.team1_id || !m.team2_id) return true;
+        const key = [m.team1_id, m.team2_id].sort().join('|');
+        return !completedPairs.has(key);
+      });
+      if (matchesToInsert.length < beforeFilter) {
+        console.log(`[SCHEDULE] Filtered out ${beforeFilter - matchesToInsert.length} matches (pairs already completed)`);
+      }
+
+      // Ajustar match_number para nao colidir com completed
+      if (maxCompletedMatchNumber > 0) {
+        matchesToInsert.forEach((m, i) => {
+          m.match_number = maxCompletedMatchNumber + 1 + i;
+        });
+      }
+
       console.log('[SCHEDULE] Generated', matchesToInsert.length, 'matches');
       
       if (matchesToInsert.length > 0) {
@@ -6602,7 +6664,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             name: c.name,
             category_schedule: (c as any).category_schedule || null,
             match_duration_minutes: (c as any).match_duration_minutes || null,
-          }))
+          })),
+          matchDuration
         );
 
         if (validation.errors.length > 0) {
@@ -6648,12 +6711,27 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleDeleteAllMatches = async () => {
-    if (!confirm(t.tournament.confirmDeleteMatches)) return;
+    // Verificar se ha jogos completed
+    const { data: completedCheck } = await supabase
+      .from('matches')
+      .select('id', { count: 'exact', head: true })
+      .eq('tournament_id', tournament.id)
+      .eq('status', 'completed');
+    const completedCount = completedCheck?.length || 0;
+
+    const msg = completedCount > 0
+      ? `Isto vai eliminar todos os jogos NÃO terminados. Os ${completedCount} jogos já completados serão preservados. Continuar?`
+      : t.tournament.confirmDeleteMatches;
+    if (!confirm(msg)) return;
     
     setLoading(true);
     try {
       await deleteCourtBookingsForTournament(tournament.id);
-      const { error } = await supabase.from('matches').delete().eq('tournament_id', tournament.id);
+      const { error } = await supabase
+        .from('matches')
+        .delete()
+        .eq('tournament_id', tournament.id)
+        .neq('status', 'completed');
       if (error) throw error;
       await fetchTournamentData();
       alert(t.nav.matchesDeleted);
@@ -8520,8 +8598,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showManualGroupAssignment && (
         <ManualGroupAssignmentModal
           tournament={currentTournament}
-          teams={filteredTeams}
-          players={filteredIndividualPlayers}
+          teams={teams}
+          players={individualPlayers}
           categories={categories}
           selectedCategory={selectedCategory}
           isIndividual={isIndividualFormat()}

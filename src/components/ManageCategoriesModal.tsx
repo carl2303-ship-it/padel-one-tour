@@ -315,10 +315,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                       onChange={(e) => setNewCategory({ ...newCategory, knockout_stage: e.target.value as any })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
-                      <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
-                      <option value="quarterfinals">{t.knockout?.quarterfinals || 'Quarterfinals'}</option>
-                      <option value="semifinals">{t.knockout?.semifinals || 'Semifinals'}</option>
+                      <option value="none">{t.knockout?.none || 'Só grupos (sem eliminatórias)'}</option>
                       <option value="final">{t.knockout?.final || 'Final'}</option>
+                      <option value="semifinals">{t.knockout?.semifinals || 'Semifinals'}</option>
+                      <option value="quarterfinals">{t.knockout?.quarterfinals || 'Quarterfinals'}</option>
+                      <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
                     </select>
                   </div>
                 </>
@@ -629,10 +630,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                                   onChange={(e) => setEditingCategory({ ...editingCategory, knockout_stage: e.target.value as any })}
                                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 >
-                                  <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
-                                  <option value="quarterfinals">{t.knockout?.quarterfinals || 'Quarterfinals'}</option>
-                                  <option value="semifinals">{t.knockout?.semifinals || 'Semifinals'}</option>
+                                  <option value="none">{t.knockout?.none || 'Só grupos (sem eliminatórias)'}</option>
                                   <option value="final">{t.knockout?.final || 'Final'}</option>
+                                  <option value="semifinals">{t.knockout?.semifinals || 'Semifinals'}</option>
+                                  <option value="quarterfinals">{t.knockout?.quarterfinals || 'Quarterfinals'}</option>
+                                  <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
                                 </select>
                               </div>
                             </>

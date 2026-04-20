@@ -2208,7 +2208,7 @@ export async function populateTeamPlacementMatches(
 
   const { data: allTeams, error: teamsError } = await supabase
     .from('teams')
-    .select('id, name, category_id')
+    .select('id, name, category_id, group_name')
     .eq('tournament_id', tournamentId);
 
   if (teamsError || !allTeams) {
@@ -2235,7 +2235,7 @@ export async function populateTeamPlacementMatches(
 async function populateTeamPlacementForCategory(
   categoryId: string,
   allMatches: any[],
-  allTeams: Array<{ id: string; name: string; category_id: string | null }>
+  allTeams: Array<{ id: string; name: string; category_id: string | null; group_name?: string | null }>
 ): Promise<void> {
   const catTeams = allTeams.filter(t => t.category_id === categoryId);
   if (catTeams.length < 2) {
@@ -2311,13 +2311,25 @@ async function populateTeamPlacementForCategory(
 
   type Stats = { id: string; name: string; group: string; wins: number; gd: number; gf: number };
   const stats = new Map<string, Stats>();
-  catTeams.forEach(t => stats.set(t.id, { id: t.id, name: t.name, group: '', wins: 0, gd: 0, gf: 0 }));
+  const teamGroupMap = new Map<string, string>();
+  catTeams.forEach(t => {
+    stats.set(t.id, { id: t.id, name: t.name, group: '', wins: 0, gd: 0, gf: 0 });
+    if ((t as any).group_name) teamGroupMap.set(t.id, (t as any).group_name);
+  });
 
   groupMatches.forEach(m => {
     const t1g = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
     const t2g = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
     const t1Won = t1g > t2g;
-    const groupName = typeof m.round === 'string' ? m.round.replace('group_', '') : '';
+
+    let groupName = typeof m.round === 'string' && m.round !== 'group_stage'
+      ? m.round.replace('group_', '')
+      : '';
+    if (!groupName && m.team1_id && teamGroupMap.has(m.team1_id)) {
+      groupName = teamGroupMap.get(m.team1_id)!;
+    } else if (!groupName && m.team2_id && teamGroupMap.has(m.team2_id)) {
+      groupName = teamGroupMap.get(m.team2_id)!;
+    }
 
     const s1 = m.team1_id ? stats.get(m.team1_id) : undefined;
     const s2 = m.team2_id ? stats.get(m.team2_id) : undefined;

@@ -31,7 +31,7 @@ export type Tournament = {
   qualified_per_group?: number;
   daily_start_time?: string;
   daily_end_time?: string;
-  daily_schedules?: any[];
+  daily_schedules?: DailyScheduleEntry[];
   qualified_teams_per_group?: number;
   knockout_stage?: string;
   allow_public_registration?: boolean;
@@ -66,6 +66,13 @@ export type Player = {
   seed?: number | null;
   wants_dinner?: boolean;
   created_at: string;
+};
+
+export type DailyScheduleEntry = {
+  date: string;
+  start_time: string;
+  end_time: string;
+  court_names?: string[];
 };
 
 export type CategoryScheduleEntry = {

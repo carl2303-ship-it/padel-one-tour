@@ -66,7 +66,9 @@ export function ManualGroupAssignmentModal({
   const participants = isIndividual ? players : teams;
   const filteredParticipants = selectedCategory === 'all'
     ? participants
-    : participants.filter((p: any) => p.category_id === selectedCategory);
+    : selectedCategory === 'no-category'
+      ? participants.filter((p: any) => !p.category_id)
+      : participants.filter((p: any) => p.category_id === selectedCategory);
 
   // Em formatos cruzados, o comportamento correto é:
   // - categoria selecionada => 1 grupo

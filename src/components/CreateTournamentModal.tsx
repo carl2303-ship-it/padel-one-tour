@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, DailyScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { X, Upload } from 'lucide-react';
@@ -36,7 +36,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const [uploading, setUploading] = useState(false);
-  const [dailySchedules, setDailySchedules] = useState<Array<{ date: string; start_time: string; end_time: string }>>([]);
+  const [dailySchedules, setDailySchedules] = useState<DailyScheduleEntry[]>([]);
+  const [expandedDayIndex, setExpandedDayIndex] = useState<number | null>(null);
   const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
   const [selectedClubId, setSelectedClubId] = useState<string>('');
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
@@ -125,14 +126,19 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
 
     const start = new Date(startDate);
     const end = new Date(endDate);
-    const schedules: Array<{ date: string; start_time: string; end_time: string }> = [];
+    const schedules: DailyScheduleEntry[] = [];
+
+    const existingMap = new Map(dailySchedules.map(s => [s.date, s]));
 
     const current = new Date(start);
     while (current <= end) {
+      const dateStr = current.toISOString().split('T')[0];
+      const existing = existingMap.get(dateStr);
       schedules.push({
-        date: current.toISOString().split('T')[0],
-        start_time: formData.daily_start_time,
-        end_time: formData.daily_end_time,
+        date: dateStr,
+        start_time: existing?.start_time || formData.daily_start_time,
+        end_time: existing?.end_time || formData.daily_end_time,
+        court_names: existing?.court_names,
       });
       current.setDate(current.getDate() + 1);
     }
@@ -446,33 +452,114 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
               <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {dailySchedules.map((schedule, index) => (
-                  <div key={index} className="grid grid-cols-3 gap-2 items-center bg-white p-2 rounded border border-gray-200">
-                    <div className="text-sm font-medium text-gray-700">
-                      {(() => {
-                        const d = new Date(schedule.date + 'T00:00:00');
-                        return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
-                      })()}
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {dailySchedules.map((schedule, index) => {
+                  const dayCourtNames = schedule.court_names || selectedCourtNames;
+                  const isExpanded = expandedDayIndex === index;
+                  const hasCustomCourts = !!schedule.court_names && schedule.court_names.length > 0;
+                  return (
+                    <div key={index} className="bg-white rounded border border-gray-200">
+                      <div className="grid grid-cols-3 gap-2 items-center p-2">
+                        <div className="text-sm font-medium text-gray-700">
+                          {(() => {
+                            const d = new Date(schedule.date + 'T00:00:00');
+                            return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                          })()}
+                        </div>
+                        <TimeInput24h
+                          value={schedule.start_time}
+                          onChange={(value) => {
+                            const updated = [...dailySchedules];
+                            updated[index] = { ...updated[index], start_time: value };
+                            setDailySchedules(updated);
+                          }}
+                        />
+                        <TimeInput24h
+                          value={schedule.end_time}
+                          onChange={(value) => {
+                            const updated = [...dailySchedules];
+                            updated[index] = { ...updated[index], end_time: value };
+                            setDailySchedules(updated);
+                          }}
+                        />
+                      </div>
+                      {clubCourts.length > 0 && (
+                        <div className="px-2 pb-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDayIndex(isExpanded ? null : index)}
+                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                              hasCustomCourts
+                                ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            {hasCustomCourts
+                              ? `Campos: ${dayCourtNames.length} personalizados`
+                              : `Campos: ${selectedCourtNames.length} (global)`
+                            }
+                            <span className="ml-1">{isExpanded ? '▲' : '▼'}</span>
+                          </button>
+                          {isExpanded && (
+                            <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-100">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-gray-600">Campos para este dia</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...dailySchedules];
+                                    updated[index] = { ...updated[index], court_names: undefined };
+                                    setDailySchedules(updated);
+                                  }}
+                                  className="text-xs text-gray-500 hover:text-gray-700"
+                                >
+                                  Usar global
+                                </button>
+                              </div>
+                              <div className="space-y-1">
+                                {clubCourts.map((court) => (
+                                  <label
+                                    key={court.id}
+                                    className={`flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors ${
+                                      dayCourtNames.includes(court.name)
+                                        ? 'bg-blue-50 border border-blue-200'
+                                        : 'hover:bg-white border border-transparent'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={dayCourtNames.includes(court.name)}
+                                      onChange={() => {
+                                        const updated = [...dailySchedules];
+                                        const currentCourts = updated[index].court_names || [...selectedCourtNames];
+                                        const newCourts = currentCourts.includes(court.name)
+                                          ? currentCourts.filter(n => n !== court.name)
+                                          : [...currentCourts, court.name];
+                                        updated[index] = { ...updated[index], court_names: newCourts };
+                                        setDailySchedules(updated);
+                                      }}
+                                      className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded"
+                                    />
+                                    <span className="text-gray-700">{court.name}</span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                      court.type === 'indoor'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : court.type === 'outdoor'
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {court.type}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <TimeInput24h
-                      value={schedule.start_time}
-                      onChange={(value) => {
-                        const updated = [...dailySchedules];
-                        updated[index].start_time = value;
-                        setDailySchedules(updated);
-                      }}
-                    />
-                    <TimeInput24h
-                      value={schedule.end_time}
-                      onChange={(value) => {
-                        const updated = [...dailySchedules];
-                        updated[index].end_time = value;
-                        setDailySchedules(updated);
-                      }}
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

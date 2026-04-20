@@ -1327,42 +1327,59 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             </div>
           )}
 
-          {matchId && !isIndividualRoundRobin && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h3 className="font-semibold text-gray-900 mb-3">Jogo</h3>
-              <div className="grid grid-cols-3 gap-4 items-center">
-                <div className="text-right">
-                  {(() => {
-                    const team1 = teams.find(t => t.id === formData.team1_id);
-                    if (!team1) return <p className="font-medium text-gray-900">TBD</p>;
-                    return (
-                      <div>
-                        <p className="font-semibold text-gray-900">{team1.name}</p>
-                        <p className="text-sm text-gray-600">{team1.player1?.name}</p>
-                        <p className="text-sm text-gray-600">{team1.player2?.name}</p>
+          {matchId && !isIndividualRoundRobin && (() => {
+            const matchCategoryId = matchData?.category_id;
+            const categoryTeams = matchCategoryId
+              ? teams.filter(t => t.category_id === matchCategoryId)
+              : teams;
+            const availableTeams = categoryTeams.length > 0 ? categoryTeams : teams;
+            const team1 = teams.find(t => t.id === formData.team1_id);
+            const team2 = teams.find(t => t.id === formData.team2_id);
+
+            return (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Jogo</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Equipa 1</label>
+                    <select
+                      value={formData.team1_id}
+                      onChange={(e) => setFormData({ ...formData, team1_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">TBD</option>
+                      {availableTeams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {team1 && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        {team1.player1?.name}{team1.player2?.name ? ` / ${team1.player2.name}` : ''}
                       </div>
-                    );
-                  })()}
-                </div>
-                <div className="text-center">
-                  <span className="text-gray-600 font-semibold">VS</span>
-                </div>
-                <div className="text-left">
-                  {(() => {
-                    const team2 = teams.find(t => t.id === formData.team2_id);
-                    if (!team2) return <p className="font-medium text-gray-900">TBD</p>;
-                    return (
-                      <div>
-                        <p className="font-semibold text-gray-900">{team2.name}</p>
-                        <p className="text-sm text-gray-600">{team2.player1?.name}</p>
-                        <p className="text-sm text-gray-600">{team2.player2?.name}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Equipa 2</label>
+                    <select
+                      value={formData.team2_id}
+                      onChange={(e) => setFormData({ ...formData, team2_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">TBD</option>
+                      {availableTeams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {team2 && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        {team2.player1?.name}{team2.player2?.name ? ` / ${team2.player2.name}` : ''}
                       </div>
-                    );
-                  })()}
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {!matchId && (
             <div className="grid grid-cols-2 gap-4">

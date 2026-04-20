@@ -16,11 +16,11 @@ interface CategoryScheduleRequest {
   matchDurationMinutes?: number | null; // Per-category match duration
 }
 
-function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string } {
+function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string; court_names?: string[] } {
   if (dailySchedules && dailySchedules.length > 0) {
     const schedule = dailySchedules.find(s => s.date === date);
     if (schedule) {
-      return { start_time: schedule.start_time, end_time: schedule.end_time };
+      return { start_time: schedule.start_time, end_time: schedule.end_time, court_names: schedule.court_names };
     }
   }
   return { start_time: defaultStart, end_time: defaultEnd };
@@ -555,9 +555,15 @@ export function scheduleMultipleCategories(
         const timeStr = scheduledTime.toISOString();
         const playersThisSlot = new Set<string>();
 
+        // Per-day courts: restrict to courts available on this day
+        const slotDaySchedule = getDaySchedule(slotInfo.dateStr, dailySchedules, dailyStartTime, dailyEndTime);
+        const slotDayCourts = slotDaySchedule.court_names && slotDaySchedule.court_names.length > 0
+          ? slotDaySchedule.court_names : null;
+
         for (const court of catCourts) {
           const courtIdx = categoryInfo ? categoryInfo.courtNumbers.indexOf(court) : court - 1;
           const courtName = catCourtNames[courtIdx] || court.toString();
+          if (slotDayCourts && !slotDayCourts.includes(courtName)) continue;
           if (isCourtBusy(courtName, timeStr, catDuration)) continue;
 
           let matchToSchedule: typeof catGroupMatches[0] | undefined;
@@ -633,11 +639,18 @@ export function scheduleMultipleCategories(
       const anyRemaining = groupMatches.some(m => !scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`));
       if (!anyRemaining) break;
 
+      // Per-day courts: check if this day has specific court_names
+      const daySchedule = getDaySchedule(slotInfo.dateStr, dailySchedules, dailyStartTime, dailyEndTime);
+      const dayCourts = daySchedule.court_names && daySchedule.court_names.length > 0
+        ? daySchedule.court_names
+        : allCourtNames;
+      const dayCourtCount = dayCourts.length > 0 ? dayCourts.length : numberOfCourts;
+
       let matchesScheduledThisSlot = 0;
       const playersPlayingThisSlot = new Set<string>();
 
-      for (let courtOffset = 0; courtOffset < numberOfCourts; courtOffset++) {
-        const court = ((courtOffset + slotIndex) % numberOfCourts) + 1;
+      for (let courtOffset = 0; courtOffset < dayCourtCount; courtOffset++) {
+        const court = ((courtOffset + slotIndex) % dayCourtCount) + 1;
 
         let matchToSchedule: typeof groupMatches[0] | undefined;
         let resolvedCourtName = '';
@@ -653,6 +666,9 @@ export function scheduleMultipleCategories(
           }
 
           const candidateCourtName = categoryInfo.courtNames[categoryInfo.courtNumbers.indexOf(court)] || court.toString();
+
+          // Skip if day-specific courts don't include this court
+          if (dayCourts.length > 0 && !dayCourts.includes(candidateCourtName)) continue;
           const candidateDuration = categoryDurationMap.get(categoryId) || matchDurationMinutes;
           if (isCourtBusy(candidateCourtName, timeStr, candidateDuration)) continue;
 
@@ -675,7 +691,7 @@ export function scheduleMultipleCategories(
         }
 
         if (matchToSchedule) {
-          const matchDuration = matchToSchedule.duration || matchDurationMinutes;
+          const matchDuration = categoryDurationMap.get(matchToSchedule.categoryId) || matchToSchedule.duration || matchDurationMinutes;
           const { categoryId, duration, ...matchData } = matchToSchedule;
           
           const courtName = resolvedCourtName || court.toString();
@@ -708,7 +724,7 @@ export function scheduleMultipleCategories(
         }
       }
 
-      console.log(`[MULTI-CAT V6] Slot ${slotIndex}: ${matchesScheduledThisSlot}/${numberOfCourts} courts filled`);
+      console.log(`[MULTI-CAT V6] Slot ${slotIndex}: ${matchesScheduledThisSlot}/${dayCourtCount} courts filled`);
 
       currentTimeSlot++;
     }
@@ -772,7 +788,7 @@ export function scheduleMultipleCategories(
         const catCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
         const earliestTs = earliestKOTimestamp(koMatch.categoryId);
         const koPlayerIds = getMatchPlayerIds(koMatch).filter(Boolean);
-        const koDuration = koMatch.duration || categoryDurationMap.get(koMatch.categoryId) || matchDurationMinutes;
+        const koDuration = categoryDurationMap.get(koMatch.categoryId) || koMatch.duration || matchDurationMinutes;
 
         let scheduled = false;
 
@@ -950,7 +966,7 @@ export function scheduleMultipleCategories(
 
           const categoryInfo = categoryCourtMap.get(koMatch.categoryId);
           const allowedCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
-          const koDuration = koMatch.duration || categoryDurationMap.get(koMatch.categoryId) || matchDurationMinutes;
+          const koDuration = categoryDurationMap.get(koMatch.categoryId) || koMatch.duration || matchDurationMinutes;
 
           let assignedCourt = 0;
           let courtName = '';
@@ -1186,7 +1202,8 @@ export interface ValidatorCategory {
 export function validateGeneratedSchedule(
   matches: ValidatorMatch[],
   numberOfCourts: number,
-  categoriesInfo: ValidatorCategory[]
+  categoriesInfo: ValidatorCategory[],
+  globalMatchDurationMinutes: number = 30
 ): ScheduleValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -1243,8 +1260,7 @@ export function validateGeneratedSchedule(
     const startMs = new Date(m.scheduled_time).getTime();
     if (!Number.isFinite(startMs)) continue;
     const cat = m.category_id ? categoryById.get(m.category_id) : undefined;
-    // Fallback duration: category's > 30 minutes > else 30.
-    const durationMin = (cat?.match_duration_minutes ?? 30) || 30;
+    const durationMin = cat?.match_duration_minutes || globalMatchDurationMinutes;
     const endMs = startMs + durationMin * 60000;
     const key = m.court || '';
     if (!intervalsByCourt.has(key)) intervalsByCourt.set(key, []);

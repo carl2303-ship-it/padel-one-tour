@@ -27,6 +27,7 @@ export interface DailySchedule {
   date: string;
   start_time: string;
   end_time: string;
+  court_names?: string[];
 }
 
 export interface TimeValidationResult {
@@ -150,11 +151,11 @@ export function validateTournamentTime(
   };
 }
 
-function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string } {
+function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string; court_names?: string[] } {
   if (dailySchedules && dailySchedules.length > 0) {
     const schedule = dailySchedules.find(s => s.date === date);
     if (schedule) {
-      return { start_time: schedule.start_time, end_time: schedule.end_time };
+      return { start_time: schedule.start_time, end_time: schedule.end_time, court_names: schedule.court_names };
     }
   }
   return { start_time: defaultStart, end_time: defaultEnd };
