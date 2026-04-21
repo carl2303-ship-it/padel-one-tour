@@ -16,7 +16,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { email, password, phone_number, name, player_category, level } = await req.json();
+    const { email, password, phone_number, name, player_category, level, level_reliability_percent } = await req.json();
 
     if (!email || !password || !phone_number || !name) {
       return new Response(
@@ -130,6 +130,7 @@ Deno.serve(async (req: Request) => {
         email: email.includes("@temp.player.com") ? null : email,
         player_category: player_category ?? null,
         level: level ?? null,
+        level_reliability_percent: level_reliability_percent ?? null,
       })
       .select()
       .single();

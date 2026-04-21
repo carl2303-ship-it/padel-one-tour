@@ -146,21 +146,33 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     return '+351' + cleaned;
   };
 
-  const getCategoryDefaults = (category: TournamentCategory | undefined): { playerCategory: string | null; level: number | null } => {
-    if (!category) return { playerCategory: null, level: null };
+  const levelFromCategory = (cat: string): number | null => {
+    const m = cat.toUpperCase().trim().match(/^[MF](\d+)$/);
+    if (!m) return null;
+    const n = parseInt(m[1]);
+    // M1/F1=7.0, M2/F2=6.0, M3/F3=5.0, M4/F4=4.0, M5/F5=3.0, M6/F6=2.0
+    const map: Record<number, number> = { 1: 7.0, 2: 6.0, 3: 5.0, 4: 4.0, 5: 3.0, 6: 2.0 };
+    return map[n] ?? null;
+  };
+
+  const getCategoryDefaults = (category: TournamentCategory | undefined): { playerCategory: string | null; level: number | null; levelReliability: number } => {
+    if (!category) return { playerCategory: null, level: null, levelReliability: 0 };
 
     const accepted = category.accepted_levels && category.accepted_levels.length > 0
       ? category.accepted_levels[0]
       : null;
 
     let level: number | null = null;
-    if (category.min_level != null) {
+    if (accepted) {
+      level = levelFromCategory(accepted);
+    }
+    if (level == null && category.min_level != null) {
       level = category.min_level;
-    } else if (category.max_level != null) {
+    } else if (level == null && category.max_level != null) {
       level = category.max_level;
     }
 
-    return { playerCategory: accepted, level };
+    return { playerCategory: accepted, level, levelReliability: 0 };
   };
 
   const checkPlayerLevel = (account: PlayerAccount | null, category: typeof categories[0] | undefined): string | null => {
@@ -634,7 +646,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     name: string,
     email: string,
     phone: string,
-    defaults?: { playerCategory: string | null; level: number | null }
+    defaults?: { playerCategory: string | null; level: number | null; levelReliability?: number }
   ) => {
     const normalizedPhone = normalizePhone(phone);
     const tempPassword = `Player${normalizedPhone.slice(-4)}!`;
@@ -655,6 +667,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           name,
           player_category: defaults?.playerCategory ?? null,
           level: defaults?.level ?? null,
+          level_reliability_percent: defaults?.levelReliability ?? 0,
         }),
       }
     );
@@ -694,7 +707,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       }
 
       const selectedCat = categories.find(c => c.id === formData.categoryId);
-      const p1LevelError = checkPlayerLevel(loggedInPlayer || existingAccount, selectedCat);
+      const currentAccount = loggedInPlayer || existingAccount;
+      const p1LevelError = currentAccount ? checkPlayerLevel(currentAccount, selectedCat) : null;
       if (p1LevelError) {
         setError(p1LevelError);
         setLoading(false);
@@ -1469,7 +1483,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 <option value="">Selecione uma categoria</option>
                 {categories.map((category) => {
                   const currentAccount = loggedInPlayer || existingAccount;
-                  const levelError = checkPlayerLevel(currentAccount || null, category);
+                  const levelError = currentAccount ? checkPlayerLevel(currentAccount, category) : null;
                   const hasCatRestriction = category.accepted_levels && category.accepted_levels.length > 0;
                   const hasRangeRestriction = category.min_level != null || category.max_level != null;
                   return (

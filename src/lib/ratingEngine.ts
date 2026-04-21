@@ -177,11 +177,14 @@ export function calculateNewRatings(
 /**
  * Calcula a fiabilidade baseada em jogos rated.
  * 0 jogos = 0%, 75+ jogos = 100%
+ * 
+ * Curva de potência (expoente 0.65) — crescimento gradual:
+ *   1 jogo=4%, 2=6%, 5=12%, 10=19%, 20=30%, 30=38%, 50=54%, 75=100%
  */
 export function calculateReliability(totalMatches: number): number {
   if (totalMatches <= 0) return 0
   if (totalMatches >= 75) return 100
-  const reliability = Math.min(100, Math.round(100 * (Math.log(totalMatches + 1) / Math.log(76))))
+  const reliability = Math.min(100, Math.round(100 * Math.pow(totalMatches / 75, 0.65)))
   return reliability
 }
 
@@ -200,7 +203,7 @@ export function calculateProtectedReliability(newReliability: number, currentRel
 export function calculateMatchesFromReliability(reliability: number): number {
   if (reliability <= 0) return 0
   if (reliability >= 100) return 75
-  const matches = Math.round(Math.exp((reliability / 100) * Math.log(76)) - 1)
+  const matches = Math.round(75 * Math.pow(reliability / 100, 1 / 0.65))
   return Math.max(0, Math.min(75, matches))
 }
 
