@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { supabase, Tournament, DailyScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { X, Upload } from 'lucide-react';
+import { X, Upload, TrendingUp } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 import RichTextEditor from './RichTextEditor';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
+import { processAllUnratedMatches } from '../lib/ratingEngine';
 
 type EditTournamentModalProps = {
   tournament: Tournament;
@@ -42,6 +43,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     round_robin_type: (tournament as any).round_robin_type || null,
   });
   const [loading, setLoading] = useState(false);
+  const [reprocessLoading, setReprocessLoading] = useState(false);
   const [error, setError] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>(tournament.image_url || '');
@@ -1024,6 +1026,52 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <option value="completed">{t.status.completed}</option>
               <option value="cancelled">{t.status.cancelled}</option>
             </select>
+          </div>
+
+          {/* Acções avançadas */}
+          <div className="pt-4 border-t border-gray-200">
+            <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Acções avançadas</p>
+            <button
+              type="button"
+              disabled={reprocessLoading}
+              onClick={async () => {
+                if (!confirm('⚠️ ATENÇÃO: Isto vai recalcular os ratings de TODOS os torneios!\n\n1. Reset de todos os contadores (rated_matches, wins, losses)\n2. Reprocessar todos os jogos por ordem cronológica\n\nOs níveis base que definiste serão mantidos.\n\nContinuar?')) return;
+                setReprocessLoading(true);
+                try {
+                  const { error: resetPlayersErr } = await supabase
+                    .from('player_accounts')
+                    .update({ rated_matches: 0, wins: 0, losses: 0 })
+                    .gte('id', '00000000-0000-0000-0000-000000000000');
+                  if (resetPlayersErr) console.error('[REPROCESS-ALL] Error resetting player counters:', resetPlayersErr);
+
+                  const { error: resetMatchesErr } = await supabase
+                    .from('matches')
+                    .update({ rating_processed: false })
+                    .eq('status', 'completed');
+                  if (resetMatchesErr) console.error('[REPROCESS-ALL] Error resetting match flags:', resetMatchesErr);
+
+                  const ratingResult = await processAllUnratedMatches(undefined, (current, total, info) => {
+                    console.log(`[REPROCESS-ALL] ${current}/${total}: ${info}`);
+                  });
+
+                  let msg = `Recálculo GLOBAL concluído!\n\n`;
+                  msg += `Jogos processados: ${ratingResult.processed}\n`;
+                  msg += `Jogos saltados: ${ratingResult.skipped}\n`;
+                  msg += `Erros: ${ratingResult.errors}\n`;
+                  msg += `Total de jogos: ${ratingResult.total}`;
+                  alert(msg);
+                } catch (err) {
+                  console.error('[REPROCESS-ALL] Error:', err);
+                  alert('Erro ao recalcular. Ver consola para detalhes.');
+                } finally {
+                  setReprocessLoading(false);
+                }
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+            >
+              <TrendingUp className="w-4 h-4" />
+              {reprocessLoading ? 'A recalcular...' : 'Recalcular TODOS os Torneios'}
+            </button>
           </div>
 
           <div className="flex gap-3 pt-4">
