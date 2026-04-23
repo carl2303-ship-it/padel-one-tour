@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, Tournament, Team, Player, Match, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw } from 'lucide-react';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
 import MatchModal from './MatchModal';
@@ -149,7 +149,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedSuperTeam, setSelectedSuperTeam] = useState<SuperTeamRow | null>(null);
   const [showAddSuperTeam, setShowAddSuperTeam] = useState(false);
 
-  // Ref to store match ID to scroll to after modal close + data refresh
+  const [playerCategoryByPhone, setPlayerCategoryByPhone] = useState<Map<string, string>>(new Map());
+
   const scrollToMatchIdRef = useRef<string | null>(null);
 
   const getCategoryColor = (categoryId: string): string => {
@@ -912,7 +913,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
         
-        // Criar apenas a Final (jogo de 3º/4º intencionalmente NÃO gerado)
+        const hasThirdPlace = (cat as any).has_third_place_match ?? true;
+
         if (numFinals >= 1) {
           const finalDate = new Date(startDate);
           finalDate.setDate(finalDate.getDate() + currentDayIndex);
@@ -931,6 +933,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             scheduled_time: finalDate.toISOString(),
             court_name: availableCourts[0],
           });
+
+          if (hasThirdPlace && numSemis > 0) {
+            knockoutConfronts.push({
+              tournament_id: tournament.id,
+              category_id: cat.id,
+              round: '3rd_place',
+              group_name: null,
+              super_team_1_id: null,
+              super_team_2_id: null,
+              scheduled_time: finalDate.toISOString(),
+              court_name: availableCourts.length > 1 ? availableCourts[1] : availableCourts[0],
+            });
+            console.log(`[SUPER-SCHEDULE] Added 3rd/4th place match for ${cat.name}`);
+          }
           
           currentTimeSlot++;
           if (currentTimeSlot >= slotsPerCourtPerDay) {
@@ -1024,14 +1040,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     return true;
   };
 
+  const fetchPlayerCategoriesFromAccounts = async (players: { phone_number?: string | null }[]) => {
+    const phones = players
+      .map((p) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
+      .filter(Boolean);
+    if (phones.length === 0) return;
+    const { data } = await supabase
+      .from('player_accounts')
+      .select('phone_number, player_category')
+      .in('phone_number', phones);
+    if (!data) return;
+    const map = new Map<string, string>();
+    for (const row of data) {
+      if (row.phone_number && row.player_category) {
+        map.set(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.player_category);
+      }
+    }
+    setPlayerCategoryByPhone(map);
+  };
+
   const fetchDepthRef = useRef(0);
-  // Fingerprint per category to avoid an infinite "auto-sync -> populate -> fetch -> auto-sync" loop
-  // when populate cannot resolve the desired state (e.g. group has too few teams to fill the bracket).
+  const autoPopulateAttemptedRef = useRef(false);
   const gkSyncFingerprintRef = useRef<Map<string, string>>(new Map());
   const fetchTournamentData = async (silent = false) => {
     if (fetchDepthRef.current >= 3) {
       console.warn('[FETCH] Max recursive depth reached, aborting');
       fetchDepthRef.current = 0;
+      autoPopulateAttemptedRef.current = false;
       setLoading(false);
       return;
     }
@@ -1123,6 +1158,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (playersResult.data) {
         console.log('[FETCH] Loaded', playersResult.data.length, 'individual players:', playersResult.data);
         setIndividualPlayers(playersResult.data);
+        fetchPlayerCategoriesFromAccounts(playersResult.data);
       } else {
         console.error('[FETCH] No individual players data');
       }
@@ -1152,13 +1188,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           (window as any).__matches = matchesResult.data;
         } catch {}
 
-        if (effectiveFormat === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
+        if (!autoPopulateAttemptedRef.current && effectiveFormat === 'individual_groups_knockout' && playersResult.data && playersResult.data.length > 0) {
           const groupMatches = matchesResult.data.filter((m: any) => m.round.startsWith('group_'));
           const knockoutMatches = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
           const allGroupsDone = groupMatches.length > 0 && groupMatches.every((m: any) => m.status === 'completed');
           
-          // IMPORTANT: Only check the FIRST knockout round (RO16, QFs or SFs) to avoid infinite loop.
-          // Later rounds are expected to be empty until earlier rounds complete.
           const hasRo16 = knockoutMatches.some((m: any) => m.round === 'round_of_16');
           const hasQFs = knockoutMatches.some((m: any) => m.round === 'quarterfinal' || m.round === 'quarter_final');
           const firstRoundMatches = hasRo16
@@ -1171,10 +1205,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           );
           
           if (allGroupsDone && hasUnpopulatedFirstRound) {
+            autoPopulateAttemptedRef.current = true;
             console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets (first round only)');
-            populatePlacementMatches(tournament.id).then(() => {
-              fetchTournamentData();
-            });
+            await populatePlacementMatches(tournament.id);
+            await fetchTournamentData(silent);
             return;
           }
         }
@@ -1220,15 +1254,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
           }
 
-          if (categoriesNeedingSync.length > 0) {
+          if (!autoPopulateAttemptedRef.current && categoriesNeedingSync.length > 0) {
+            autoPopulateAttemptedRef.current = true;
             console.log('[FETCH] groups_knockout TEAMS: syncing knockouts for categories:', categoriesNeedingSync);
-            (async () => {
-              for (const cId of categoriesNeedingSync) {
-                try { await populateTeamPlacementMatches(tournament.id, cId); }
-                catch (err) { console.error('[FETCH] populateTeamPlacementMatches error:', err); }
-              }
-              await fetchTournamentData();
-            })();
+            for (const cId of categoriesNeedingSync) {
+              try { await populateTeamPlacementMatches(tournament.id, cId); }
+              catch (err) { console.error('[FETCH] populateTeamPlacementMatches error:', err); }
+            }
+            await fetchTournamentData(silent);
             return;
           }
         }
@@ -1343,20 +1376,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                        sf2.player3_individual_id === expectedSF2.p3 &&
                                        sf2.player4_individual_id === expectedSF2.p4;
                     
-                    if (!sf1Correct || !sf2Correct) {
+                    if (!autoPopulateAttemptedRef.current && (!sf1Correct || !sf2Correct)) {
+                      autoPopulateAttemptedRef.current = true;
                       console.log('[FETCH-FILL] MA Semifinals incorretas ou vazias, corrigindo...');
-                      // SF1: (1°F + 4°M) vs (2°F + 3°M)
                       await supabase.from('matches').update({
                         player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
                         player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
                       }).eq('id', sfMatches[0].id);
-                      // SF2: (3°F + 2°M) vs (4°F + 1°M)
                       await supabase.from('matches').update({
                         player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
                         player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
                       }).eq('id', sfMatches[1].id);
                       
-                      // Limpar final e 3°/4° se tinham jogadores errados
                       const finalMatch = matchesResult.data!.find((m: any) => m.round === 'final');
                       const thirdMatch = matchesResult.data!.find((m: any) => m.round === '3rd_place');
                       if (finalMatch && finalMatch.status !== 'completed') {
@@ -1373,7 +1404,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       }
                       
                       console.log('[FETCH-FILL] MA Semifinals corrigidas! Refreshing...');
-                      await fetchTournamentData(); return;
+                      await fetchTournamentData(silent); return;
                     } else {
                       console.log('[FETCH-FILL] MA Semifinals já estão corretas');
                     }
@@ -1392,7 +1423,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               // Aqui só tratamos crossed_playoffs individual
               
               // Para formato individual (crossed_playoffs)
-              if (effectiveFormat === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+              if (!autoPopulateAttemptedRef.current && effectiveFormat === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
+                autoPopulateAttemptedRef.current = true;
                 console.log('[FETCH-FILL] Filling crossed playoffs R1...');
                 
                 if (sortedCats.length === 3) {
@@ -1400,26 +1432,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
                   if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
                     console.log(`[FETCH-FILL] 3-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}], C=[${rankC.map(p=>p.name)}]`);
-                    // J1: (A1 + B2) vs (C1 + A2) - cruzamento rotativo
                     await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankC[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    // J2: (B1 + C2) vs (A3 + B3)
                     await supabase.from('matches').update({ player1_individual_id: rankB[0].id, player2_individual_id: rankC[1].id, player3_individual_id: rankA[2].id, player4_individual_id: rankB[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                    // J3: (A4 + C3) vs (B4 + C4)
                     await supabase.from('matches').update({ player1_individual_id: rankA[3].id, player2_individual_id: rankC[2].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[3].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
                     console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
-                    await fetchTournamentData(); return;
+                    await fetchTournamentData(silent); return;
                   }
                 } else if (sortedCats.length === 2) {
                   const [catA, catB] = sortedCats;
                   const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
                   if (rankA.length >= 4 && rankB.length >= 4) {
                     console.log(`[FETCH-FILL] 2-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}]`);
-                    // J1: (A1 + B2) vs (B1 + A2) - cruzamento rotativo
                     await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    // J2: (A3 + B4) vs (B3 + A4)
                     await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[2].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
                     console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
-                    await fetchTournamentData(); return;
+                    await fetchTournamentData(silent); return;
                   }
                 }
               }
@@ -1470,6 +1497,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (playersResult.data) {
         console.log('[FETCH] Loaded', playersResult.data.length, 'individual players from categories');
         setIndividualPlayers(playersResult.data);
+        const teamPlayerPhones = (teamsResult.data || []).flatMap((t: any) => [
+          t.player1?.phone_number ? { phone_number: t.player1.phone_number } : null,
+          t.player2?.phone_number ? { phone_number: t.player2.phone_number } : null,
+        ]).filter(Boolean);
+        fetchPlayerCategoriesFromAccounts([...playersResult.data, ...teamPlayerPhones]);
       }
       if (matchesResult.data) {
         console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
@@ -1806,7 +1838,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           console.log('[FETCH-CHECK-TEAMS] R1J1 team2_id:', r1j1Local?.team2_id);
           console.log('[FETCH-CHECK-TEAMS] Sorted categories:', sortedCats.length, sortedCats.map(c => c.name));
           
-          if (r1j1Local && sortedCats.length >= 2 && sortedCats.length <= 3) {
+          if (!autoPopulateAttemptedRef.current && r1j1Local && sortedCats.length >= 2 && sortedCats.length <= 3) {
+            autoPopulateAttemptedRef.current = true;
             console.log('[FETCH-FILL-TEAMS] ====================================');
             console.log('[FETCH-FILL-TEAMS] Filling crossed playoffs teams R1...');
             
@@ -1930,7 +1963,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   }
                   
                   console.log('[FETCH-FILL-TEAMS] R1 filled (3 cat teams - direct matchups)! Refreshing...');
-                  await fetchTournamentData(); return;
+                  await fetchTournamentData(silent); return;
                 } else {
                   console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length}, C=${rankC.length} (need ${qualifiedPerGroup} each)`);
                 }
@@ -2080,7 +2113,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   
                   if (changed) {
                     console.log('[FETCH-FILL-TEAMS] Crossed teams matches updated! Refreshing...');
-                    await fetchTournamentData(); return;
+                    await fetchTournamentData(silent); return;
                   }
                 } else {
                   console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length} (need ${qualifiedPerGroup} each)`);
@@ -2110,6 +2143,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     } finally {
       fetchDepthRef.current = Math.max(0, fetchDepthRef.current - 1);
+      if (fetchDepthRef.current === 0) autoPopulateAttemptedRef.current = false;
       setLoading(false);
       setRefreshKey(prev => prev + 1);
 
@@ -5187,6 +5221,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           name: p.name || 'Player'
         }));
         
+        const matchesPerPlayer = playersForSchedule.length - 1;
+        console.log('[SCHEDULE] American matchesPerPlayer:', matchesPerPlayer, '(all-vs-all: n-1 =', playersForSchedule.length, '- 1)');
+
         const americanMatches = generateAmericanSchedule(
           playersForSchedule,
           numberOfCourts,
@@ -5194,7 +5231,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           startTime,
           endTime,
           matchDuration,
-          7 // matches per player
+          matchesPerPlayer
         );
         
         matchesToInsert = americanMatches.map(m => {
@@ -5760,12 +5797,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             console.log(`[SCHEDULE] Creating final match only`);
           }
 
-          // Create final match only (3rd/4th place match intentionally NOT generated)
+          const hasThirdPlace = categories.length > 0 ? ((categories[0] as any).has_third_place_match ?? true) : true;
+
           addKoMatch('final', courtName(0));
 
-          // No extra placement matches needed - consolation match already created above for QF losers
+          if (hasThirdPlace && categoryKnockoutStage !== 'final') {
+            addKoMatch('3rd_place', courtName(1 % numberOfCourts));
+            console.log('[SCHEDULE] Added 3rd/4th place match');
+          }
 
-          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}, no 3rd/4th). Total: ${matchesToInsert.length}`);
+          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}, 3rd/4th: ${hasThirdPlace}). Total: ${matchesToInsert.length}`);
         }
         
       } else if (schedFormat === 'round_robin' && schedRoundRobinType === 'teams') {
@@ -6743,6 +6784,75 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
+  const handleClearAllResults = async () => {
+    if (!confirm('Isto vai limpar todos os resultados de todos os jogos. Os jogos serão mantidos mas os scores serão apagados. Continuar?')) return;
+
+    setLoading(true);
+    try {
+      const { data: allMatches, error: fetchError } = await supabase
+        .from('matches')
+        .select('id, round')
+        .eq('tournament_id', tournament.id)
+        .or('status.eq.completed,team1_score_set1.gt.0,team2_score_set1.gt.0');
+
+      if (fetchError) throw fetchError;
+      if (!allMatches || allMatches.length === 0) {
+        alert('Não há resultados para limpar.');
+        return;
+      }
+
+      const knockoutRounds = [
+        'semifinal', 'semi_final', 'final', '3rd_place', 'quarterfinal', 'quarter_final',
+        'consolation', 'round_of_16'
+      ];
+      const isKnockoutRound = (round: string | null) => {
+        if (!round) return false;
+        const r = round.toLowerCase();
+        return knockoutRounds.some(kr => r === kr || r.endsWith('_' + kr));
+      };
+
+      const knockoutMatchIds = allMatches.filter(m => isKnockoutRound(m.round)).map(m => m.id);
+      const nonKnockoutMatchIds = allMatches.filter(m => !isKnockoutRound(m.round)).map(m => m.id);
+
+      if (nonKnockoutMatchIds.length > 0) {
+        const { error } = await supabase
+          .from('matches')
+          .update({
+            status: 'scheduled',
+            winner_id: null,
+            team1_score_set1: 0, team1_score_set2: 0, team1_score_set3: 0,
+            team2_score_set1: 0, team2_score_set2: 0, team2_score_set3: 0,
+          })
+          .in('id', nonKnockoutMatchIds);
+        if (error) throw error;
+      }
+
+      if (knockoutMatchIds.length > 0) {
+        const { error } = await supabase
+          .from('matches')
+          .update({
+            status: 'scheduled',
+            winner_id: null,
+            team1_score_set1: 0, team1_score_set2: 0, team1_score_set3: 0,
+            team2_score_set1: 0, team2_score_set2: 0, team2_score_set3: 0,
+            player1_individual_id: null, player2_individual_id: null,
+            player3_individual_id: null, player4_individual_id: null,
+            team1_id: null, team2_id: null,
+          })
+          .in('id', knockoutMatchIds);
+        if (error) throw error;
+      }
+
+      await fetchTournamentData();
+      alert('Todos os resultados foram limpos com sucesso!');
+    } catch (error) {
+      console.error('Error clearing results:', error);
+      alert('Erro ao limpar resultados');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleExportPDF = async () => {
     try {
       await exportTournamentPDF(currentTournament, teams, individualPlayers, matches, categories, t);
@@ -7634,6 +7744,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-gray-900">{player.name}</p>
+                              {(() => {
+                                const phone = (player.phone_number || '').replace(/[\s\-\(\)\.]/g, '');
+                                const cat = phone ? playerCategoryByPhone.get(phone) : undefined;
+                                return cat ? (
+                                  <span className="px-2 py-0.5 text-xs bg-emerald-100 text-emerald-700 rounded-full font-medium">
+                                    {cat}
+                                  </span>
+                                ) : null;
+                              })()}
                               {player.category_id && categories.length > 0 && (
                                 <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">
                                   {categories.find(c => c.id === player.category_id)?.name || ''}
@@ -7717,7 +7836,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                 <div>
                                   <p className="font-semibold text-gray-900">{team.name}</p>
                                   <p className="text-sm text-gray-600">
-                                    {team.player1?.name} / {team.player2?.name}
+                                    {team.player1?.name}
+                                    {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                                    {' / '}
+                                    {team.player2?.name}
+                                    {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
                                   </p>
                                 </div>
                                 <button
@@ -7745,7 +7868,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           <div>
                             <p className="font-semibold text-gray-900">{team.name}</p>
                             <p className="text-sm text-gray-600">
-                              {team.player1?.name}{(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''} / {team.player2?.name}{(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
+                              {team.player1?.name}
+                              {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                              {(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''}
+                              {' / '}
+                              {team.player2?.name}
+                              {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                              {(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
                             <div className="flex items-center gap-2 flex-wrap mt-1">
                               {team.group_name && (
@@ -8030,13 +8159,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   </button>
                   
                   {filteredMatches.length > 0 && (
-                    <button
-                      onClick={handleDeleteAllMatches}
-                      className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Eliminar Todos
-                    </button>
+                    <>
+                      <button
+                        onClick={handleClearAllResults}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Limpar Resultados
+                      </button>
+                      <button
+                        onClick={handleDeleteAllMatches}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Eliminar Todos
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

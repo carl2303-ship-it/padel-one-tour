@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Team, Player, IndividualPlayer } from '../lib/supabase';
-import { X, RotateCcw } from 'lucide-react';
+import { X, RotateCcw, Pencil, Check } from 'lucide-react';
 import { rescheduleRemainingMatches } from '../lib/reschedule';
 import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from '../lib/leagueStandings';
 import { advanceKnockoutWinner, populatePlacementMatches, populateTeamPlacementMatches } from '../lib/groups';
@@ -674,6 +674,12 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
     team2_score_set3: 0,
     status: 'scheduled' as const,
   });
+  const [editingPlayers, setEditingPlayers] = useState<{
+    player1_individual_id: string;
+    player2_individual_id: string;
+    player3_individual_id: string;
+    player4_individual_id: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   // Snapshot of the schedule fields as they were when the modal opened.
@@ -1499,32 +1505,154 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             </>
           )}
 
-          {isIndividualRoundRobin && matchData && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h3 className="font-semibold text-gray-900 mb-3">{t.match.matchPairs}</h3>
-              <div className="grid grid-cols-3 gap-4 items-center">
-                <div className="text-right space-y-1">
-                  <p className="font-medium text-sm text-gray-900">
-                    {getPlayerName(matchData.player1_individual_id)}
-                  </p>
-                  <p className="font-medium text-sm text-gray-900">
-                    {getPlayerName(matchData.player2_individual_id)}
-                  </p>
+          {isIndividualRoundRobin && matchData && (() => {
+            const knockoutRounds = [
+              'semifinal', 'semi_final', '1st_semifinal', '5th_semifinal', '9th_semifinal', '13th_semifinal',
+              'quarterfinal', 'quarter_final', 'round_of_16',
+              'final', '3rd_place', 'consolation',
+              '5th_place', '7th_place', '9th_place', '11th_place', '13th_place', '15th_place',
+              '17th_place', '19th_place', '21st_place', '23rd_place'
+            ];
+            const isKnockoutMatch = knockoutRounds.includes(matchData.round);
+
+            const handleSavePlayerAssignments = async () => {
+              if (!editingPlayers || !matchId) return;
+              setLoading(true);
+              const { error: updateError } = await supabase
+                .from('matches')
+                .update({
+                  player1_individual_id: editingPlayers.player1_individual_id || null,
+                  player2_individual_id: editingPlayers.player2_individual_id || null,
+                  player3_individual_id: editingPlayers.player3_individual_id || null,
+                  player4_individual_id: editingPlayers.player4_individual_id || null,
+                })
+                .eq('id', matchId);
+              setLoading(false);
+              if (updateError) {
+                setError(updateError.message);
+                return;
+              }
+              setEditingPlayers(null);
+              await fetchMatch();
+            };
+
+            return (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-gray-900">{t.match.matchPairs}</h3>
+                  {isKnockoutMatch && !editingPlayers && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingPlayers({
+                        player1_individual_id: matchData.player1_individual_id || '',
+                        player2_individual_id: matchData.player2_individual_id || '',
+                        player3_individual_id: matchData.player3_individual_id || '',
+                        player4_individual_id: matchData.player4_individual_id || '',
+                      })}
+                      className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                      title="Editar Jogadores"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
-                <div className="text-center">
-                  <span className="text-gray-600 font-semibold">VS</span>
-                </div>
-                <div className="text-left space-y-1">
-                  <p className="font-medium text-sm text-gray-900">
-                    {getPlayerName(matchData.player3_individual_id)}
-                  </p>
-                  <p className="font-medium text-sm text-gray-900">
-                    {getPlayerName(matchData.player4_individual_id)}
-                  </p>
-                </div>
+
+                {isKnockoutMatch && editingPlayers ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-4 items-center">
+                      <div className="space-y-2">
+                        <select
+                          value={editingPlayers.player1_individual_id}
+                          onChange={(e) => setEditingPlayers({ ...editingPlayers, player1_individual_id: e.target.value })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">TBD</option>
+                          {individualPlayers.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={editingPlayers.player2_individual_id}
+                          onChange={(e) => setEditingPlayers({ ...editingPlayers, player2_individual_id: e.target.value })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">TBD</option>
+                          {individualPlayers.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="text-center">
+                        <span className="text-gray-600 font-semibold">VS</span>
+                      </div>
+                      <div className="space-y-2">
+                        <select
+                          value={editingPlayers.player3_individual_id}
+                          onChange={(e) => setEditingPlayers({ ...editingPlayers, player3_individual_id: e.target.value })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">TBD</option>
+                          {individualPlayers.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={editingPlayers.player4_individual_id}
+                          onChange={(e) => setEditingPlayers({ ...editingPlayers, player4_individual_id: e.target.value })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">TBD</option>
+                          {individualPlayers.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditingPlayers(null)}
+                        className="px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        {t.button.cancel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSavePlayerAssignments}
+                        disabled={loading}
+                        className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Guardar
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-3 gap-4 items-center">
+                    <div className="text-right space-y-1">
+                      <p className="font-medium text-sm text-gray-900">
+                        {getPlayerName(matchData.player1_individual_id)}
+                      </p>
+                      <p className="font-medium text-sm text-gray-900">
+                        {getPlayerName(matchData.player2_individual_id)}
+                      </p>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-gray-600 font-semibold">VS</span>
+                    </div>
+                    <div className="text-left space-y-1">
+                      <p className="font-medium text-sm text-gray-900">
+                        {getPlayerName(matchData.player3_individual_id)}
+                      </p>
+                      <p className="font-medium text-sm text-gray-900">
+                        {getPlayerName(matchData.player4_individual_id)}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           <div className="border-t pt-6">
             <h3 className="font-semibold text-gray-900 mb-4">{t.match.score}</h3>

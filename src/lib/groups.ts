@@ -1660,6 +1660,38 @@ export async function populatePlacementMatches(
         tierPairs.push([tierRemaining[i], tierRemaining[i + 1]]);
       }
 
+      const totalPairsNeeded = tierSemis.length * 2;
+      if (tierPairs.length < totalPairsNeeded) {
+        const extraRank = startRank + 2;
+        const extraCandidates: Array<{ id: string; wins: number; diff: number }> = [];
+
+        for (let g = 0; g < nGroups; g++) {
+          if (extraRank < fullRankings[g].length && !usedTier.has(fullRankings[g][extraRank])) {
+            const playerId = fullRankings[g][extraRank];
+            const stats = playerStats.get(playerId);
+            if (stats) {
+              extraCandidates.push({ id: playerId, wins: stats.wins, diff: stats.gamesWon - stats.gamesLost });
+            }
+          }
+        }
+
+        extraCandidates.sort((a, b) => {
+          if (a.wins !== b.wins) return b.wins - a.wins;
+          return b.diff - a.diff;
+        });
+
+        const extraNeeded = (totalPairsNeeded - tierPairs.length) * 2;
+        const bestExtras = extraCandidates.slice(0, extraNeeded);
+
+        for (let ei = 0; ei < bestExtras.length - 1; ei += 2) {
+          tierPairs.push([bestExtras[ei].id, bestExtras[ei + 1].id]);
+          usedTier.add(bestExtras[ei].id);
+          usedTier.add(bestExtras[ei + 1].id);
+        }
+
+        console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: added ${bestExtras.length} best ${extraRank + 1}th-place players, now ${tierPairs.length} pairs`);
+      }
+
       console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: formed ${tierPairs.length} pairs`);
 
       for (let i = 0; i < tierSemis.length && (i * 2 + 1) < tierPairs.length; i++) {

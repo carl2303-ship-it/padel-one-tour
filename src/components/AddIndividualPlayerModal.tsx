@@ -53,6 +53,7 @@ type ExistingPlayer = {
 type Tournament = {
   id: string;
   name: string;
+  has_dinner_option?: boolean;
 };
 
 export default function AddIndividualPlayerModal({
@@ -76,6 +77,7 @@ export default function AddIndividualPlayerModal({
     phone: '',
   });
   const [seed, setSeed] = useState<number | ''>('');
+  const [wantsDinner, setWantsDinner] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -111,7 +113,7 @@ export default function AddIndividualPlayerModal({
   const fetchTournament = async () => {
     const { data } = await supabase
       .from('tournaments')
-      .select('id, name')
+      .select('id, name, has_dinner_option')
       .eq('id', tournamentId)
       .single();
 
@@ -193,6 +195,7 @@ export default function AddIndividualPlayerModal({
         phone_number: selectedPlayer.phone_number,
         seed: seed === '' ? null : seed,
         user_id: null,
+        wants_dinner: wantsDinner,
       };
 
       console.log('[PLAYER INSERT - EXISTING] Inserindo jogador existente:', insertData);
@@ -266,6 +269,7 @@ export default function AddIndividualPlayerModal({
         name: formData.name.trim(),
         seed: seed === '' ? null : seed,
         user_id: null,
+        wants_dinner: wantsDinner,
       };
 
       if (formData.email.trim()) {
@@ -462,6 +466,18 @@ export default function AddIndividualPlayerModal({
                 />
               </div>
             </>
+          )}
+
+          {tournament?.has_dinner_option && (
+            <label className="flex items-center gap-3 cursor-pointer py-1">
+              <input
+                type="checkbox"
+                checked={wantsDinner}
+                onChange={(e) => setWantsDinner(e.target.checked)}
+                className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+              />
+              <span className="text-sm text-gray-700">🍽️ Quero jantar</span>
+            </label>
           )}
 
           <div>

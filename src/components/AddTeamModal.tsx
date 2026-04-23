@@ -46,8 +46,10 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
   const { t } = useI18n();
   const [players, setPlayers] = useState<Player[]>([]);
   const [categories, setCategories] = useState<TournamentCategory[]>([]);
-  const [tournament, setTournament] = useState<{ id: string; name: string } | null>(null);
+  const [tournament, setTournament] = useState<{ id: string; name: string; has_dinner_option?: boolean } | null>(null);
   const [teamName, setTeamName] = useState('');
+  const [player1WantsDinner, setPlayer1WantsDinner] = useState(false);
+  const [player2WantsDinner, setPlayer2WantsDinner] = useState(false);
   const [player1Id, setPlayer1Id] = useState('');
   const [player2Id, setPlayer2Id] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
@@ -119,7 +121,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
   const fetchTournament = async () => {
     const { data } = await supabase
       .from('tournaments')
-      .select('id, name')
+      .select('id, name, has_dinner_option')
       .eq('id', tournamentId)
       .single();
 
@@ -128,19 +130,18 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
     }
   };
 
-  const createPlayer = async (playerData: typeof newPlayer1) => {
+  const createPlayer = async (playerData: typeof newPlayer1, wantsDinner = false) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
-    // IMPORTANTE: user_id deve ser null para jogadores criados pelo organizador
-    // O jogador poderá associar a sua conta depois se quiser
     const { data, error } = await supabase
       .from('players')
       .insert([{
         ...playerData,
-        user_id: null, // Não associar ao organizador
+        user_id: null,
         tournament_id: tournamentId,
-        category_id: categoryId || null
+        category_id: categoryId || null,
+        wants_dinner: wantsDinner
       }])
       .select()
       .single();
@@ -164,8 +165,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
   };
 
   // Garantir que o jogador existe no torneio atual (copiar se necessário)
-  const ensurePlayerInTournament = async (playerId: string): Promise<string> => {
-    // Verificar se o jogador já está no torneio atual
+  const ensurePlayerInTournament = async (playerId: string, wantsDinner = false): Promise<string> => {
     const { data: existingPlayer } = await supabase
       .from('players')
       .select('*')
@@ -176,19 +176,16 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
       throw new Error('Jogador não encontrado');
     }
 
-    // Se já está no torneio atual, retornar o mesmo ID
     if (existingPlayer.tournament_id === tournamentId) {
-      // Atualizar category_id se necessário
-      if (categoryId && existingPlayer.category_id !== categoryId) {
-        await supabase
-          .from('players')
-          .update({ category_id: categoryId })
-          .eq('id', playerId);
+      const updates: Record<string, any> = {};
+      if (categoryId && existingPlayer.category_id !== categoryId) updates.category_id = categoryId;
+      if (wantsDinner !== !!existingPlayer.wants_dinner) updates.wants_dinner = wantsDinner;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('players').update(updates).eq('id', playerId);
       }
       return playerId;
     }
 
-    // Jogador está noutro torneio - verificar se já existe neste torneio pelo telefone/nome
     const { data: playerInThisTournament } = await supabase
       .from('players')
       .select('id')
@@ -197,17 +194,13 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
       .maybeSingle();
 
     if (playerInThisTournament) {
-      // Já existe neste torneio, atualizar categoria se necessário
-      if (categoryId) {
-        await supabase
-          .from('players')
-          .update({ category_id: categoryId })
-          .eq('id', playerInThisTournament.id);
-      }
+      const updates: Record<string, any> = {};
+      if (categoryId) updates.category_id = categoryId;
+      updates.wants_dinner = wantsDinner;
+      await supabase.from('players').update(updates).eq('id', playerInThisTournament.id);
       return playerInThisTournament.id;
     }
 
-    // Criar cópia do jogador para este torneio
     const { data: newPlayer, error } = await supabase
       .from('players')
       .insert([{
@@ -216,7 +209,8 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
         phone_number: existingPlayer.phone_number,
         user_id: null,
         tournament_id: tournamentId,
-        category_id: categoryId || null
+        category_id: categoryId || null,
+        wants_dinner: wantsDinner
       }])
       .select()
       .single();
@@ -261,10 +255,9 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
           setLoading(false);
           return;
         }
-        finalPlayer1Id = await createPlayer(newPlayer1);
+        finalPlayer1Id = await createPlayer(newPlayer1, player1WantsDinner);
       } else if (player1Id) {
-        // Jogador existente - garantir que está no torneio atual
-        finalPlayer1Id = await ensurePlayerInTournament(player1Id);
+        finalPlayer1Id = await ensurePlayerInTournament(player1Id, player1WantsDinner);
       }
 
       if (showNewPlayer2) {
@@ -278,10 +271,9 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
           setLoading(false);
           return;
         }
-        finalPlayer2Id = await createPlayer(newPlayer2);
+        finalPlayer2Id = await createPlayer(newPlayer2, player2WantsDinner);
       } else if (player2Id) {
-        // Jogador existente - garantir que está no torneio atual
-        finalPlayer2Id = await ensurePlayerInTournament(player2Id);
+        finalPlayer2Id = await ensurePlayerInTournament(player2Id, player2WantsDinner);
       }
 
       if (!finalPlayer1Id || !finalPlayer2Id) {
@@ -509,6 +501,30 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
               </div>
             )}
           </div>
+
+          {tournament?.has_dinner_option && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">🍽️ Jantar</label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={player1WantsDinner}
+                  onChange={(e) => setPlayer1WantsDinner(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                />
+                <span className="text-sm text-gray-700">Jogador 1 quer jantar</span>
+              </label>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={player2WantsDinner}
+                  onChange={(e) => setPlayer2WantsDinner(e.target.checked)}
+                  className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                />
+                <span className="text-sm text-gray-700">Jogador 2 quer jantar</span>
+              </label>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">{t.team.seedOptional}</label>

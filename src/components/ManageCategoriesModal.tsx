@@ -25,6 +25,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     court_names: [] as string[],
     category_schedule: [] as CategoryScheduleEntry[],
     match_duration_minutes: null as number | null,
+    has_third_place_match: true,
     accepted_levels: [] as string[],
     min_level: null as number | null,
     max_level: null as number | null
@@ -137,24 +138,27 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
     try {
       const hasGroups = isGroupsFormat(tournamentFormat);
-      const { error } = await supabase
-        .from('tournament_categories')
-        .insert({
-          tournament_id: tournamentId,
-          name: newCategory.name,
-          format: tournamentFormat,
-          number_of_groups: hasGroups ? newCategory.number_of_groups : 0,
-          max_teams: newCategory.max_teams,
-          knockout_stage: hasGroups ? newCategory.knockout_stage : null,
-          qualified_per_group: hasGroups ? newCategory.qualified_per_group : null,
-          court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
-          category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
-          match_duration_minutes: newCategory.match_duration_minutes || null,
-          accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null,
-          min_level: newCategory.min_level,
-          max_level: newCategory.max_level
-        });
-
+      const baseData: Record<string, any> = {
+        tournament_id: tournamentId,
+        name: newCategory.name,
+        format: tournamentFormat,
+        number_of_groups: hasGroups ? newCategory.number_of_groups : 0,
+        max_teams: newCategory.max_teams,
+        knockout_stage: hasGroups ? newCategory.knockout_stage : null,
+        qualified_per_group: hasGroups ? newCategory.qualified_per_group : null,
+        court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
+        category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
+        match_duration_minutes: newCategory.match_duration_minutes || null,
+        has_third_place_match: newCategory.has_third_place_match,
+        accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null,
+        min_level: newCategory.min_level,
+        max_level: newCategory.max_level
+      };
+      let { error } = await supabase.from('tournament_categories').insert(baseData);
+      if (error?.code === 'PGRST204' && error.message?.includes('has_third_place_match')) {
+        delete baseData.has_third_place_match;
+        ({ error } = await supabase.from('tournament_categories').insert(baseData));
+      }
       if (error) throw error;
 
       setNewCategory({
@@ -166,6 +170,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         court_names: [],
         category_schedule: [],
         match_duration_minutes: null,
+        has_third_place_match: true,
         accepted_levels: [],
         min_level: null,
         max_level: null
@@ -188,24 +193,26 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
 
     try {
       const hasGroups = isGroupsFormat(tournamentFormat);
-      const { error } = await supabase
-        .from('tournament_categories')
-        .update({
-          name: editingCategory.name,
-          format: tournamentFormat,
-          number_of_groups: hasGroups ? editingCategory.number_of_groups : 0,
-          max_teams: editingCategory.max_teams,
-          knockout_stage: hasGroups ? (editingCategory.knockout_stage || 'quarterfinals') : null,
-          qualified_per_group: hasGroups ? (editingCategory.qualified_per_group || 2) : null,
-          court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
-          category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
-          match_duration_minutes: editingCategory.match_duration_minutes || null,
-          accepted_levels: editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels : null,
-          min_level: editingCategory.min_level ?? null,
-          max_level: editingCategory.max_level ?? null
-        })
-        .eq('id', editingCategory.id);
-
+      const updateData: Record<string, any> = {
+        name: editingCategory.name,
+        format: tournamentFormat,
+        number_of_groups: hasGroups ? editingCategory.number_of_groups : 0,
+        max_teams: editingCategory.max_teams,
+        knockout_stage: hasGroups ? (editingCategory.knockout_stage || 'quarterfinals') : null,
+        qualified_per_group: hasGroups ? (editingCategory.qualified_per_group || 2) : null,
+        court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
+        category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
+        match_duration_minutes: editingCategory.match_duration_minutes || null,
+        has_third_place_match: (editingCategory as any).has_third_place_match ?? true,
+        accepted_levels: editingCategory.accepted_levels && editingCategory.accepted_levels.length > 0 ? editingCategory.accepted_levels : null,
+        min_level: editingCategory.min_level ?? null,
+        max_level: editingCategory.max_level ?? null
+      };
+      let { error } = await supabase.from('tournament_categories').update(updateData).eq('id', editingCategory.id);
+      if (error?.code === 'PGRST204' && error.message?.includes('has_third_place_match')) {
+        delete updateData.has_third_place_match;
+        ({ error } = await supabase.from('tournament_categories').update(updateData).eq('id', editingCategory.id));
+      }
       if (error) throw error;
 
       setEditingCategory(null);
@@ -322,6 +329,20 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                       <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
                     </select>
                   </div>
+                  {newCategory.knockout_stage !== 'none' && newCategory.knockout_stage !== 'final' && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <input
+                        type="checkbox"
+                        id="has_third_place"
+                        checked={newCategory.has_third_place_match}
+                        onChange={(e) => setNewCategory({ ...newCategory, has_third_place_match: e.target.checked })}
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      />
+                      <label htmlFor="has_third_place" className="text-sm text-gray-700">
+                        Incluir jogo de 3°/4° lugar (pequena final)
+                      </label>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -637,6 +658,20 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                                   <option value="round_of_16">{t.knockout?.round_of_16 || 'Round of 16'}</option>
                                 </select>
                               </div>
+                              {(editingCategory.knockout_stage || 'quarterfinals') !== 'none' && (editingCategory.knockout_stage || 'quarterfinals') !== 'final' && (
+                                <div className="flex items-center gap-2 mt-2">
+                                  <input
+                                    type="checkbox"
+                                    id={`edit_has_third_place_${editingCategory.id}`}
+                                    checked={(editingCategory as any).has_third_place_match ?? true}
+                                    onChange={(e) => setEditingCategory({ ...editingCategory, has_third_place_match: e.target.checked } as any)}
+                                    className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                  />
+                                  <label htmlFor={`edit_has_third_place_${editingCategory.id}`} className="text-sm text-gray-700">
+                                    Incluir jogo de 3°/4° lugar (pequena final)
+                                  </label>
+                                </div>
+                              )}
                             </>
                           )}
 
