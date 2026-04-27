@@ -14,7 +14,7 @@ const corsHeaders = {
 };
 
 type SidePreference = "right" | "left";
-type TargetMode = "any" | "following";
+type TargetMode = "any" | "following" | "direct";
 
 function isTeamTournament(format: string | null, roundRobinType: string | null): boolean {
   if (!format) return false;
@@ -118,7 +118,9 @@ Deno.serve(async (req: Request) => {
     const categoryId = (body.categoryId as string | null) ?? null;
     const sidePreference = (body.sidePreference as SidePreference) ?? "right";
     const targetMode = (body.targetMode as TargetMode) ?? "any";
+    const inviteePhone = (body.inviteePhone as string | null) ?? null;
     if (!tournamentId) throw new Error("Missing tournamentId");
+    if (targetMode === "direct" && !inviteePhone) throw new Error("Missing inviteePhone for direct invite");
 
     const userId = authData.user.id;
     const { data: requester, error: requesterError } = await admin
@@ -171,6 +173,92 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // --- Direct invite mode: single player by phone ---
+    if (targetMode === "direct" && inviteePhone) {
+      const normalizedPhone = inviteePhone.replace(/\s+/g, "").trim();
+      const { data: inviteeAccount, error: inviteeErr } = await admin
+        .from("player_accounts")
+        .select("id, user_id, name, player_category, level, court_position")
+        .eq("phone_number", normalizedPhone)
+        .not("user_id", "is", null)
+        .maybeSingle();
+
+      if (inviteeErr) throw inviteeErr;
+      if (!inviteeAccount) throw new Error("Nenhum jogador encontrado com este número de telefone.");
+      if (!inviteeAccount.user_id) throw new Error("Este jogador ainda não está registado na app.");
+      if (inviteeAccount.user_id === requester.user_id) throw new Error("Não podes convidar-te a ti mesmo.");
+
+      if (categoryForInvitees) {
+        if (!isPlayerEligibleForCategory(categoryForInvitees, {
+          player_category: inviteeAccount.player_category,
+          level: inviteeAccount.level,
+        })) {
+          throw new Error(`${inviteeAccount.name} não é elegível para esta categoria do torneio.`);
+        }
+      }
+
+      const { data: alreadyPlayer } = await admin
+        .from("players")
+        .select("id")
+        .eq("tournament_id", tournamentId)
+        .eq("player_account_id", inviteeAccount.id)
+        .maybeSingle();
+      if (alreadyPlayer) throw new Error(`${inviteeAccount.name} já está inscrito neste torneio.`);
+
+      const { data: requestRow, error: requestError } = await admin
+        .from("partner_match_requests")
+        .insert({
+          tournament_id: tournamentId,
+          category_id: effectiveCategoryId,
+          requester_user_id: requester.user_id,
+          requester_player_account_id: requester.id,
+          side_preference: sidePreference,
+          target_mode: "direct",
+        })
+        .select("id")
+        .single();
+      if (requestError || !requestRow) throw requestError || new Error("Failed to create request");
+
+      const { data: invites, error: invitesError } = await admin
+        .from("partner_match_invites")
+        .insert({
+          request_id: requestRow.id,
+          tournament_id: tournamentId,
+          category_id: effectiveCategoryId,
+          requester_user_id: requester.user_id,
+          requester_player_account_id: requester.id,
+          invitee_user_id: inviteeAccount.user_id,
+          invitee_player_account_id: inviteeAccount.id,
+        })
+        .select("id, invitee_player_account_id, invitee_user_id");
+      if (invitesError) throw invitesError;
+
+      let pushDelivered = 0;
+      if (invites && invites.length > 0) {
+        const pushResult = await sendPartnerInvitePush(admin, {
+          inviteId: invites[0].id,
+          tournamentId,
+          tournamentName: tournament.name,
+          requesterName: requester.name,
+          inviteeUserId: inviteeAccount.user_id,
+          inviteePlayerAccountId: inviteeAccount.id,
+        });
+        pushDelivered = pushResult.sent;
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          requestId: requestRow.id,
+          invitesSent: 1,
+          inviteeName: inviteeAccount.name,
+          pushDelivered,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // --- Broadcast modes (any / following) ---
     let followingIds: string[] | null = null;
     if (targetMode === "following") {
       const { data: follows } = await admin
