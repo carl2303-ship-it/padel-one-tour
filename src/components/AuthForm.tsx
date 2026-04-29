@@ -20,6 +20,12 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
+  const [showLicenseActivation, setShowLicenseActivation] = useState(false);
+  const [licenseKey, setLicenseKey] = useState('');
+  const [activatingLicense, setActivatingLicense] = useState(false);
+  const [licenseResult, setLicenseResult] = useState<{ ok: boolean; plan?: string; contract_expires_at?: string } | null>(null);
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+
   const { signIn, resetPassword } = useAuth();
   const { t } = useI18n();
   const { logoUrl } = useCustomLogo();
@@ -64,18 +70,36 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
 
           if (existing) {
             if (!existing.is_paid_organizer) {
-              await supabase.auth.signOut();
-              setError('Esta conta não tem acesso de organizador. Adquira a licença em boostpadel.store');
+              setPendingUserId(user.id);
+              setShowLicenseActivation(true);
+              setError('');
               setLoading(false);
               return;
             }
+
+            // Check if organizer contract has expired
+            const { data: orgRecord } = await supabase
+              .from('organizers')
+              .select('subscription_expires_at')
+              .eq('user_id', user.id)
+              .maybeSingle();
+
+            if (orgRecord?.subscription_expires_at && new Date(orgRecord.subscription_expires_at) < new Date()) {
+              setPendingUserId(user.id);
+              setShowLicenseActivation(true);
+              setError('A sua licença expirou. Introduza uma nova chave para renovar.');
+              setLoading(false);
+              return;
+            }
+
             await supabase
               .from('user_logo_settings')
               .update({ role: 'organizer', updated_at: new Date().toISOString() })
               .eq('user_id', user.id);
           } else {
-            await supabase.auth.signOut();
-            setError('Esta conta não tem acesso de organizador. Adquira a licença em boostpadel.store');
+            setPendingUserId(user.id);
+            setShowLicenseActivation(true);
+            setError('');
             setLoading(false);
             return;
           }
@@ -87,6 +111,49 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleActivateLicense = async () => {
+    if (!licenseKey.trim() || !pendingUserId) return;
+    setActivatingLicense(true);
+    setError('');
+
+    try {
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co'}/functions/v1/activate-license`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ''}` },
+          body: JSON.stringify({ license_key: licenseKey.trim(), user_id: pendingUserId }),
+        }
+      );
+      const result = await resp.json();
+
+      if (result.ok) {
+        setLicenseResult(result);
+        await supabase.from('user_logo_settings').upsert(
+          { user_id: pendingUserId, is_paid_organizer: true, role: 'organizer' },
+          { onConflict: 'user_id' }
+        );
+        setTimeout(() => {
+          setShowLicenseActivation(false);
+          onSuccess?.();
+        }, 2000);
+      } else {
+        setError(result.error || 'Chave inválida');
+      }
+    } catch {
+      setError('Erro ao ativar licença. Tente novamente.');
+    }
+    setActivatingLicense(false);
+  };
+
+  const handleCancelLicense = async () => {
+    await supabase.auth.signOut();
+    setShowLicenseActivation(false);
+    setPendingUserId(null);
+    setLicenseKey('');
+    setLicenseResult(null);
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -163,6 +230,73 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
       setLoading(false);
     }
   };
+
+  if (showLicenseActivation) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
+        <div className="max-w-md w-full">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-slate-800">Ativar Licença</h2>
+              <p className="text-sm text-slate-500 mt-2">
+                Introduza a chave de licença que recebeu para ativar o seu acesso de organizador.
+              </p>
+            </div>
+
+            {licenseResult?.ok ? (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                <div className="text-green-600 font-semibold text-lg mb-1">Licença ativada!</div>
+                <p className="text-sm text-green-700">Plano: {licenseResult.plan}</p>
+                {licenseResult.contract_expires_at && (
+                  <p className="text-xs text-green-600 mt-1">
+                    Expira em: {new Date(licenseResult.contract_expires_at).toLocaleDateString('pt-PT')}
+                  </p>
+                )}
+                <p className="text-xs text-green-500 mt-2">A redirecionar...</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Chave de Licença</label>
+                  <input
+                    type="text"
+                    value={licenseKey}
+                    onChange={e => setLicenseKey(e.target.value.toUpperCase())}
+                    placeholder="PADEL-XXXX-XXXX-XXXX"
+                    className="w-full px-4 py-3 border border-slate-300 rounded-xl text-center font-mono text-lg tracking-wider focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">{error}</div>
+                )}
+
+                <button
+                  onClick={handleActivateLicense}
+                  disabled={activatingLicense || !licenseKey.trim()}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-semibold hover:bg-purple-700 transition-colors disabled:opacity-50"
+                >
+                  {activatingLicense ? 'A ativar...' : 'Ativar Licença'}
+                </button>
+
+                <button
+                  onClick={handleCancelLicense}
+                  className="w-full py-2 text-slate-500 hover:text-slate-700 text-sm"
+                >
+                  Cancelar e voltar ao login
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">

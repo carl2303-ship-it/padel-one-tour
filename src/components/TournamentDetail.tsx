@@ -1230,20 +1230,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             if (catGroupMatches.length === 0) continue;
             const allDone = catGroupMatches.every(hasResultLocal);
 
+            const koRounds = ['round_of_16', 'quarter_final', 'quarterfinal', 'semi_final', 'semifinal', 'final', '3rd_place', '5th_semi', '5th_place', '7th_place'];
             const catKnockouts = matchesResult.data.filter((m: any) =>
-              m.category_id === cat.id && (
-                m.round === 'round_of_16' ||
-                m.round === 'quarter_final' || m.round === 'quarterfinal' ||
-                m.round === 'semi_final' || m.round === 'semifinal' ||
-                m.round === 'final' ||
-                m.round === '3rd_place'
-              )
+              m.category_id === cat.id && koRounds.includes(m.round)
             );
             if (catKnockouts.length === 0) continue;
 
             const hasEmpty = catKnockouts.some((m: any) => !m.team1_id || !m.team2_id);
             const hasStaleTeams = catKnockouts.some((m: any) => {
-              if (hasResultLocal(m)) return false; // protege resultados reais
+              if (hasResultLocal(m)) return false;
               return !!(m.team1_id || m.team2_id);
             });
 
@@ -1560,25 +1555,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             return m.status === 'completed' || t1 > 0 || t2 > 0;
           };
           const categoriesNeedingSync: string[] = [];
+          const koRounds2 = ['round_of_16', 'quarter_final', 'quarterfinal', 'semi_final', 'semifinal', 'final', '3rd_place', '5th_semi', '5th_place', '7th_place'];
           for (const cat of gkCategories) {
             const catGroupMatches = matchesResult.data.filter((m: any) => m.category_id === cat.id && typeof m.round === 'string' && m.round.startsWith('group_'));
             if (catGroupMatches.length === 0) continue;
             const allDone = catGroupMatches.every(hasResultLocal);
 
             const catKnockouts = matchesResult.data.filter((m: any) =>
-              m.category_id === cat.id && (
-                m.round === 'round_of_16' ||
-                m.round === 'quarter_final' || m.round === 'quarterfinal' ||
-                m.round === 'semi_final' || m.round === 'semifinal' ||
-                m.round === 'final' ||
-                m.round === '3rd_place'
-              )
+              m.category_id === cat.id && koRounds2.includes(m.round)
             );
             if (catKnockouts.length === 0) continue;
 
             const hasEmpty = catKnockouts.some((m: any) => !m.team1_id || !m.team2_id);
             const hasStaleTeams = catKnockouts.some((m: any) => {
-              if (hasResultLocal(m)) return false; // protege resultados reais
+              if (hasResultLocal(m)) return false;
               return !!(m.team1_id || m.team2_id);
             });
 
@@ -6593,6 +6583,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 courtNames: catCourtNames || undefined,
                 categorySchedule: catSchedule,
                 matchDurationMinutes: catMatchDuration,
+                hasThirdPlace: (category as any).has_third_place_match ?? true,
               };
             });
           
@@ -6962,6 +6953,118 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           console.log('[FINALIZE] Updated', teamPositions.size, 'team positions from bracket results');
+        }
+      } else if (currentTournament.format === 'groups_knockout') {
+        console.log('[FINALIZE] Calculating groups_knockout positions from knockout bracket...');
+
+        const { data: allCompletedMatches } = await supabase
+          .from('matches')
+          .select('*')
+          .eq('tournament_id', tournament.id)
+          .eq('status', 'completed');
+
+        const { data: tournamentTeams } = await supabase
+          .from('teams')
+          .select('id, player1_id, player2_id, name, group_name, category_id')
+          .eq('tournament_id', tournament.id);
+
+        if (allCompletedMatches && tournamentTeams) {
+          const getMatchWL = (match: any): { winner: string | null; loser: string | null } => {
+            const t1g = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+            const t2g = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+            if (t1g > t2g) return { winner: match.team1_id, loser: match.team2_id };
+            if (t2g > t1g) return { winner: match.team2_id, loser: match.team1_id };
+            return { winner: match.winner_id || null, loser: null };
+          };
+
+          const positionMap: Array<{ round: string; winnerPos: number; loserPos: number }> = [
+            { round: 'final', winnerPos: 1, loserPos: 2 },
+            { round: '3rd_place', winnerPos: 3, loserPos: 4 },
+            { round: '5th_place', winnerPos: 5, loserPos: 6 },
+            { round: '7th_place', winnerPos: 7, loserPos: 8 },
+          ];
+
+          const teamPositions = new Map<string, number>();
+          for (const pm of positionMap) {
+            const match = allCompletedMatches.find(m => m.round === pm.round);
+            if (match && match.team1_id && match.team2_id) {
+              const { winner, loser } = getMatchWL(match);
+              if (winner && !teamPositions.has(winner)) teamPositions.set(winner, pm.winnerPos);
+              if (loser && !teamPositions.has(loser)) teamPositions.set(loser, pm.loserPos);
+              console.log(`[FINALIZE] ${pm.round}: winner=${winner} (${pm.winnerPos}°), loser=${loser} (${pm.loserPos}°)`);
+            }
+          }
+
+          // QF losers that didn't go to classification matches
+          const qfMatches = allCompletedMatches.filter(m =>
+            m.round === 'quarter_final' || m.round === 'quarterfinal'
+          );
+          let nextPos = teamPositions.size + 1;
+          for (const qfM of qfMatches) {
+            const { loser } = getMatchWL(qfM);
+            if (loser && !teamPositions.has(loser)) {
+              teamPositions.set(loser, nextPos);
+              nextPos++;
+            }
+          }
+
+          // Semi-final losers not yet placed
+          const semiMatches = allCompletedMatches.filter(m =>
+            m.round === 'semi_final' || m.round === 'semifinal'
+          );
+          for (const sm of semiMatches) {
+            const { loser } = getMatchWL(sm);
+            if (loser && !teamPositions.has(loser)) {
+              teamPositions.set(loser, nextPos);
+              nextPos++;
+            }
+          }
+
+          // Remaining teams not in knockout
+          const groupMatches = allCompletedMatches.filter(m =>
+            m.round === 'round_robin' || m.round?.startsWith('group_')
+          );
+          const remainingTeams = tournamentTeams.filter(t => !teamPositions.has(t.id));
+          if (remainingTeams.length > 0 && groupMatches.length > 0) {
+            const remainingStats = remainingTeams.map(team => {
+              let wins = 0, gw = 0, gl = 0;
+              groupMatches.forEach(m => {
+                const isT1 = m.team1_id === team.id;
+                const isT2 = m.team2_id === team.id;
+                if (!isT1 && !isT2) return;
+                const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+                const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+                if (isT1) { gw += t1; gl += t2; if (t1 > t2) wins++; }
+                else { gw += t2; gl += t1; if (t2 > t1) wins++; }
+              });
+              return { id: team.id, wins, diff: gw - gl, gw };
+            });
+            remainingStats.sort((a, b) => b.wins - a.wins || (b.diff - a.diff) || (b.gw - a.gw));
+            for (const rs of remainingStats) {
+              teamPositions.set(rs.id, nextPos);
+              nextPos++;
+            }
+          }
+
+          // Update team positions
+          for (const [teamId, position] of teamPositions) {
+            await supabase.from('teams').update({ final_position: position }).eq('id', teamId);
+          }
+
+          // Propagate to players
+          for (const team of tournamentTeams) {
+            const pos = teamPositions.get(team.id);
+            if (pos) {
+              if (team.player1_id) {
+                await supabase.from('players').update({ final_position: pos }).eq('id', team.player1_id);
+              }
+              if (team.player2_id) {
+                await supabase.from('players').update({ final_position: pos }).eq('id', team.player2_id);
+              }
+            }
+          }
+
+          console.log('[FINALIZE] Updated', teamPositions.size, 'team positions from groups_knockout bracket');
         }
       } else {
         // For other team tournaments, calculate team positions from match results
@@ -7963,7 +8066,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       const roundLabels: Record<string, string> = {
                         'group': 'Fase de Grupos',
                         'quarter_final': 'Quartos de Final',
+                        '5th_semi': 'Semi 5º/8º',
                         'semi_final': 'Meia-Final',
+                        '3rd_place': '3º Lugar',
+                        '5th_place': '5º Lugar',
+                        '7th_place': '7º Lugar',
                         'third_place': '3º Lugar',
                         'final': 'Final'
                       };
@@ -8413,19 +8520,27 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           {catConfrontations.length > 0 ? (
                             <div className="space-y-3">
                               {/* Agrupar por fase */}
-                              {['quarter_final', 'semi_final', 'third_place', 'final'].map(roundType => {
+                              {['quarter_final', '5th_semi', 'semi_final', '3rd_place', 'third_place', '5th_place', '7th_place', 'final'].map(roundType => {
                                 const roundConfronts = catConfrontations.filter(c => c.round === roundType);
                                 if (roundConfronts.length === 0) return null;
                                 const roundLabels: Record<string, string> = {
                                   'quarter_final': 'Quartos de Final',
+                                  '5th_semi': 'Semi 5º/8º',
                                   'semi_final': 'Meias-Finais',
+                                  '3rd_place': '3º Lugar',
                                   'third_place': '3º Lugar',
+                                  '5th_place': '5º Lugar',
+                                  '7th_place': '7º Lugar',
                                   'final': 'Final'
                                 };
                                 const roundColors: Record<string, string> = {
                                   'quarter_final': 'bg-purple-100 border-purple-300',
+                                  '5th_semi': 'bg-indigo-100 border-indigo-300',
                                   'semi_final': 'bg-orange-100 border-orange-300',
+                                  '3rd_place': 'bg-amber-100 border-amber-300',
                                   'third_place': 'bg-amber-100 border-amber-300',
+                                  '5th_place': 'bg-teal-100 border-teal-300',
+                                  '7th_place': 'bg-slate-100 border-slate-300',
                                   'final': 'bg-green-100 border-green-300'
                                 };
                                 return (

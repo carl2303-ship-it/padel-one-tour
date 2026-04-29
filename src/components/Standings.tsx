@@ -61,6 +61,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const [individualFinalRankings, setIndividualFinalRankings] = useState<IndividualFinalRanking[]>([]);
   const [crossedPlayoffResults, setCrossedPlayoffResults] = useState<any[]>([]);
   const [categoryGroupedTeams, setCategoryGroupedTeams] = useState<Map<string, TeamWithPlayers[]>>(new Map());
+  const [teamFinalClassification, setTeamFinalClassification] = useState<{position: number; label: string; team: TeamWithPlayers}[]>([]);
   const [loading, setLoading] = useState(true);
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
@@ -1577,7 +1578,95 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
       setGroupedTeams(grouped);
 
-      const knockoutTeams = (teamsData as unknown as TeamWithPlayers[])
+      // ═══════════════════════════════════════════════════════════════
+      // CLASSIFICAÇÃO FINAL — derivar posições dos resultados knockout
+      // ═══════════════════════════════════════════════════════════════
+      const allTeamsArr = teamsData as unknown as TeamWithPlayers[];
+      const getWL = (match: any): { winnerId: string | null; loserId: string | null } => {
+        const t1g = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
+        const t2g = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
+        if (t1g > t2g) return { winnerId: match.team1_id, loserId: match.team2_id };
+        if (t2g > t1g) return { winnerId: match.team2_id, loserId: match.team1_id };
+        return { winnerId: match.winner_id || match.team1_id, loserId: match.winner_id === match.team2_id ? match.team1_id : match.team2_id };
+      };
+
+      const koRounds = ['final', 'semi_final', 'semifinal', 'quarter_final', 'quarterfinal',
+        '3rd_place', '5th_semi', '5th_place', '7th_place', 'round_of_16', 'round_of_32', 'consolation'];
+      const koMatches = matches?.filter(m => m.round && koRounds.includes(m.round)) || [];
+      const completedKO = koMatches.filter(m => m.status === 'completed' && m.team1_id && m.team2_id);
+
+      const finalMatch = completedKO.find(m => m.round === 'final');
+      const thirdPlaceMatch = completedKO.find(m => m.round === '3rd_place');
+      const fifthPlaceMatch = completedKO.find(m => m.round === '5th_place');
+      const seventhPlaceMatch = completedKO.find(m => m.round === '7th_place');
+      const semis = completedKO.filter(m => m.round === 'semi_final' || m.round === 'semifinal');
+      const fifthSemis = completedKO.filter(m => m.round === '5th_semi');
+      const quarters = completedKO.filter(m => m.round === 'quarter_final' || m.round === 'quarterfinal');
+
+      const classification: {position: number; label: string; team: TeamWithPlayers}[] = [];
+      const placed = new Set<string>();
+
+      const addPos = (pos: number, label: string, teamId: string | null) => {
+        if (!teamId || placed.has(teamId)) return;
+        const team = allTeamsArr.find(t => t.id === teamId);
+        if (!team) return;
+        const stats = calculateTeamStats(team);
+        classification.push({ position: pos, label, team: { ...team, ...stats } });
+        placed.add(teamId);
+      };
+
+      if (finalMatch) {
+        const { winnerId, loserId } = getWL(finalMatch);
+        addPos(1, '1º - Campeão', winnerId);
+        addPos(2, '2º - Finalista', loserId);
+      }
+      if (thirdPlaceMatch) {
+        const { winnerId, loserId } = getWL(thirdPlaceMatch);
+        addPos(3, '3º Lugar', winnerId);
+        addPos(4, '4º Lugar', loserId);
+      } else if (!thirdPlaceMatch && semis.length > 0 && !finalMatch) {
+        semis.forEach(m => {
+          const { loserId } = getWL(m);
+          addPos(classification.length + 1, `${classification.length + 1}º Lugar`, loserId);
+        });
+      }
+      if (fifthPlaceMatch) {
+        const { winnerId, loserId } = getWL(fifthPlaceMatch);
+        addPos(5, '5º Lugar', winnerId);
+        addPos(6, '6º Lugar', loserId);
+      } else if (fifthSemis.length > 0) {
+        fifthSemis.forEach(m => {
+          const { loserId } = getWL(m);
+          if (!placed.has(loserId || '')) addPos(classification.length + 1, `${classification.length + 1}º Lugar`, loserId);
+        });
+      }
+      if (seventhPlaceMatch) {
+        const { winnerId, loserId } = getWL(seventhPlaceMatch);
+        addPos(7, '7º Lugar', winnerId);
+        addPos(8, '8º Lugar', loserId);
+      }
+
+      // If no finals yet but semis lost → place them as 3rd/4th
+      if (!finalMatch && semis.length === 2 && !thirdPlaceMatch) {
+        semis.forEach(m => {
+          const { loserId } = getWL(m);
+          addPos(classification.length + 1, `${classification.length + 1}º Lugar`, loserId);
+        });
+      }
+
+      // QF losers not yet placed
+      quarters.forEach(m => {
+        const { loserId } = getWL(m);
+        if (!placed.has(loserId || '')) {
+          addPos(classification.length + 1, `${classification.length + 1}º Lugar`, loserId);
+        }
+      });
+
+      classification.sort((a, b) => a.position - b.position);
+      console.log('[STANDINGS-GK] Final classification:', classification.map(c => `${c.position}. ${c.team.name}`));
+      setTeamFinalClassification(classification);
+
+      const knockoutTeams = allTeamsArr
         .filter(team => team.knockout_round)
         .map(team => {
           const stats = calculateTeamStats(team);
@@ -2307,6 +2396,58 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
     return (
       <div className="space-y-4">
+        {teamFinalClassification.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 bg-gradient-to-r from-yellow-500 to-yellow-600">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Trophy className="w-5 h-5" />
+                Classificação Final
+              </h2>
+            </div>
+
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-10">#</th>
+                  <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {teamFinalClassification.map((entry) => {
+                  const { position, label, team } = entry;
+                  return (
+                    <tr key={team.id} className={position <= 3 ? 'bg-yellow-50/40' : ''}>
+                      <td className="pl-3 pr-1 py-2">
+                        <div className="flex items-center gap-1">
+                          {getMedalIcon(position)}
+                          <span className="font-bold text-gray-700">{position}</span>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                        <div className="text-xs text-gray-500 leading-tight">
+                          {team.player1?.name} / {team.player2?.name}
+                          <span className="ml-2 text-yellow-600 font-medium">{label}</span>
+                        </div>
+                      </td>
+                      <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                      <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                      <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                      <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                      <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         {sortedGroups.map(groupName => {
           const groupTeams = groupedTeams.get(groupName)!;
           return (
@@ -2364,48 +2505,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             </div>
           );
         })}
-
-        {teams.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Trophy className="w-5 h-5" />
-                Fase Eliminatória
-              </h2>
-            </div>
-
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
-                  <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
-                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
-                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
-                  <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {teams.map((team, index) => (
-                  <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
-                    <td className="pl-3 pr-1 py-2">
-                      <div className="flex items-center gap-1">
-                        {getMedalIcon(index + 1)}
-                        <span className="font-bold text-gray-700">{index + 1}</span>
-                      </div>
-                    </td>
-                    <td className="px-2 py-2">
-                      <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
-                      <div className="text-xs text-gray-500 leading-tight">{team.player1.name} / {team.player2.name}</div>
-                    </td>
-                    <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
-                    <td className="px-1 py-2 text-center text-yellow-600">{team.draws}</td>
-                    <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
     );
   }

@@ -89,6 +89,8 @@ async function advanceLoserToClassificationRound(
 ) {
   const classificationMapping: Record<string, string> = {
     'semi_final': '3rd_place',
+    'quarter_final': '5th_semi',
+    '5th_semi': '7th_place',
   };
 
   const classificationRound = classificationMapping[currentRound];
@@ -147,6 +149,18 @@ async function advanceLoserToClassificationRound(
       .from('matches')
       .update({ [updateField]: loserId })
       .eq('id', match.id);
+  } else if (classificationRound === '5th_semi') {
+    // QF losers: pair QF1 loser vs QF2 loser -> 5th_semi #1, QF3 loser vs QF4 loser -> 5th_semi #2
+    const nextMatchPosition = Math.floor(matchPosition / 2);
+    if (nextMatchPosition >= classificationMatches.length) return;
+    const classificationMatch = classificationMatches[nextMatchPosition];
+    const isFirstSlot = matchPosition % 2 === 0;
+    const updateField = isFirstSlot ? 'team1_id' : 'team2_id';
+    console.log(`[CLASSIFICATION] QF loser from match ${currentMatchNumber} (pos ${matchPosition}) -> 5th_semi[${nextMatchPosition}], slot: ${updateField}`);
+    await supabase
+      .from('matches')
+      .update({ [updateField]: loserId })
+      .eq('id', classificationMatch.id);
   } else {
     const nextMatchPosition = Math.floor(matchPosition / 2);
     if (nextMatchPosition >= classificationMatches.length) {
@@ -171,6 +185,7 @@ async function advanceClassificationWinner(
   categoryId: string | null
 ) {
   const winnerMapping: Record<string, string> = {
+    '5th_semi': '5th_place',
   };
 
   const nextRound = winnerMapping[currentRound];
@@ -204,6 +219,7 @@ async function advanceClassificationWinner(
     .from('matches')
     .update({ [updateField]: winnerId })
     .eq('id', match.id);
+
 }
 
 // ================================================================
@@ -1029,6 +1045,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
 
         const allFinalRounds = [
           'final', 'mixed_final', '3rd_place', 'mixed_3rd_place', 'consolation',
+          '5th_place', '7th_place',
           '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place',
           'crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r2_5th_place',
           'crossed_r4_5th', 'crossed_r5_7th'
@@ -1078,7 +1095,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
       const allKnockoutRounds = [
         'semifinal', 'semi_final', 'final', 'quarter_final', 'quarterfinal', 'round_of_16',
         '1st_semifinal', '13th_semifinal', '17th_semifinal', '21st_semifinal',
-        '3rd_place', 'consolation',
+        '3rd_place', 'consolation', '5th_semi', '5th_place', '7th_place',
         '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place'
       ];
       const isKnockoutRound = allKnockoutRounds.includes(matchData.round);

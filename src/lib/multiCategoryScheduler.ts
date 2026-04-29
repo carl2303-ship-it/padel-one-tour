@@ -12,8 +12,9 @@ interface CategoryScheduleRequest {
   isIndividualFormat?: boolean;
   knockoutStage?: 'final' | 'semifinals' | 'quarterfinals' | 'round_of_16';
   courtNames?: string[];
-  categorySchedule?: CategoryScheduleEntry[] | null; // Per-category day/time schedule
-  matchDurationMinutes?: number | null; // Per-category match duration
+  categorySchedule?: CategoryScheduleEntry[] | null;
+  matchDurationMinutes?: number | null;
+  hasThirdPlace?: boolean;
 }
 
 function getDaySchedule(date: string, dailySchedules: DailySchedule[], defaultStart: string, defaultEnd: string): { start_time: string; end_time: string; court_names?: string[] } {
@@ -36,7 +37,10 @@ function calculateSlotsForDay(dateStr: string, dailySchedules: DailySchedule[], 
   if (availableMinutes <= 0) {
     availableMinutes = (24 * 60 - startTotalMinutes) + endTotalMinutes;
   }
-  const slotsPerDay = Math.floor(availableMinutes / matchDurationMinutes);
+  // Use Math.ceil so that a match can START within the schedule window even
+  // if it ends slightly after the nominal end time. This prevents knockout
+  // rounds from wrapping to the next day when there is still usable time left.
+  const slotsPerDay = Math.ceil(availableMinutes / matchDurationMinutes);
   return { slotsPerDay, startHour, startMinute };
 }
 
@@ -90,6 +94,7 @@ const ROUND_PRIORITY: Record<string, number> = {
   round_of_16: 20,
   quarterfinal: 30,
   quarter_final: 30,
+  '5th_semi': 35,
   semifinal: 40,
   semi_final: 40,
   consolation: 45,
@@ -158,6 +163,8 @@ export function scheduleMultipleCategories(
 ): Map<string, ScheduledMatch[]> {
   console.log('[MULTI-CAT V6] Starting with category-specific courts + schedules');
   console.log('[MULTI-CAT V6] All court names:', allCourtNames);
+  const day1Info = calculateSlotsForDay(startDate, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
+  console.log(`[MULTI-CAT V6] Day 1 (${startDate}): slotsPerDay=${day1Info.slotsPerDay}, start=${day1Info.startHour}:${String(day1Info.startMinute).padStart(2,'0')}, matchDuration=${matchDurationMinutes}min`);
   
   // Check if any category has its own schedule
   const hasCategorySchedules = categories.some(cat => cat.categorySchedule && cat.categorySchedule.length > 0);
@@ -363,7 +370,8 @@ export function scheduleMultipleCategories(
         category.knockoutTeams,
         currentMatchCount,
         category.isIndividualFormat || false,
-        category.knockoutStage || 'semifinals'
+        category.knockoutStage || 'semifinals',
+        category.hasThirdPlace ?? true
       );
       console.log(`[MULTI-CAT V2] Category ${category.categoryId}: Generated ${knockoutMatches.length} knockout matches from ${category.knockoutTeams.length} qualified teams (starting at match ${currentMatchCount + 1}), isIndividual: ${category.isIndividualFormat}, knockoutStage: ${category.knockoutStage}`);
       knockoutMatches.forEach(match => {
@@ -743,10 +751,29 @@ export function scheduleMultipleCategories(
     roundBuckets.get(match.round)!.push(match);
   });
 
-  // CANONICAL ROUND ORDER: ensures semis go BEFORE finals even if the Map has arbitrary insertion order.
-  // Bug fix: original code iterated the Map by insertion order, which could place finals before semis.
-  const orderedRoundNames = [...roundBuckets.keys()].sort((a, b) => roundPriority(a) - roundPriority(b));
-  console.log('[MULTI-CAT V7] Knockout rounds in order:', orderedRoundNames);
+  // Group rounds into scheduling tiers: rounds in the same tier can run in parallel on different courts.
+  // Only advance categoryLastKOTime between tiers, not within the same tier.
+  const SCHEDULE_TIERS = [
+    ['round_of_32'],
+    ['round_of_16'],
+    ['quarter_final', 'quarterfinal'],
+    ['5th_semi', 'semi_final', 'semifinal'],
+    ['consolation', '3rd_place', '5th_place', '7th_place', 'final'],
+  ];
+
+  // Build ordered list of tiers that actually have matches
+  const activeRoundNames = [...roundBuckets.keys()];
+  const orderedTiers: string[][] = [];
+  for (const tier of SCHEDULE_TIERS) {
+    const present = tier.filter(r => activeRoundNames.includes(r));
+    if (present.length > 0) orderedTiers.push(present);
+  }
+  // Any rounds not in predefined tiers get their own tier at the end
+  const coveredRounds = new Set(SCHEDULE_TIERS.flat());
+  const uncovered = activeRoundNames.filter(r => !coveredRounds.has(r)).sort((a, b) => roundPriority(a) - roundPriority(b));
+  if (uncovered.length > 0) orderedTiers.push(uncovered);
+
+  console.log('[MULTI-CAT V7] Knockout schedule tiers:', orderedTiers);
 
   // Track latest knockout time per category so later rounds (e.g. final) are always AFTER earlier rounds (semis).
   const categoryLastKOTime = new Map<string, string>();
@@ -769,16 +796,15 @@ export function scheduleMultipleCategories(
   // Matches we could not fit respecting all constraints; validator will pick these up.
   const unschedulableKO: typeof knockoutMatches = [];
 
-  for (const round of orderedRoundNames) {
-    const roundMatches = roundBuckets.get(round)!;
-    console.log(`[MULTI-CAT V7] Scheduling ${roundMatches.length} matches for round: ${round}`);
+  for (const tier of orderedTiers) {
+    const roundMatches = tier.flatMap(r => roundBuckets.get(r) || []);
+    console.log(`[MULTI-CAT V7] Scheduling ${roundMatches.length} matches for tier: [${tier.join(', ')}]`);
+
+    // Collect max time per category for this round; update categoryLastKOTime AFTER all matches in the round
+    const roundMaxTimePerCat = new Map<string, string>();
 
     if (hasCategorySchedules) {
       // ---- MODE A: per-category knockout scheduling ----
-      // Primary: scan precomputed catSlots. Fallback: walk global slot grid with
-      // this category's duration, keeping starts inside category_schedule (same
-      // rule as validateGeneratedSchedule). Needed when interleaved groups fill
-      // every discrete catSlot time but later valid starts still exist.
       for (const koMatch of roundMatches) {
         const matchId = `${koMatch.categoryId}_${koMatch.match_number}`;
         if (scheduledMatchIds.has(matchId)) continue;
@@ -810,7 +836,9 @@ export function scheduleMultipleCategories(
               scheduledMatches.get(categoryId)!.push(scheduledMatch);
               scheduledMatchIds.add(matchId);
               markCourtBusy(courtName, slot.time, koDuration);
-              categoryLastKOTime.set(categoryId, slot.time);
+
+              const prevMax = roundMaxTimePerCat.get(categoryId);
+              if (!prevMax || slot.time > prevMax) roundMaxTimePerCat.set(categoryId, slot.time);
 
               if (!busyPlayers.has(slot.time)) busyPlayers.set(slot.time, new Set());
               koPlayerIds.forEach(id => busyPlayers.get(slot.time)!.add(id));
@@ -823,8 +851,6 @@ export function scheduleMultipleCategories(
         }
 
         if (!scheduled) {
-          // Fallback: generate fine-grained slots from the category's own
-          // schedule dates (fast — bounded by actual schedule size, not 12K).
           const catSched = categories.find(c => c.categoryId === koMatch.categoryId)?.categorySchedule;
           if (catSched && catSched.length > 0) {
             const sortedEntries = [...catSched].sort((a, b) => a.date === b.date ? a.start_time.localeCompare(b.start_time) : a.date.localeCompare(b.date));
@@ -856,7 +882,9 @@ export function scheduleMultipleCategories(
                   scheduledMatches.get(categoryId)!.push(scheduledMatch);
                   scheduledMatchIds.add(matchId);
                   markCourtBusy(courtName, timeStr, koDuration);
-                  categoryLastKOTime.set(categoryId, timeStr);
+
+                  const prevMax = roundMaxTimePerCat.get(categoryId);
+                  if (!prevMax || timeStr > prevMax) roundMaxTimePerCat.set(categoryId, timeStr);
 
                   if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
                   koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
@@ -872,7 +900,6 @@ export function scheduleMultipleCategories(
 
         if (!scheduled) {
           console.warn(`[MULTI-CAT V7] KO M${koMatch.match_number} (${koMatch.round}) Cat ${koMatch.categoryId.substring(0, 8)}: catSlots + category fallback failed. Trying global fallback beyond category schedule...`);
-          // Global fallback: find any slot after earliestTs on category's courts
           const catDuration2 = koDuration;
           const globalStartTs = earliestTs;
           const globalStartDate = new Date(globalStartTs);
@@ -908,7 +935,9 @@ export function scheduleMultipleCategories(
                 scheduledMatches.get(categoryId)!.push(scheduledMatch);
                 scheduledMatchIds.add(matchId);
                 markCourtBusy(courtName, timeStr, catDuration2);
-                categoryLastKOTime.set(categoryId, timeStr);
+
+                const prevMax = roundMaxTimePerCat.get(categoryId);
+                if (!prevMax || timeStr > prevMax) roundMaxTimePerCat.set(categoryId, timeStr);
 
                 if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
                 koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
@@ -928,7 +957,6 @@ export function scheduleMultipleCategories(
       }
     } else {
       // ---- MODE B: global shared schedule ----
-      // Respect earliestKnockoutTime per category; do not advance currentTimeSlot past a match that must wait.
       const pending = [...roundMatches];
       let attempts = 0;
       const maxAttempts = 10000;
@@ -990,8 +1018,10 @@ export function scheduleMultipleCategories(
           const scheduledMatch = { ...matchData, scheduled_time: timeStr, court: courtName || assignedCourt.toString() };
           scheduledMatches.get(categoryId)!.push(scheduledMatch);
           scheduledMatchIds.add(matchId);
-          categoryLastKOTime.set(categoryId, timeStr);
           markCourtBusy(courtName || assignedCourt.toString(), timeStr, matchDuration);
+
+          const prevMax = roundMaxTimePerCat.get(categoryId);
+          if (!prevMax || timeStr > prevMax) roundMaxTimePerCat.set(categoryId, timeStr);
 
           if (!busyPlayers.has(timeStr)) busyPlayers.set(timeStr, new Set());
           koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
@@ -1003,12 +1033,8 @@ export function scheduleMultipleCategories(
         pending.length = 0;
         pending.push(...remaining);
 
-        // Only advance the slot if nothing was scheduled (prevents infinite loop if a category is waiting)
-        // OR if we're always advancing (simpler: always advance after processing this slot).
         currentTimeSlot++;
         if (!anyScheduled && pending.length > 0) {
-          // If nothing was scheduled AND we still have pending, the earliest constraint is blocking;
-          // continue to next slot to let categoryLastKOTime barriers expire.
           continue;
         }
       }
@@ -1018,6 +1044,12 @@ export function scheduleMultipleCategories(
         unschedulableKO.push(...pending);
       }
     }
+
+    // Update categoryLastKOTime AFTER all matches in this tier are placed
+    roundMaxTimePerCat.forEach((maxTime, catId) => {
+      categoryLastKOTime.set(catId, maxTime);
+      console.log(`[MULTI-CAT V7] Tier [${tier.join(',')}] done: categoryLastKOTime[${catId.substring(0, 8)}] = ${maxTime}`);
+    });
   }
 
   if (unschedulableKO.length > 0) {
@@ -1049,8 +1081,9 @@ export function scheduleMultipleCategories(
       ['round_of_32'],
       ['round_of_16'],
       ['quarter_final', 'quarterfinal'],
-      ['consolation', 'semifinal', 'semi_final', '5th_place', '7th_place'],
-      ['final', '3rd_place']
+      ['5th_semi'],
+      ['consolation', 'semifinal', 'semi_final'],
+      ['final', '3rd_place', '5th_place', '7th_place']
     ];
 
     for (const roundGroup of knockoutScheduleGroups) {
@@ -1553,7 +1586,8 @@ function generateSingleEliminationMatchesWithOptions(
   teams: Team[],
   matchNumberOffset: number = 0,
   isIndividualFormat: boolean = false,
-  knockoutStage: 'final' | 'semifinals' | 'quarterfinals' | 'round_of_16' = 'semifinals'
+  knockoutStage: 'final' | 'semifinals' | 'quarterfinals' | 'round_of_16' = 'semifinals',
+  hasThirdPlace: boolean = true
 ): ScheduledMatch[] {
   const matches: ScheduledMatch[] = [];
   const teamCount = teams.length;
@@ -1670,7 +1704,59 @@ function generateSingleEliminationMatchesWithOptions(
       }
     }
 
-    // 3rd/4th place match intentionally NOT generated for team format either.
+    // 3rd/4th place match
+    if (hasThirdPlace && rounds >= 2) {
+      matches.push({
+        round: '3rd_place',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      console.log(`[KNOCKOUT_OPTIONS] Added 3rd_place match for teams`);
+    }
+
+    // Classification matches for 5th-8th when there are quarterfinals (4+ QF matches = 8+ teams)
+    if (rounds >= 3) {
+      // 2 x 5th_semi: QF losers play each other
+      matches.push({
+        round: '5th_semi',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      matches.push({
+        round: '5th_semi',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      console.log(`[KNOCKOUT_OPTIONS] Added 2 x 5th_semi matches`);
+
+      // 5th place final + 7th place final
+      matches.push({
+        round: '5th_place',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      matches.push({
+        round: '7th_place',
+        match_number: matchNumber++,
+        team1_id: null,
+        team2_id: null,
+        scheduled_time: '',
+        court: ''
+      });
+      console.log(`[KNOCKOUT_OPTIONS] Added 5th_place and 7th_place matches`);
+    }
   }
 
   console.log(`[KNOCKOUT_OPTIONS] Total knockout matches generated: ${matches.length}`);
