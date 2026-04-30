@@ -6765,6 +6765,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         .eq('tournament_id', tournament.id)
         .neq('status', 'completed');
       if (error) throw error;
+
+      // Re-trigger tournament bookings creation via DB trigger
+      await supabase.from('tournaments')
+        .update({ name: currentTournament.name })
+        .eq('id', tournament.id);
+
       await fetchTournamentData();
       alert(t.nav.matchesDeleted);
     } catch (error) {
