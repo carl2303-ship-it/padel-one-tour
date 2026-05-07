@@ -39,6 +39,14 @@ function App() {
   const [userRole, setUserRole] = useState<'organizer' | 'player' | null>(null);
   const [showSimulator, setShowSimulator] = useState(false);
 
+  // License / contract validation
+  const [needsLicense, setNeedsLicense] = useState(false);
+  const [licenseMessage, setLicenseMessage] = useState('');
+  const [licenseKey, setLicenseKey] = useState('');
+  const [activatingLicense, setActivatingLicense] = useState(false);
+  const [licenseError, setLicenseError] = useState('');
+  const [licenseResult, setLicenseResult] = useState<{ plan?: string; contract_expires_at?: string } | null>(null);
+
   const handleSelectTournament = (tournament: Tournament) => {
     setSelectedTournament(tournament);
     setView('detail');
@@ -138,10 +146,98 @@ function App() {
       setShowAddTeam(false);
       setShowMatchModal(false);
       setShowSettings(false);
+      setNeedsLicense(false);
     } else {
-      loadUserRole();
+      checkLicenseAndLoadRole();
     }
   }, [user]);
+
+  const checkLicenseAndLoadRole = async () => {
+    if (!user) {
+      setUserRole(null);
+      return;
+    }
+
+    // Super admins bypass
+    const { data: saRecord } = await supabase
+      .from('super_admins')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (saRecord) {
+      setNeedsLicense(false);
+      await loadUserRole();
+      return;
+    }
+
+    // Check user_logo_settings
+    const { data: settings } = await supabase
+      .from('user_logo_settings')
+      .select('role, is_paid_organizer')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    // Players don't need license
+    if (settings?.role === 'player') {
+      setNeedsLicense(false);
+      setUserRole('player');
+      return;
+    }
+
+    // Paid organizer: check contract expiration
+    if (settings?.is_paid_organizer) {
+      const { data: orgRecord } = await supabase
+        .from('organizers')
+        .select('subscription_expires_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (orgRecord?.subscription_expires_at && new Date(orgRecord.subscription_expires_at) < new Date()) {
+        setLicenseMessage('A sua licença de organizador expirou. Introduza uma nova chave para renovar.');
+        setNeedsLicense(true);
+        return;
+      }
+
+      setNeedsLicense(false);
+      setUserRole(settings?.role === 'organizer' ? 'organizer' : 'organizer');
+      return;
+    }
+
+    // Club owner: check club contract
+    const { data: ownedClub } = await supabase
+      .from('clubs')
+      .select('id, contract_expires_at')
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (ownedClub) {
+      const hasValidContract = ownedClub.contract_expires_at &&
+        new Date(ownedClub.contract_expires_at) > new Date();
+      if (hasValidContract) {
+        setNeedsLicense(false);
+        setUserRole('organizer');
+        return;
+      }
+      setLicenseMessage(
+        ownedClub.contract_expires_at
+          ? 'O contrato do seu clube expirou. Introduza uma nova chave de licença.'
+          : 'O seu clube ainda não foi ativado. Introduza a chave de licença que recebeu.'
+      );
+      setNeedsLicense(true);
+      return;
+    }
+
+    // No settings or not paid — needs license
+    if (!settings) {
+      setLicenseMessage('Introduza a chave de licença que recebeu para ativar o seu acesso.');
+      setNeedsLicense(true);
+      return;
+    }
+
+    // Has settings but not paid organizer
+    setLicenseMessage('Introduza a chave de licença que recebeu para ativar o seu acesso.');
+    setNeedsLicense(true);
+  };
 
   const loadUserRole = async () => {
     if (!user) {
@@ -160,6 +256,53 @@ function App() {
     } else {
       setUserRole('organizer');
     }
+  };
+
+  const handleActivateLicenseTour = async () => {
+    if (!licenseKey.trim() || !user) return;
+    setActivatingLicense(true);
+    setLicenseError('');
+
+    try {
+      const baseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co';
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+      const resp = await fetch(`${baseUrl}/functions/v1/activate-license`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${anonKey}`,
+        },
+        body: JSON.stringify({ license_key: licenseKey.trim(), user_id: user.id }),
+      });
+      const data = await resp.json();
+
+      if (!data?.ok) {
+        setLicenseError(data?.error || 'Chave inválida');
+        setActivatingLicense(false);
+        return;
+      }
+
+      setLicenseResult(data);
+
+      setTimeout(async () => {
+        await signOut();
+        Object.keys(localStorage).forEach(key => {
+          if (key.startsWith('sb-')) localStorage.removeItem(key);
+        });
+        window.location.reload();
+      }, 2500);
+    } catch {
+      setLicenseError('Erro ao ativar licença. Tente novamente.');
+    }
+    setActivatingLicense(false);
+  };
+
+  const handleCancelLicenseTour = async () => {
+    await signOut();
+    setNeedsLicense(false);
+    setLicenseKey('');
+    setLicenseResult(null);
+    setLicenseError('');
   };
 
   if (authLoading || isLoadingDeepLink || (user && userRole === null)) {
@@ -181,6 +324,73 @@ function App() {
 
   if (!user && view !== 'registration' && view !== 'live') {
     return <AuthForm />;
+  }
+
+  // License activation screen
+  if (user && needsLicense && view !== 'registration' && view !== 'live') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+          <div className="text-center mb-6">
+            <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-gray-900">Ativar Licença</h2>
+            <p className="text-sm text-gray-500 mt-2">{licenseMessage}</p>
+          </div>
+
+          {licenseResult ? (
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+              <div className="text-2xl mb-2">✅</div>
+              <p className="text-green-800 font-semibold">Licença ativada com sucesso!</p>
+              {licenseResult.plan && (
+                <p className="text-green-700 text-sm mt-1">Plano: <strong>{licenseResult.plan}</strong></p>
+              )}
+              {licenseResult.contract_expires_at && (
+                <p className="text-green-700 text-sm">Expira: <strong>{new Date(licenseResult.contract_expires_at).toLocaleDateString('pt-PT')}</strong></p>
+              )}
+              <p className="text-green-600 text-xs mt-2">A redirecionar...</p>
+            </div>
+          ) : (
+            <>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Chave de Licença</label>
+                <input
+                  type="text"
+                  value={licenseKey}
+                  onChange={(e) => setLicenseKey(e.target.value.toUpperCase())}
+                  placeholder="PADEL-XXXX-XXXX-XXXX"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-center text-lg font-mono tracking-wider"
+                />
+              </div>
+
+              {licenseError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                  <p className="text-red-700 text-sm text-center">{licenseError}</p>
+                </div>
+              )}
+
+              <button
+                onClick={handleActivateLicenseTour}
+                disabled={activatingLicense || !licenseKey.trim()}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {activatingLicense ? 'A ativar...' : 'Ativar Licença'}
+              </button>
+
+              <button
+                onClick={handleCancelLicenseTour}
+                className="w-full mt-3 py-2 text-gray-500 text-sm hover:text-gray-700 transition-colors"
+              >
+                Sair / Cancelar
+              </button>
+
+              <p className="text-center text-xs text-gray-400 mt-4">
+                Não tem uma chave? Contacte o suporte Padel One.
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (view === 'live') {
