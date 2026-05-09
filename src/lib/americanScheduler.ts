@@ -24,11 +24,24 @@ export function generateAmericanSchedule(
   matchesPerPlayer: number = 7,
   outdoorCourtIndices: Set<number> = new Set()
 ): AmericanMatch[] {
-  console.log('[AMERICAN] Generating schedule for', players.length, 'players, max', matchesPerPlayer, 'matches per player');
+  console.log('[AMERICAN] Generating schedule for', players.length, 'players, requested', matchesPerPlayer, 'matches per player');
 
   if (players.length < 4) {
     console.error('[AMERICAN] Need at least 4 players');
     return [];
+  }
+
+  // Adjust matchesPerPlayer so all players get exactly the same number of games.
+  // With n players and 4 per match: matchesPerPlayer * n must be divisible by 4.
+  const n = players.length;
+  if ((matchesPerPlayer * n) % 4 !== 0) {
+    let best = matchesPerPlayer;
+    for (let delta = 1; delta <= 3; delta++) {
+      if (((matchesPerPlayer + delta) * n) % 4 === 0) { best = matchesPerPlayer + delta; break; }
+      if (matchesPerPlayer - delta > 0 && ((matchesPerPlayer - delta) * n) % 4 === 0) { best = matchesPerPlayer - delta; break; }
+    }
+    console.log(`[AMERICAN] Adjusted matchesPerPlayer from ${matchesPerPlayer} to ${best} for balanced distribution (${best} * ${n} = ${best * n} slots, ${best * n / 4} total matches)`);
+    matchesPerPlayer = best;
   }
 
   const matches: AmericanMatch[] = [];
@@ -107,8 +120,9 @@ export function generateAmericanSchedule(
     }
     console.log('[AMERICAN] Generating round', roundNumber);
 
-    // Find players who haven't played this round yet
+    // Find players who haven't played this round yet AND haven't reached their target
     const availablePlayers = players.filter(p => {
+      if ((playerMatchCount.get(p.id) || 0) >= matchesPerPlayer) return false;
       const playedThisRound = matches
         .filter(m => m.round === `round_${roundNumber}`)
         .some(m => [m.player1_id, m.player2_id, m.player3_id, m.player4_id].includes(p.id));
