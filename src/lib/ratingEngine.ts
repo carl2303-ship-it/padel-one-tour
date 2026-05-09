@@ -16,6 +16,7 @@
  */
 
 import { supabase } from './supabase'
+import { logLevelChange } from './levelHistory'
 
 // ============================================
 // Types
@@ -401,6 +402,8 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       const currentReliability = cache?.get(rp.id)?.currentReliability ?? acctData?.level_reliability_percent ?? 0
       const protectedReliability = calculateProtectedReliability(formulaReliability, currentReliability)
 
+      const levelBefore = acctData?.level ?? (rp.rating - rp.delta)
+
       const { error } = await supabase.rpc('update_player_rating', {
         p_player_account_id: rp.id,
         p_new_level: rp.rating,
@@ -412,7 +415,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
         console.error('[RatingEngine] Error updating player:', rp.id, error)
         updateErrors++
       } else {
-        // Only update cache if DB update succeeded
+        logLevelChange(rp.id, levelBefore, rp.rating, rp.delta, 'tournament', rp.won)
         if (cache) {
           cache.set(rp.id, {
             id: rp.id,
