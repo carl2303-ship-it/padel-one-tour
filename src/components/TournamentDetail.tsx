@@ -149,7 +149,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedSuperTeam, setSelectedSuperTeam] = useState<SuperTeamRow | null>(null);
   const [showAddSuperTeam, setShowAddSuperTeam] = useState(false);
 
-  const [playerCategoryByPhone, setPlayerCategoryByPhone] = useState<Map<string, string>>(new Map());
+  const [playerLevelByPhone, setPlayerLevelByPhone] = useState<Map<string, number>>(new Map());
 
   const scrollToMatchIdRef = useRef<string | null>(null);
 
@@ -1040,23 +1040,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     return true;
   };
 
-  const fetchPlayerCategoriesFromAccounts = async (players: { phone_number?: string | null }[]) => {
+  const fetchPlayerLevelsFromAccounts = async (players: { phone_number?: string | null }[]) => {
     const phones = players
       .map((p) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
       .filter(Boolean);
     if (phones.length === 0) return;
     const { data } = await supabase
       .from('player_accounts')
-      .select('phone_number, player_category')
+      .select('phone_number, level')
       .in('phone_number', phones);
     if (!data) return;
-    const map = new Map<string, string>();
+    const map = new Map<string, number>();
     for (const row of data) {
-      if (row.phone_number && row.player_category) {
-        map.set(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.player_category);
+      if (row.phone_number && row.level != null) {
+        map.set(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.level);
       }
     }
-    setPlayerCategoryByPhone(map);
+    setPlayerLevelByPhone(map);
   };
 
   const fetchDepthRef = useRef(0);
@@ -1158,7 +1158,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (playersResult.data) {
         console.log('[FETCH] Loaded', playersResult.data.length, 'individual players:', playersResult.data);
         setIndividualPlayers(playersResult.data);
-        fetchPlayerCategoriesFromAccounts(playersResult.data);
+        fetchPlayerLevelsFromAccounts(playersResult.data);
       } else {
         console.error('[FETCH] No individual players data');
       }
@@ -1496,7 +1496,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           t.player1?.phone_number ? { phone_number: t.player1.phone_number } : null,
           t.player2?.phone_number ? { phone_number: t.player2.phone_number } : null,
         ]).filter(Boolean);
-        fetchPlayerCategoriesFromAccounts([...playersResult.data, ...teamPlayerPhones]);
+        fetchPlayerLevelsFromAccounts([...playersResult.data, ...teamPlayerPhones]);
       }
       if (matchesResult.data) {
         console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
@@ -7813,10 +7813,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               <p className="font-medium text-gray-900">{player.name}</p>
                               {(() => {
                                 const phone = (player.phone_number || '').replace(/[\s\-\(\)\.]/g, '');
-                                const cat = phone ? playerCategoryByPhone.get(phone) : undefined;
-                                return cat ? (
-                                  <span className="px-2 py-0.5 text-xs bg-emerald-100 text-emerald-700 rounded-full font-medium">
-                                    {cat}
+                                const lvl = phone ? playerLevelByPhone.get(phone) : undefined;
+                                return lvl != null ? (
+                                  <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full font-medium">
+                                    Nv {lvl.toFixed(2)}
                                   </span>
                                 ) : null;
                               })()}
@@ -7904,10 +7904,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                   <p className="font-semibold text-gray-900">{team.name}</p>
                                   <p className="text-sm text-gray-600">
                                     {team.player1?.name}
-                                    {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                                    {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                     {' / '}
                                     {team.player2?.name}
-                                    {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                                    {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                   </p>
                                 </div>
                                 <button
@@ -7936,11 +7936,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             <p className="font-semibold text-gray-900">{team.name}</p>
                             <p className="text-sm text-gray-600">
                               {team.player1?.name}
-                              {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                              {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''}
                               {' / '}
                               {team.player2?.name}
-                              {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const c = ph ? playerCategoryByPhone.get(ph) : undefined; return c ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded-full font-medium">{c}</span> : null; })()}
+                              {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
                             <div className="flex items-center gap-2 flex-wrap mt-1">

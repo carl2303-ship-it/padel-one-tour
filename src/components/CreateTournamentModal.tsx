@@ -30,6 +30,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     has_dinner_option: false,
     format: 'round_robin' as string,
     round_robin_type: 'teams' as string | null,
+    gender: '' as string,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -248,6 +249,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
         daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
+        gender: formData.gender || null,
         status: 'draft',
         user_id: user?.id,
         club_id: selectedClubId,
@@ -315,6 +317,20 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Add tournament details, rules, or any additional information..."
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Género</label>
+            <select
+              value={formData.gender}
+              onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Aberto a todos</option>
+              <option value="male">Masculino</option>
+              <option value="female">Feminino</option>
+              <option value="mixed">Misto</option>
+            </select>
           </div>
 
           <div>

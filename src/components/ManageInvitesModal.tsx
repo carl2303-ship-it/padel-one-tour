@@ -281,16 +281,11 @@ export default function ManageInvitesModal({ tournamentId, tournamentName, onClo
                       )}
                       <div>
                         <p className="text-sm font-medium text-gray-900">{player.name}</p>
-                        <div className="flex items-center gap-2">
-                          {player.player_category && (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">
-                              {player.player_category}
-                            </span>
-                          )}
-                          {player.level && (
-                            <span className="text-xs text-gray-500">Nível {player.level.toFixed(1)}</span>
-                          )}
-                        </div>
+                        {player.level != null && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">
+                            Nv {player.level.toFixed(2)}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <button
@@ -342,11 +337,6 @@ export default function ManageInvitesModal({ tournamentId, tournamentName, onClo
                       <div>
                         <p className="text-sm font-medium text-gray-900">{invite.player_name}</p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          {invite.player_category && (
-                            <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">
-                              {invite.player_category}
-                            </span>
-                          )}
                           <div className="flex items-center gap-1">
                             {statusIcon(invite.status)}
                             <span className="text-xs text-gray-500">{statusLabel(invite.status)}</span>
