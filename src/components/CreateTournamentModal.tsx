@@ -31,6 +31,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     format: 'round_robin' as string,
     round_robin_type: 'teams' as string | null,
     gender: '' as string,
+    challenge_limit: 5,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -240,7 +241,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         daily_start_time: formData.daily_start_time,
         daily_end_time: formData.daily_end_time,
         format: formData.format,
-        round_robin_type: formData.round_robin_type,
+        round_robin_type: formData.format === 'ladder' ? null : formData.round_robin_type,
         max_teams: 999,
         number_of_courts: selectedCourtNames.length,
         match_duration_minutes: 30,
@@ -269,7 +270,39 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
       return;
     }
 
-    // Torneio criado! Categorias serão adicionadas depois
+    const newTournamentId = tournamentData[0].id;
+
+    if (formData.format === 'ladder') {
+      const { error: catError } = await supabase.from('tournament_categories').insert({
+        tournament_id: newTournamentId,
+        name: t.tournament.ladderDefaultCategoryName,
+        format: 'ladder',
+        number_of_groups: 0,
+        max_teams: 999,
+        knockout_stage: null,
+        qualified_per_group: null,
+      });
+      if (catError) {
+        setError(catError.message);
+        setLoading(false);
+        return;
+      }
+      const lim = Math.min(50, Math.max(1, Number(formData.challenge_limit) || 5));
+      const { error: ladderError } = await supabase.from('ladder_tournaments').insert({
+        tournament_id: newTournamentId,
+        challenge_limit: lim,
+        challenge_window_days: 7,
+        positions: [],
+        pending_challenges: [],
+        ladder_status: 'setup',
+      });
+      if (ladderError) {
+        setError(ladderError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
     onSuccess();
     onClose();
   };
@@ -337,7 +370,13 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.format || 'Formato'}</label>
             <p className="text-xs text-gray-500 mb-2">{t.tournament.formatHelper}</p>
             <select
-              value={formData.format === 'round_robin' && formData.round_robin_type === 'individual' ? 'round_robin_individual' : formData.format === 'round_robin' && formData.round_robin_type === 'teams' ? 'round_robin_teams' : formData.format}
+              value={
+                formData.format === 'round_robin' && formData.round_robin_type === 'individual'
+                  ? 'round_robin_individual'
+                  : formData.format === 'round_robin' && formData.round_robin_type === 'teams'
+                    ? 'round_robin_teams'
+                    : formData.format
+              }
               onChange={(e) => {
                 const val = e.target.value;
                 if (val === 'round_robin_individual') {
@@ -363,9 +402,25 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
                 <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
                 <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                <option value="ladder">{t.tournament.formatOption_ladder}</option>
               </optgroup>
             </select>
           </div>
+
+          {formData.format === 'ladder' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t.tournament.ladderChallengeLimitLabel}</label>
+              <p className="text-xs text-gray-500 mb-2">{t.tournament.ladderChallengeLimitHelp}</p>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={formData.challenge_limit}
+                onChange={(e) => setFormData({ ...formData, challenge_limit: Number(e.target.value) })}
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.imageUrl}</label>

@@ -27,6 +27,7 @@ import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
 import AddSuperTeamModal from './AddSuperTeamModal';
+import LadderTournamentView from './LadderTournamentView';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -1135,6 +1136,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       setTeams([]);
       setMatches([]);
       setIndividualPlayers([]);
+    } else if (effectiveFormat === 'ladder') {
+      const [teamsResult, categoriesResult] = await Promise.all([
+        supabase
+          .from('teams')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner)')
+          .eq('tournament_id', tournament.id)
+          .order('seed', { ascending: true }),
+        supabase
+          .from('tournament_categories')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes')
+          .eq('tournament_id', tournament.id)
+          .order('name'),
+      ]);
+      if (teamsResult.data) setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
+      else setTeams([]);
+      if (categoriesResult.data) setCategories(categoriesResult.data);
+      else setCategories([]);
+      setIndividualPlayers([]);
+      setMatches([]);
+      setSuperTeams([]);
+      setSuperTeamConfrontations([]);
+      setSuperTeamStandings([]);
     } else if (isEffectiveIndividual) {
       // Formatos individuais: individual_groups_knockout e round_robin+individual (Americano Individual)
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
@@ -1453,7 +1476,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
     
-    if (!isEffectiveIndividual && effectiveFormat !== 'super_teams') {
+    if (!isEffectiveIndividual && effectiveFormat !== 'super_teams' && effectiveFormat !== 'ladder') {
       setSuperTeams([]);
       setSuperTeamConfrontations([]);
       setSuperTeamStandings([]);
@@ -7259,6 +7282,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
+  }
+
+  if (currentTournament.format === 'ladder') {
+    return <LadderTournamentView tournament={currentTournament} onBack={onBack} />;
   }
 
   return (
