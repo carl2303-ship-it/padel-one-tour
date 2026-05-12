@@ -40,9 +40,11 @@ type AddTeamModalProps = {
   tournamentId: string;
   onClose: () => void;
   onSuccess: () => void;
+  /** Quando definido, a equipa fica nesta categoria e o selector fica oculto (ex.: escada por categoria). */
+  lockedCategoryId?: string | null;
 };
 
-export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTeamModalProps) {
+export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedCategoryId }: AddTeamModalProps) {
   const { t } = useI18n();
   const [players, setPlayers] = useState<Player[]>([]);
   const [categories, setCategories] = useState<TournamentCategory[]>([]);
@@ -67,6 +69,10 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
     fetchCategories();
     fetchTournament();
   }, []);
+
+  useEffect(() => {
+    if (lockedCategoryId) setCategoryId(lockedCategoryId);
+  }, [lockedCategoryId]);
 
   const fetchPlayers = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -288,6 +294,8 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
         return;
       }
 
+      const effectiveCategoryId = lockedCategoryId || categoryId || null;
+
       const { error: submitError } = await supabase.from('teams').insert([
         {
           tournament_id: tournamentId,
@@ -295,7 +303,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
           player1_id: finalPlayer1Id,
           player2_id: finalPlayer2Id,
           seed: seed === '' ? null : seed,
-          category_id: categoryId || null,
+          category_id: effectiveCategoryId,
         },
       ]);
 
@@ -348,7 +356,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
             />
           </div>
 
-          {categories.length > 0 && (
+          {categories.length > 0 && !lockedCategoryId && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
               <select
@@ -364,6 +372,11 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess }: AddTe
                 ))}
               </select>
             </div>
+          )}
+          {lockedCategoryId && categories.length > 0 && (
+            <p className="text-sm text-gray-600">
+              Categoria: <span className="font-medium">{categories.find((c) => c.id === lockedCategoryId)?.name ?? '—'}</span>
+            </p>
           )}
 
           <div>

@@ -21,22 +21,37 @@ type TeamRow = {
   name: string
   player1_id: string
   player2_id: string
+  category_id?: string | null
   player1?: { id: string; name: string; user_id?: string | null }
   player2?: { id: string; name: string; user_id?: string | null }
+}
+
+type CategoryRow = { id: string; name: string; min_level: number | null; max_level: number | null }
+
+function formatLevelHint(c: CategoryRow) {
+  if (c.min_level != null && c.max_level != null) return `${c.min_level} – ${c.max_level}`
+  if (c.min_level != null) return `≥ ${c.min_level}`
+  if (c.max_level != null) return `≤ ${c.max_level}`
+  return ''
 }
 
 export default function LadderTournamentView({
   tournament,
   onBack,
+  embedded = false,
 }: {
   tournament: Tournament
   onBack: () => void
+  /** Dentro de TournamentDetail: esconde «voltar» duplicado; o pai já tem seta e Editar. */
+  embedded?: boolean
 }) {
   const { t } = useI18n()
   const { user } = useAuth()
   const L = t.ladder
 
   const [loading, setLoading] = useState(true)
+  const [categories, setCategories] = useState<CategoryRow[]>([])
+  const [activeCategoryId, setActiveCategoryId] = useState<string>('')
   const [ladder, setLadder] = useState<LadderRow | null>(null)
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [orderedTeamIds, setOrderedTeamIds] = useState<string[]>([])
@@ -49,16 +64,48 @@ export default function LadderTournamentView({
 
   const load = useCallback(async () => {
     setLoading(true)
+    const { data: catsRaw } = await supabase
+      .from('tournament_categories')
+      .select('id, name, min_level, max_level')
+      .eq('tournament_id', tournament.id)
+      .order('name')
+
+    const catList = (catsRaw || []) as CategoryRow[]
+    setCategories(catList)
+
+    const resolved =
+      activeCategoryId && catList.some((c) => c.id === activeCategoryId)
+        ? activeCategoryId
+        : (catList[0]?.id ?? '')
+    if (resolved !== activeCategoryId) {
+      setActiveCategoryId(resolved)
+    }
+
+    if (!resolved) {
+      setLadder(null)
+      setTeams([])
+      setOrderedTeamIds([])
+      setLoading(false)
+      return
+    }
+
     const [ladderRes, teamsRes] = await Promise.all([
-      supabase.from('ladder_tournaments').select('*').eq('tournament_id', tournament.id).maybeSingle(),
+      supabase
+        .from('ladder_tournaments')
+        .select('*')
+        .eq('tournament_id', tournament.id)
+        .eq('category_id', resolved)
+        .maybeSingle(),
       supabase
         .from('teams')
         .select(
-          'id, name, player1_id, player2_id, player1:players!teams_player1_id_fkey(id, name, user_id), player2:players!teams_player2_id_fkey(id, name, user_id)'
+          'id, name, player1_id, player2_id, category_id, player1:players!teams_player1_id_fkey(id, name, user_id), player2:players!teams_player2_id_fkey(id, name, user_id)'
         )
         .eq('tournament_id', tournament.id)
+        .eq('category_id', resolved)
         .order('seed', { ascending: true }),
     ])
+
     if (ladderRes.data) {
       const row = ladderRes.data as LadderRow
       setLadder(row)
@@ -76,7 +123,7 @@ export default function LadderTournamentView({
       setOrderedTeamIds(tl.map((x) => x.id))
     }
     setLoading(false)
-  }, [tournament.id])
+  }, [tournament.id, activeCategoryId])
 
   useEffect(() => {
     void load()
@@ -126,11 +173,9 @@ export default function LadderTournamentView({
   }
 
   const publishLadder = async () => {
-    if (!ladder || !isOrganizer) return
+    if (!ladder || !isOrganizer || !activeCategoryId) return
     setBusy(true)
-    const pos: LadderPosition[] = normalizePositions(
-      orderedTeamIds.map((team_id, i) => ({ rank: i + 1, team_id }))
-    )
+    const pos: LadderPosition[] = normalizePositions(orderedTeamIds.map((team_id, i) => ({ rank: i + 1, team_id })))
     const { error } = await supabase
       .from('ladder_tournaments')
       .update({
@@ -139,6 +184,7 @@ export default function LadderTournamentView({
         pending_challenges: [],
       })
       .eq('tournament_id', tournament.id)
+      .eq('category_id', activeCategoryId)
     setBusy(false)
     if (error) {
       alert(L.errorGeneric + ': ' + error.message)
@@ -149,7 +195,7 @@ export default function LadderTournamentView({
   }
 
   const syncNewTeamsToBottom = async () => {
-    if (!ladder || !isOrganizer) return
+    if (!ladder || !isOrganizer || !activeCategoryId) return
     setBusy(true)
     const existing = new Set(parsePositions(ladder.positions).map((p) => p.team_id))
     const missing = teams.map((x) => x.id).filter((id) => !existing.has(id))
@@ -159,31 +205,33 @@ export default function LadderTournamentView({
     }
     const base = parsePositions(ladder.positions)
     const maxR = base.length ? Math.max(...base.map((p) => p.rank)) : 0
-    const appended = [
-      ...base,
-      ...missing.map((team_id, i) => ({ rank: maxR + i + 1, team_id })),
-    ]
+    const appended = [...base, ...missing.map((team_id, i) => ({ rank: maxR + i + 1, team_id }))]
     const pos = normalizePositions(appended)
-    const { error } = await supabase.from('ladder_tournaments').update({ positions: pos }).eq('tournament_id', tournament.id)
+    const { error } = await supabase
+      .from('ladder_tournaments')
+      .update({ positions: pos })
+      .eq('tournament_id', tournament.id)
+      .eq('category_id', activeCategoryId)
     setBusy(false)
     if (error) alert(L.errorGeneric + ': ' + error.message)
     else void load()
   }
 
   const saveChallengeLimit = async () => {
-    if (!ladder || !isOrganizer) return
+    if (!ladder || !isOrganizer || !activeCategoryId) return
     setBusy(true)
     const { error } = await supabase
       .from('ladder_tournaments')
       .update({ challenge_limit: Math.min(50, Math.max(1, limitEdit)) })
       .eq('tournament_id', tournament.id)
+      .eq('category_id', activeCategoryId)
     setBusy(false)
     if (error) alert(L.errorGeneric + ': ' + error.message)
     else void load()
   }
 
   const createChallenge = async (challengedTeamId: string, challengedRank: number) => {
-    if (!ladder || ladder.ladder_status !== 'active') {
+    if (!ladder || ladder.ladder_status !== 'active' || !activeCategoryId) {
       alert(L.mustPublishFirst)
       return
     }
@@ -217,6 +265,7 @@ export default function LadderTournamentView({
       .from('ladder_tournaments')
       .update({ pending_challenges: next })
       .eq('tournament_id', tournament.id)
+      .eq('category_id', activeCategoryId)
     setBusy(false)
     if (error) alert(L.errorGeneric + ': ' + error.message)
     else {
@@ -226,12 +275,10 @@ export default function LadderTournamentView({
   }
 
   const submitChallengeResult = async (winnerTeamId: string) => {
-    if (!ladder || !resultModal) return
+    if (!ladder || !resultModal || !activeCategoryId) return
     const all = (Array.isArray(ladder.pending_challenges) ? ladder.pending_challenges : []) as LadderChallenge[]
     const updated = all.map((c) =>
-      c.id === resultModal.id
-        ? { ...c, status: 'completed' as const, winner_team_id: winnerTeamId }
-        : c
+      c.id === resultModal.id ? { ...c, status: 'completed' as const, winner_team_id: winnerTeamId } : c
     )
     let newPositions = parsePositions(ladder.positions)
     if (winnerTeamId === resultModal.challenger_team_id) {
@@ -249,6 +296,7 @@ export default function LadderTournamentView({
         positions: newPositions,
       })
       .eq('tournament_id', tournament.id)
+      .eq('category_id', activeCategoryId)
     setBusy(false)
     setResultModal(null)
     if (error) alert(L.errorGeneric + ': ' + error.message)
@@ -256,10 +304,11 @@ export default function LadderTournamentView({
   }
 
   const initLadderRow = async () => {
-    if (!isOrganizer) return
+    if (!isOrganizer || !activeCategoryId) return
     setBusy(true)
     const { error } = await supabase.from('ladder_tournaments').insert({
       tournament_id: tournament.id,
+      category_id: activeCategoryId,
       challenge_limit: 5,
       challenge_window_days: 7,
       positions: [],
@@ -271,6 +320,11 @@ export default function LadderTournamentView({
     else void load()
   }
 
+  const activeCategory = useMemo(
+    () => categories.find((c) => c.id === activeCategoryId),
+    [categories, activeCategoryId]
+  )
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[320px]">
@@ -279,23 +333,62 @@ export default function LadderTournamentView({
     )
   }
 
-  if (!ladder) {
+  if (categories.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-lg p-8 text-center space-y-4">
-        <p className="text-gray-700">Ladder: sem dados. Aplique a migration ou inicialize.</p>
-        {isOrganizer && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void initLadderRow()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg"
-          >
-            Inicializar escada
+        <p className="text-gray-700">Sem categorias neste torneio. Adiciona categorias na gestão do torneio.</p>
+        {!embedded && (
+          <button type="button" onClick={onBack} className="text-sm text-gray-500 underline">
+            Voltar
           </button>
         )}
-        <button type="button" onClick={onBack} className="block mx-auto text-sm text-gray-500 underline">
-          Voltar
-        </button>
+      </div>
+    )
+  }
+
+  if (!ladder) {
+    return (
+      <div className="space-y-4">
+        {categories.length > 1 && (
+          <div className="flex flex-wrap gap-2 bg-white rounded-xl shadow p-3">
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setActiveCategoryId(c.id)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${
+                  c.id === activeCategoryId ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-800 border-gray-200'
+                }`}
+              >
+                {c.name}
+                {formatLevelHint(c) ? (
+                  <span className="block text-[10px] font-normal opacity-80">{formatLevelHint(c)}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="bg-white rounded-xl shadow-lg p-8 text-center space-y-4">
+          <p className="text-gray-700">
+            {L.noLadderData}{' '}
+            {activeCategory ? <span className="font-medium">{activeCategory.name}</span> : null}
+          </p>
+          {isOrganizer && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void initLadderRow()}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+            >
+              Inicializar escada
+            </button>
+          )}
+          {!embedded && (
+            <button type="button" onClick={onBack} className="block mx-auto text-sm text-gray-500 underline">
+              Voltar
+            </button>
+          )}
+        </div>
       </div>
     )
   }
@@ -304,19 +397,46 @@ export default function LadderTournamentView({
     <div className="space-y-4">
       <div className="bg-white rounded-xl shadow-lg p-6">
         <div className="flex items-start gap-4">
-          <button type="button" onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg">
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <div className="flex-1">
-            <h2 className="text-2xl font-bold text-gray-900">{tournament.name}</h2>
+          {!embedded && (
+            <button type="button" onClick={onBack} className="p-2 hover:bg-gray-100 rounded-lg shrink-0">
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+          )}
+          <div className="flex-1 min-w-0">
+            <h2 className="text-2xl font-bold text-gray-900">
+              {embedded ? (t.format?.ladder ?? L.title) : tournament.name}
+            </h2>
             <p className="text-sm text-gray-500 mt-1">
               {t.format?.ladder ?? 'Ladder'} · {ladder.ladder_status === 'active' ? L.ladderActive : L.ladderSetup}
             </p>
+            {categories.length > 1 ? (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {categories.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setActiveCategoryId(c.id)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${
+                      c.id === activeCategoryId ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-800 border-gray-200'
+                    }`}
+                  >
+                    {c.name}
+                    {formatLevelHint(c) ? (
+                      <span className="block text-[10px] font-normal opacity-80">{formatLevelHint(c)}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : activeCategory && formatLevelHint(activeCategory) ? (
+              <p className="text-xs text-gray-500 mt-2">
+                {activeCategory.name} · {formatLevelHint(activeCategory)}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={() => setShowAddTeam(true)}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0"
           >
             <Plus className="w-4 h-4" />
             {L.addTeam}
@@ -482,9 +602,7 @@ export default function LadderTournamentView({
               const t1 = teamById.get(c.challenger_team_id)
               const t2 = teamById.get(c.challenged_team_id)
               const canRecord =
-                isOrganizer ||
-                myTeamIds.has(c.challenger_team_id) ||
-                myTeamIds.has(c.challenged_team_id)
+                isOrganizer || myTeamIds.has(c.challenger_team_id) || myTeamIds.has(c.challenged_team_id)
               return (
                 <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border rounded-lg p-3">
                   <div>
@@ -511,8 +629,13 @@ export default function LadderTournamentView({
         </div>
       )}
 
-      {showAddTeam && (
-        <AddTeamModal tournamentId={tournament.id} onClose={() => setShowAddTeam(false)} onSuccess={() => void load()} />
+      {showAddTeam && activeCategoryId && (
+        <AddTeamModal
+          tournamentId={tournament.id}
+          lockedCategoryId={activeCategoryId}
+          onClose={() => setShowAddTeam(false)}
+          onSuccess={() => void load()}
+        />
       )}
 
       {resultModal && (

@@ -54,6 +54,16 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
   const [selectedLeagues, setSelectedLeagues] = useState<Map<string, { category: string | null; groupFilter: string | null }>>(new Map());
   const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
   const [selectedClubId, setSelectedClubId] = useState<string>((tournament as any).club_id || '');
+  const rawClubIds = (tournament as any).club_ids as string[] | null | undefined;
+  const initialLadderClubIds =
+    tournament.format === 'ladder'
+      ? rawClubIds && rawClubIds.length > 0
+        ? rawClubIds
+        : (tournament as any).club_id
+          ? [(tournament as any).club_id]
+          : []
+      : [];
+  const [selectedClubIds, setSelectedClubIds] = useState<string[]>(initialLadderClubIds);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
   const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>((tournament as any).court_names || []);
 
@@ -196,6 +206,12 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     setSelectedCourtNames([]);
   };
 
+  const toggleLadderClub = (clubId: string) => {
+    setSelectedClubIds((prev) =>
+      prev.includes(clubId) ? prev.filter((id) => id !== clubId) : [...prev, clubId]
+    );
+  };
+
   const generateDailySchedules = (startDate: string, endDate: string) => {
     if (!startDate || !endDate) return;
 
@@ -263,6 +279,12 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
       return;
     }
 
+    if (formData.format === 'ladder' && selectedClubIds.length === 0) {
+      setError(t.tournament.errorSelectLadderClubs);
+      setLoading(false);
+      return;
+    }
+
     let imageUrl = formData.image_url;
 
     if (imageFile) {
@@ -290,6 +312,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
       setUploading(false);
     }
 
+    const isLadderFmt = formData.format === 'ladder';
+    const primaryClubId = isLadderFmt ? selectedClubIds[0] : selectedClubId;
+
     const { error: submitError } = await supabase
       .from('tournaments')
       .update({
@@ -298,12 +323,16 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         image_url: imageUrl,
         start_date: formData.start_date,
         end_date: formData.end_date,
-        start_time: formData.start_time,
-        end_time: formData.end_time,
-        daily_start_time: formData.daily_start_time,
-        daily_end_time: formData.daily_end_time,
-        daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
-        number_of_courts: selectedCourtNames.length > 0 ? selectedCourtNames.length : formData.number_of_courts,
+        start_time: isLadderFmt ? '09:00' : formData.start_time,
+        end_time: isLadderFmt ? '21:00' : formData.end_time,
+        daily_start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
+        daily_end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
+        daily_schedules: isLadderFmt ? null : dailySchedules.length > 0 ? dailySchedules : null,
+        number_of_courts: isLadderFmt
+          ? 1
+          : selectedCourtNames.length > 0
+            ? selectedCourtNames.length
+            : formData.number_of_courts,
         status: formData.status,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
@@ -315,9 +344,10 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         registration_redirect_url: formData.registration_redirect_url || null,
         mixed_knockout: formData.mixed_knockout,
         format: formData.format,
-        round_robin_type: formData.round_robin_type,
-        club_id: selectedClubId || null,
-        court_names: selectedCourtNames.length > 0 ? selectedCourtNames : null,
+        round_robin_type: isLadderFmt ? null : formData.round_robin_type,
+        club_id: primaryClubId || null,
+        club_ids: isLadderFmt ? selectedClubIds : null,
+        court_names: isLadderFmt ? [] : selectedCourtNames.length > 0 ? selectedCourtNames : null,
       })
       .eq('id', tournament.id);
 
@@ -485,8 +515,38 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
           </div>
 
           <div className="border-t border-gray-200 pt-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Clube e Campos</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              {formData.format === 'ladder' ? `${t.tournament.ladderVenuesLabel} *` : 'Clube e Campos'}
+            </h3>
 
+            {formData.format === 'ladder' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-600">{t.tournament.ladderVenuesHint}</p>
+                <div className="border border-gray-200 rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto bg-gray-50">
+                  {clubs.map((club) => (
+                    <label
+                      key={club.id}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer ${
+                        selectedClubIds.includes(club.id)
+                          ? 'bg-blue-50 border border-blue-200'
+                          : 'border border-transparent hover:bg-white'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedClubIds.includes(club.id)}
+                        onChange={() => toggleLadderClub(club.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+                      />
+                      <span className="text-sm font-medium text-gray-800">{club.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-green-700 font-medium">
+                  {selectedClubIds.length} {t.tournament.ladderClubsSelectedSuffix}
+                </p>
+              </div>
+            ) : (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Clube</label>
@@ -571,6 +631,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                 </p>
               )}
             </div>
+            )}
           </div>
 
           <div>
@@ -622,7 +683,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                 value={formData.start_date}
                 onChange={(e) => {
                   setFormData({ ...formData, start_date: e.target.value });
-                  if (e.target.value && formData.end_date) {
+                  if (formData.format !== 'ladder' && e.target.value && formData.end_date) {
                     generateDailySchedules(e.target.value, formData.end_date);
                   }
                 }}
@@ -638,7 +699,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                 value={formData.end_date}
                 onChange={(e) => {
                   setFormData({ ...formData, end_date: e.target.value });
-                  if (formData.start_date && e.target.value) {
+                  if (formData.format !== 'ladder' && formData.start_date && e.target.value) {
                     generateDailySchedules(formData.start_date, e.target.value);
                   }
                 }}
@@ -647,6 +708,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
             </div>
           </div>
 
+          {formData.format !== 'ladder' && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -682,8 +744,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
             </div>
           </div>
+          )}
 
-          {dailySchedules.length > 0 && (
+          {formData.format !== 'ladder' && dailySchedules.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
               <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
@@ -811,10 +874,30 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     const val = e.target.value;
                     if (val === 'round_robin_individual') {
                       setFormData({ ...formData, format: 'round_robin', round_robin_type: 'individual' });
+                      setSelectedClubIds([]);
+                      if (formData.start_date && formData.end_date) {
+                        generateDailySchedules(formData.start_date, formData.end_date);
+                      }
                     } else if (val === 'round_robin_teams') {
                       setFormData({ ...formData, format: 'round_robin', round_robin_type: 'teams' });
+                      setSelectedClubIds([]);
+                      if (formData.start_date && formData.end_date) {
+                        generateDailySchedules(formData.start_date, formData.end_date);
+                      }
+                    } else if (val === 'ladder') {
+                      setFormData({ ...formData, format: 'ladder', round_robin_type: null });
+                      setDailySchedules([]);
+                      setSelectedCourtNames([]);
+                      setSelectedClubIds((prev) => {
+                        if (prev.length > 0) return prev;
+                        return selectedClubId ? [selectedClubId] : [];
+                      });
                     } else {
                       setFormData({ ...formData, format: val, round_robin_type: null });
+                      setSelectedClubIds([]);
+                      if (formData.start_date && formData.end_date) {
+                        generateDailySchedules(formData.start_date, formData.end_date);
+                      }
                     }
                   }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -832,6 +915,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
                     <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
                     <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
                     <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                    <option value="ladder">{t.tournament.formatOption_ladder}</option>
                   </optgroup>
                 </select>
               </div>

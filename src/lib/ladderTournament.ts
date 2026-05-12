@@ -16,6 +16,7 @@ export type LadderChallenge = {
 
 export type LadderRow = {
   tournament_id: string
+  category_id: string
   challenge_limit: number
   challenge_window_days: number
   positions: LadderPosition[] | unknown

@@ -333,6 +333,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     matchesData: Array<{ id: string; scheduled_time: string; court: string }>,
     tournamentData: typeof currentTournament
   ) => {
+    if (tournamentData.format === 'ladder') {
+      console.log('[COURT BOOKINGS] Ladder tournament, skipping court bookings');
+      return;
+    }
     if (!tournamentData.club_id || !tournamentData.court_names || tournamentData.court_names.length === 0) {
       console.log('[COURT BOOKINGS] No club or court_names configured, skipping bookings');
       return;
@@ -7284,10 +7288,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     );
   }
 
-  if (currentTournament.format === 'ladder') {
-    return <LadderTournamentView tournament={currentTournament} onBack={onBack} />;
-  }
-
   return (
     <div className="space-y-4">
       {/* Header com nome e info básica */}
@@ -7426,6 +7426,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         </div>
       </div>
 
+      {currentTournament.format === 'ladder' && (
+        <div className="bg-white rounded-xl shadow-lg p-4 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowManageCategories(true)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition"
+          >
+            <FolderTree className="w-4 h-4" />
+            {categories.length > 0 ? t.nav.manageCategories : t.category.add}
+          </button>
+        </div>
+      )}
+
+      {currentTournament.format === 'ladder' ? (
+        <LadderTournamentView
+          key={categories.map((c) => c.id).sort().join(',')}
+          tournament={currentTournament}
+          onBack={onBack}
+          embedded
+        />
+      ) : (
+      <>
       {/* Seletor de Categorias - sempre visível (estrutura definida nas categorias) */}
       <div className="bg-white rounded-xl shadow-lg p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -8647,6 +8669,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           )}
         </div>
       </div>
+
+      </>
+      )}
 
       {/* Modals */}
       {showAddTeam && (

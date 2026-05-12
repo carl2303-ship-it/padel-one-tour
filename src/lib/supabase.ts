@@ -43,6 +43,8 @@ export type Tournament = {
   allow_club_payment?: boolean;
   mixed_knockout?: boolean;
   club_id?: string;
+  /** When set (e.g. ladder), all host club UUIDs; first should match club_id. */
+  club_ids?: string[] | null;
   court_names?: string[];
   has_dinner_option?: boolean;
   created_at: string;

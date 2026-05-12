@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase, DailyScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { X, Upload } from 'lucide-react';
+import { X, Upload, Plus, Trash2 } from 'lucide-react';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 
@@ -10,6 +10,8 @@ type CreateTournamentModalProps = {
   onClose: () => void;
   onSuccess: () => void;
 };
+
+type LadderCategoryFormRow = { name: string; min_level: string; max_level: string; max_teams: string };
 
 export default function CreateTournamentModal({ onClose, onSuccess }: CreateTournamentModalProps) {
   const { t } = useI18n();
@@ -42,12 +44,25 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
   const [expandedDayIndex, setExpandedDayIndex] = useState<number | null>(null);
   const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
   const [selectedClubId, setSelectedClubId] = useState<string>('');
+  /** Ladder: one or more host clubs (stored in tournaments.club_ids; club_id = first). */
+  const [selectedClubIds, setSelectedClubIds] = useState<string[]>([]);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
   const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>([]);
+  const [ladderCategoryRows, setLadderCategoryRows] = useState<LadderCategoryFormRow[]>([
+    { name: '', min_level: '', max_level: '', max_teams: '999' },
+  ]);
 
   useEffect(() => {
     fetchClubs();
   }, []);
+
+  useEffect(() => {
+    if (formData.format === 'ladder') {
+      setLadderCategoryRows((rows) =>
+        rows.length === 0 ? [{ name: '', min_level: '', max_level: '', max_teams: '999' }] : rows
+      );
+    }
+  }, [formData.format]);
 
   useEffect(() => {
     if (selectedClubId) {
@@ -123,6 +138,12 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     setSelectedCourtNames([]);
   };
 
+  const toggleLadderClub = (clubId: string) => {
+    setSelectedClubIds((prev) =>
+      prev.includes(clubId) ? prev.filter((id) => id !== clubId) : [...prev, clubId]
+    );
+  };
+
   const generateDailySchedules = (startDate: string, endDate: string) => {
     if (!startDate || !endDate) return;
 
@@ -190,16 +211,38 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
       return;
     }
 
-    if (!selectedClubId) {
-      setError(t.tournament.errorSelectClub);
-      setLoading(false);
-      return;
-    }
-
-    if (selectedCourtNames.length === 0) {
-      setError(t.tournament.errorSelectCourts);
-      setLoading(false);
-      return;
+    const isLadder = formData.format === 'ladder';
+    if (isLadder) {
+      if (selectedClubIds.length === 0) {
+        setError(t.tournament.errorSelectLadderClubs);
+        setLoading(false);
+        return;
+      }
+      for (const row of ladderCategoryRows) {
+        if (!row.name.trim()) {
+          setError(t.tournament.errorLadderCategoryName);
+          setLoading(false);
+          return;
+        }
+        const mn = row.min_level.trim() === '' ? null : parseFloat(row.min_level.replace(',', '.'));
+        const mx = row.max_level.trim() === '' ? null : parseFloat(row.max_level.replace(',', '.'));
+        if (mn != null && mx != null && Number.isFinite(mn) && Number.isFinite(mx) && mn > mx) {
+          setError(t.tournament.errorLadderLevelRange);
+          setLoading(false);
+          return;
+        }
+      }
+    } else {
+      if (!selectedClubId) {
+        setError(t.tournament.errorSelectClub);
+        setLoading(false);
+        return;
+      }
+      if (selectedCourtNames.length === 0) {
+        setError(t.tournament.errorSelectCourts);
+        setLoading(false);
+        return;
+      }
     }
 
     let imageUrl = formData.image_url;
@@ -229,6 +272,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
       setUploading(false);
     }
 
+    const isLadderFmt = formData.format === 'ladder';
+    const primaryClubId = isLadderFmt ? selectedClubIds[0] : selectedClubId;
     const { data: tournamentData, error: submitError } = await supabase.from('tournaments').insert([
       {
         name: formData.name,
@@ -236,25 +281,26 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         image_url: imageUrl,
         start_date: formData.start_date,
         end_date: formData.end_date,
-        start_time: formData.daily_start_time,
-        end_time: formData.daily_end_time,
-        daily_start_time: formData.daily_start_time,
-        daily_end_time: formData.daily_end_time,
+        start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
+        end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
+        daily_start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
+        daily_end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
         format: formData.format,
-        round_robin_type: formData.format === 'ladder' ? null : formData.round_robin_type,
+        round_robin_type: isLadderFmt ? null : formData.round_robin_type,
         max_teams: 999,
-        number_of_courts: selectedCourtNames.length,
+        number_of_courts: isLadderFmt ? 1 : selectedCourtNames.length,
         match_duration_minutes: 30,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
-        daily_schedules: dailySchedules.length > 0 ? dailySchedules : null,
+        daily_schedules: isLadderFmt ? null : dailySchedules.length > 0 ? dailySchedules : null,
         gender: formData.gender || null,
         status: 'draft',
         user_id: user?.id,
-        club_id: selectedClubId,
-        court_names: selectedCourtNames,
+        club_id: primaryClubId,
+        club_ids: isLadderFmt ? selectedClubIds : null,
+        court_names: isLadderFmt ? [] : selectedCourtNames,
       },
     ]).select();
 
@@ -273,29 +319,48 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     const newTournamentId = tournamentData[0].id;
 
     if (formData.format === 'ladder') {
-      const { error: catError } = await supabase.from('tournament_categories').insert({
+      const parseOptLevel = (s: string) => {
+        const v = s.trim().replace(',', '.');
+        if (!v) return null;
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const rowsToInsert = ladderCategoryRows.map((r) => ({
         tournament_id: newTournamentId,
-        name: t.tournament.ladderDefaultCategoryName,
-        format: 'ladder',
+        name: r.name.trim(),
+        format: 'ladder' as const,
         number_of_groups: 0,
-        max_teams: 999,
+        max_teams: Math.max(1, parseInt(r.max_teams, 10) || 999),
         knockout_stage: null,
         qualified_per_group: null,
-      });
+        min_level: parseOptLevel(r.min_level),
+        max_level: parseOptLevel(r.max_level),
+      }));
+      const { data: insertedCats, error: catError } = await supabase
+        .from('tournament_categories')
+        .insert(rowsToInsert)
+        .select('id');
       if (catError) {
         setError(catError.message);
         setLoading(false);
         return;
       }
+      if (!insertedCats?.length) {
+        setError(t.tournament.errorCreate);
+        setLoading(false);
+        return;
+      }
       const lim = Math.min(50, Math.max(1, Number(formData.challenge_limit) || 5));
-      const { error: ladderError } = await supabase.from('ladder_tournaments').insert({
+      const ladderInserts = insertedCats.map((c) => ({
         tournament_id: newTournamentId,
+        category_id: c.id,
         challenge_limit: lim,
         challenge_window_days: 7,
         positions: [],
         pending_challenges: [],
-        ladder_status: 'setup',
-      });
+        ladder_status: 'setup' as const,
+      }));
+      const { error: ladderError } = await supabase.from('ladder_tournaments').insert(ladderInserts);
       if (ladderError) {
         setError(ladderError.message);
         setLoading(false);
@@ -381,10 +446,30 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 const val = e.target.value;
                 if (val === 'round_robin_individual') {
                   setFormData({ ...formData, format: 'round_robin', round_robin_type: 'individual' });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
                 } else if (val === 'round_robin_teams') {
                   setFormData({ ...formData, format: 'round_robin', round_robin_type: 'teams' });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
+                } else if (val === 'ladder') {
+                  setFormData({ ...formData, format: 'ladder', round_robin_type: null });
+                  setDailySchedules([]);
+                  setSelectedCourtNames([]);
+                  setSelectedClubIds((prev) => {
+                    if (prev.length > 0) return prev;
+                    return selectedClubId ? [selectedClubId] : [];
+                  });
                 } else {
                   setFormData({ ...formData, format: val, round_robin_type: null });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
                 }
               }}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -408,17 +493,108 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
           </div>
 
           {formData.format === 'ladder' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t.tournament.ladderChallengeLimitLabel}</label>
-              <p className="text-xs text-gray-500 mb-2">{t.tournament.ladderChallengeLimitHelp}</p>
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={formData.challenge_limit}
-                onChange={(e) => setFormData({ ...formData, challenge_limit: Number(e.target.value) })}
-                className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
-              />
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t.tournament.ladderChallengeLimitLabel}</label>
+                <p className="text-xs text-gray-500 mb-2">{t.tournament.ladderChallengeLimitHelp}</p>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={formData.challenge_limit}
+                  onChange={(e) => setFormData({ ...formData, challenge_limit: Number(e.target.value) })}
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50/80">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">{t.tournament.ladderCategoriesTitle}</h3>
+                  <p className="text-xs text-gray-500 mt-1">{t.tournament.ladderCategoriesHint}</p>
+                </div>
+                {ladderCategoryRows.map((row, idx) => (
+                  <div key={idx} className="flex flex-wrap gap-2 items-end border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderCategoryNameLabel} *</label>
+                      <input
+                        type="text"
+                        required
+                        value={row.name}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], name: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder={t.tournament.ladderDefaultCategoryName}
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMinLevelPlaceholder}</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.min_level}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], min_level: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="—"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMaxLevelPlaceholder}</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.max_level}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], max_level: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="—"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMaxTeamsShort}</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={row.max_teams}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], max_teams: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    {ladderCategoryRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setLadderCategoryRows((r) => r.filter((_, i) => i !== idx))}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                        aria-label={t.tournament.ladderRemoveCategoryRow}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLadderCategoryRows((r) => [...r, { name: '', min_level: '', max_level: '', max_teams: '999' }])
+                  }
+                  className="inline-flex items-center gap-2 text-sm text-blue-600 font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.tournament.ladderAddCategoryRow}
+                </button>
+              </div>
             </div>
           )}
 
@@ -470,7 +646,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 value={formData.start_date}
                 onChange={(e) => {
                   setFormData({ ...formData, start_date: e.target.value });
-                  if (e.target.value && formData.end_date) {
+                  if (formData.format !== 'ladder' && e.target.value && formData.end_date) {
                     generateDailySchedules(e.target.value, formData.end_date);
                   }
                 }}
@@ -486,7 +662,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 value={formData.end_date}
                 onChange={(e) => {
                   setFormData({ ...formData, end_date: e.target.value });
-                  if (formData.start_date && e.target.value) {
+                  if (formData.format !== 'ladder' && formData.start_date && e.target.value) {
                     generateDailySchedules(formData.start_date, e.target.value);
                   }
                 }}
@@ -495,6 +671,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             </div>
           </div>
 
+          {formData.format !== 'ladder' && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -518,8 +695,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
             </div>
           </div>
+          )}
 
-          {dailySchedules.length > 0 && (
+          {formData.format !== 'ladder' && dailySchedules.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
               <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
@@ -710,8 +888,38 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
           </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <h3 className="text-base font-semibold text-gray-900 mb-3">{t.tournament.clubAndCourts} *</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-3">
+              {formData.format === 'ladder' ? `${t.tournament.ladderVenuesLabel} *` : `${t.tournament.clubAndCourts} *`}
+            </h3>
 
+            {formData.format === 'ladder' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-600">{t.tournament.ladderVenuesHint}</p>
+                <div className="border border-gray-200 rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto bg-white">
+                  {clubs.map((club) => (
+                    <label
+                      key={club.id}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer ${
+                        selectedClubIds.includes(club.id)
+                          ? 'bg-blue-50 border border-blue-200'
+                          : 'border border-transparent hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedClubIds.includes(club.id)}
+                        onChange={() => toggleLadderClub(club.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+                      />
+                      <span className="text-sm font-medium text-gray-800">{club.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-green-700 font-medium">
+                  {selectedClubIds.length} {t.tournament.ladderClubsSelectedSuffix}
+                </p>
+              </div>
+            ) : (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel}</label>
@@ -791,6 +999,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                 </p>
               )}
             </div>
+            )}
           </div>
 
           <div className="flex gap-3 pt-4">
