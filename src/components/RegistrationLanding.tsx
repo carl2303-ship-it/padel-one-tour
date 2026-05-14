@@ -913,15 +913,19 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         const p1Phone = normalizePhone(formData.player1Phone);
         const p2Phone = normalizePhone(formData.player2Phone);
         const categoryIdForRow = formData.categoryId || null;
-        let userId1 = (player1Result.account as { user_id?: string | null } | null)?.user_id ?? null;
-        let userId2 = (player2Account as { user_id?: string | null } | null)?.user_id ?? null;
-        if (userId1 == null || userId2 == null) {
+        let userId1 = (player1Result.account as { user_id?: string | null; id?: string } | null)?.user_id ?? null;
+        let userId2 = (player2Account as { user_id?: string | null; id?: string } | null)?.user_id ?? null;
+        let paId1 = (player1Result.account as { id?: string } | null)?.id ?? null;
+        let paId2 = (player2Account as { id?: string } | null)?.id ?? null;
+        if (userId1 == null || userId2 == null || paId1 == null || paId2 == null) {
           const [{ data: acc1 }, { data: acc2 }] = await Promise.all([
-            supabase.from('player_accounts').select('user_id').eq('phone_number', p1Phone).maybeSingle(),
-            supabase.from('player_accounts').select('user_id').eq('phone_number', p2Phone).maybeSingle(),
+            supabase.from('player_accounts').select('id, user_id').eq('phone_number', p1Phone).maybeSingle(),
+            supabase.from('player_accounts').select('id, user_id').eq('phone_number', p2Phone).maybeSingle(),
           ]);
           if (userId1 == null) userId1 = acc1?.user_id ?? null;
           if (userId2 == null) userId2 = acc2?.user_id ?? null;
+          if (paId1 == null) paId1 = acc1?.id ?? null;
+          if (paId2 == null) paId2 = acc2?.id ?? null;
         }
 
         const { data: players, error: playersError } = await supabase
@@ -934,6 +938,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               email: formData.player1Email,
               phone_number: formData.player1Phone,
               user_id: userId1,
+              player_account_id: paId1,
               wants_dinner: formData.player1WantsDinner,
             },
             {
@@ -943,6 +948,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               email: formData.player2Email,
               phone_number: formData.player2Phone,
               user_id: userId2,
+              player_account_id: paId2,
               wants_dinner: formData.player2WantsDinner,
             },
           ])

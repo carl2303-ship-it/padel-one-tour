@@ -7,6 +7,45 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, stripe-signature",
 };
 
+function normalizePhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  return String(phone).replace(/\s+/g, "").trim();
+}
+
+/** Liga `players` ao `player_accounts` por telefone (user_id + player_account_id). */
+async function buildTournamentPlayerRow(
+  supabase: ReturnType<typeof createClient>,
+  tournamentId: string,
+  categoryId: string | null,
+  name: string,
+  email: string | null | undefined,
+  phone: string | null | undefined,
+) {
+  const normalized = normalizePhone(phone || undefined);
+  let user_id: string | null = null;
+  let player_account_id: string | null = null;
+  if (normalized) {
+    const { data: acc } = await supabase
+      .from("player_accounts")
+      .select("id, user_id")
+      .eq("phone_number", normalized)
+      .maybeSingle();
+    if (acc) {
+      player_account_id = acc.id;
+      user_id = acc.user_id ?? null;
+    }
+  }
+  return {
+    tournament_id: tournamentId,
+    category_id: categoryId,
+    name,
+    email: email || null,
+    phone_number: phone || null,
+    user_id,
+    player_account_id,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -89,13 +128,28 @@ Deno.serve(async (req: Request) => {
 
         const teamData = registrationData.team;
         const categoryId = existingTransaction.metadata?.category_id;
+        const tid = existingTransaction.tournament_id as string;
+
+        const p1 = await buildTournamentPlayerRow(
+          supabase,
+          tid,
+          categoryId || null,
+          teamData.player1.name,
+          teamData.player1.email,
+          teamData.player1.phone,
+        );
+        const p2 = await buildTournamentPlayerRow(
+          supabase,
+          tid,
+          categoryId || null,
+          teamData.player2.name,
+          teamData.player2.email,
+          teamData.player2.phone,
+        );
 
         const { data: players, error: playersError } = await supabase
           .from('players')
-          .insert([
-            { name: teamData.player1.name, email: teamData.player1.email, phone: teamData.player1.phone || null, user_id: existingTransaction.organizer_user_id || null },
-            { name: teamData.player2.name, email: teamData.player2.email, phone: teamData.player2.phone || null, user_id: existingTransaction.organizer_user_id || null }
-          ])
+          .insert([p1, p2])
           .select();
 
         if (playersError || !players || players.length !== 2) {
@@ -157,16 +211,17 @@ Deno.serve(async (req: Request) => {
         const isIndividualRegistration = isIndividual === "true";
 
         if (isIndividualRegistration) {
+          const indRow = await buildTournamentPlayerRow(
+            supabase,
+            tournamentId,
+            categoryId || null,
+            player1Name,
+            player1Email,
+            player1Phone,
+          );
           const { error: playerError } = await supabase
             .from('players')
-            .insert({
-              tournament_id: tournamentId,
-              category_id: categoryId || null,
-              name: player1Name,
-              email: player1Email || null,
-              phone_number: player1Phone || null,
-              user_id: organizerUserId || null,
-            });
+            .insert(indRow);
 
           if (playerError) {
             throw new Error(`Failed to create individual player: ${playerError.message}`);
@@ -189,12 +244,25 @@ Deno.serve(async (req: Request) => {
             }
           );
         } else {
+          const p1 = await buildTournamentPlayerRow(
+            supabase,
+            tournamentId,
+            categoryId || null,
+            player1Name,
+            player1Email,
+            player1Phone,
+          );
+          const p2 = await buildTournamentPlayerRow(
+            supabase,
+            tournamentId,
+            categoryId || null,
+            player2Name,
+            player2Email,
+            player2Phone,
+          );
           const { data: players, error: playersError } = await supabase
             .from('players')
-            .insert([
-              { name: player1Name, email: player1Email, phone_number: player1Phone || null, user_id: organizerUserId || null },
-              { name: player2Name, email: player2Email, phone_number: player2Phone || null, user_id: organizerUserId || null }
-            ])
+            .insert([p1, p2])
             .select();
 
           if (playersError || !players || players.length !== 2) {

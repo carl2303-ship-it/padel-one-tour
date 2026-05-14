@@ -7,6 +7,7 @@ import RichTextEditor from './RichTextEditor';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { processAllUnratedMatches } from '../lib/ratingEngine';
+import { parseClubIds } from '../lib/parseClubIds';
 
 type EditTournamentModalProps = {
   tournament: Tournament;
@@ -54,15 +55,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
   const [selectedLeagues, setSelectedLeagues] = useState<Map<string, { category: string | null; groupFilter: string | null }>>(new Map());
   const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
   const [selectedClubId, setSelectedClubId] = useState<string>((tournament as any).club_id || '');
-  const rawClubIds = (tournament as any).club_ids as string[] | null | undefined;
+  const parsedLadderVenues = parseClubIds((tournament as any).club_ids, (tournament as any).club_id);
   const initialLadderClubIds =
-    tournament.format === 'ladder'
-      ? rawClubIds && rawClubIds.length > 0
-        ? rawClubIds
-        : (tournament as any).club_id
-          ? [(tournament as any).club_id]
-          : []
-      : [];
+    tournament.format === 'ladder' ? (parsedLadderVenues.length > 0 ? parsedLadderVenues : []) : [];
   const [selectedClubIds, setSelectedClubIds] = useState<string[]>(initialLadderClubIds);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
   const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>((tournament as any).court_names || []);
