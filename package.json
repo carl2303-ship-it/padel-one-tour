@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "create-test-tournaments": "tsx create-test-tournaments.ts",
     "add-categories-to-test": "tsx add-categories-to-test-tournaments.ts",
-    "fill-test-tournaments": "tsx fill-test-tournaments-with-participants.ts"
+    "fill-test-tournaments": "tsx fill-test-tournaments-with-participants.ts",
+    "seed-escada-summer26": "tsx seed-escada-summer26-test-teams.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

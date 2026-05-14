@@ -39,6 +39,34 @@ export function parsePositions(raw: unknown): LadderPosition[] {
   return out.sort((a, b) => a.rank - b.rank)
 }
 
+/**
+ * Classificação mostrada na app: inclui equipas inscritas depois da publicação da escada
+ * (ainda não presentes em `positions`) no fundo, para aparecerem na lista e terem rank para desafios.
+ */
+export function mergePublishedPositionsWithTeams(
+  rawPositions: unknown,
+  teamIdsInDisplayOrder: string[],
+  ladderStatus: string | undefined
+): LadderPosition[] {
+  const pos = parsePositions(rawPositions)
+  const activeLike = ladderStatus === 'active' || ladderStatus === 'completed'
+  if (!activeLike) {
+    if (pos.length > 0) return normalizePositions(pos)
+    return normalizePositions(teamIdsInDisplayOrder.map((id, i) => ({ rank: i + 1, team_id: id })))
+  }
+  const seen = new Set(pos.map((p) => p.team_id))
+  const merged = [...pos]
+  let maxR = pos.length ? Math.max(...pos.map((p) => p.rank)) : 0
+  for (const tid of teamIdsInDisplayOrder) {
+    if (!seen.has(tid)) {
+      maxR += 1
+      merged.push({ rank: maxR, team_id: tid })
+      seen.add(tid)
+    }
+  }
+  return normalizePositions(merged)
+}
+
 export function normalizePositions(positions: LadderPosition[]): LadderPosition[] {
   const sorted = [...positions].sort((a, b) => a.rank - b.rank)
   return sorted.map((p, i) => ({ rank: i + 1, team_id: p.team_id }))

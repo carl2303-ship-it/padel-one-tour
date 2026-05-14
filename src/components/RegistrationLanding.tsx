@@ -269,6 +269,13 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     }
   }, [formData.categoryId, categories]);
 
+  /** Uma só categoria: pré-seleccionar para não gravar inscrições sem category_id por engano. */
+  useEffect(() => {
+    if (categories.length === 1 && !formData.categoryId) {
+      setFormData((prev) => ({ ...prev, categoryId: categories[0].id }));
+    }
+  }, [categories, formData.categoryId]);
+
   const checkLoggedInPlayer = async () => {
     if (!user) return;
 
@@ -903,23 +910,39 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           false
         );
       } else {
+        const p1Phone = normalizePhone(formData.player1Phone);
+        const p2Phone = normalizePhone(formData.player2Phone);
+        const categoryIdForRow = formData.categoryId || null;
+        let userId1 = (player1Result.account as { user_id?: string | null } | null)?.user_id ?? null;
+        let userId2 = (player2Account as { user_id?: string | null } | null)?.user_id ?? null;
+        if (userId1 == null || userId2 == null) {
+          const [{ data: acc1 }, { data: acc2 }] = await Promise.all([
+            supabase.from('player_accounts').select('user_id').eq('phone_number', p1Phone).maybeSingle(),
+            supabase.from('player_accounts').select('user_id').eq('phone_number', p2Phone).maybeSingle(),
+          ]);
+          if (userId1 == null) userId1 = acc1?.user_id ?? null;
+          if (userId2 == null) userId2 = acc2?.user_id ?? null;
+        }
+
         const { data: players, error: playersError } = await supabase
           .from('players')
           .insert([
             {
               tournament_id: tournament.id,
+              category_id: categoryIdForRow,
               name: formData.player1Name,
               email: formData.player1Email,
               phone_number: formData.player1Phone,
-              user_id: null,
+              user_id: userId1,
               wants_dinner: formData.player1WantsDinner,
             },
             {
               tournament_id: tournament.id,
+              category_id: categoryIdForRow,
               name: formData.player2Name,
               email: formData.player2Email,
               phone_number: formData.player2Phone,
-              user_id: null,
+              user_id: userId2,
               wants_dinner: formData.player2WantsDinner,
             },
           ])

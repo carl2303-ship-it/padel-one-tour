@@ -12,6 +12,7 @@ import {
   reorderAfterChallengerWin,
   parsePending,
   teamHasOpenChallenge,
+  mergePublishedPositionsWithTeams,
   type LadderChallenge,
   type LadderPosition,
 } from '../lib/ladderTournament'
@@ -144,23 +145,29 @@ export default function LadderTournamentView({
     )
   }, [teams, myPlayerIds])
 
-  const positions = useMemo(() => parsePositions(ladder?.positions), [ladder?.positions])
   const pending = useMemo(() => parsePending(ladder?.pending_challenges), [ladder?.pending_challenges])
 
   const teamById = useMemo(() => new Map(teams.map((x) => [x.id, x])), [teams])
 
+  const teamIdsInOrder = useMemo(() => teams.map((x) => x.id), [teams])
+
+  const displayPositions = useMemo(
+    () => mergePublishedPositionsWithTeams(ladder?.positions, teamIdsInOrder, ladder?.ladder_status),
+    [ladder?.positions, ladder?.ladder_status, teamIdsInOrder]
+  )
+
   const rankByTeamId = useMemo(() => {
     const m = new Map<string, number>()
-    for (const p of positions) m.set(p.team_id, p.rank)
+    for (const p of displayPositions) m.set(p.team_id, p.rank)
     return m
-  }, [positions])
+  }, [displayPositions])
 
   const orderedRows = useMemo(() => {
     if (ladder?.ladder_status === 'setup' && isOrganizer) {
       return orderedTeamIds.map((id, i) => ({ rank: i + 1, team_id: id }))
     }
-    return positions.length > 0 ? positions : orderedTeamIds.map((id, i) => ({ rank: i + 1, team_id: id }))
-  }, [ladder?.ladder_status, isOrganizer, orderedTeamIds, positions])
+    return displayPositions
+  }, [ladder?.ladder_status, isOrganizer, orderedTeamIds, displayPositions])
 
   const moveSetup = (index: number, dir: -1 | 1) => {
     setOrderedTeamIds((prev) => {
@@ -280,7 +287,7 @@ export default function LadderTournamentView({
     const updated = all.map((c) =>
       c.id === resultModal.id ? { ...c, status: 'completed' as const, winner_team_id: winnerTeamId } : c
     )
-    let newPositions = parsePositions(ladder.positions)
+    let newPositions = mergePublishedPositionsWithTeams(ladder.positions, teams.map((x) => x.id), ladder.ladder_status)
     if (winnerTeamId === resultModal.challenger_team_id) {
       newPositions = reorderAfterChallengerWin(
         newPositions,
@@ -526,7 +533,9 @@ export default function LadderTournamentView({
         </div>
       )}
 
-      {(ladder.ladder_status === 'active' || (!isOrganizer && positions.length > 0)) && (
+      {(ladder.ladder_status === 'active' ||
+        ladder.ladder_status === 'completed' ||
+        (!isOrganizer && parsePositions(ladder.positions).length > 0)) && (
         <div className="bg-white rounded-xl shadow p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-gray-900">{L.title}</h3>
