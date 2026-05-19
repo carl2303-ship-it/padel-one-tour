@@ -197,7 +197,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     // Buscar categorias do torneio original
     const { data: categories } = await supabase
       .from('tournament_categories')
-      .select('name, format, number_of_groups, max_teams')
+      .select('name, format, number_of_groups, max_teams, min_level, max_level, knockout_stage, qualified_per_group')
       .eq('tournament_id', tournament.id);
 
     // Criar novo torneio (apenas configurações, sem jogadores)
@@ -227,6 +227,11 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         qualified_teams_per_group: tournament.qualified_teams_per_group,
         knockout_stage: tournament.knockout_stage,
         allow_public_registration: false,
+        gender: (tournament as any).gender || null,
+        club_id: (tournament as any).club_id || null,
+        club_ids: (tournament as any).club_ids || null,
+        image_url: (tournament as any).image_url || null,
+        visibility: (tournament as any).visibility || null,
       })
       .select()
       .single();
@@ -245,6 +250,10 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         format: cat.format,
         number_of_groups: cat.number_of_groups,
         max_teams: cat.max_teams,
+        min_level: cat.min_level,
+        max_level: cat.max_level,
+        knockout_stage: cat.knockout_stage,
+        qualified_per_group: cat.qualified_per_group,
       }));
 
       await supabase

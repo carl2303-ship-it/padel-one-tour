@@ -23,8 +23,8 @@ type TeamRow = {
   player1_id: string
   player2_id: string
   category_id?: string | null
-  player1?: { id: string; name: string; user_id?: string | null }
-  player2?: { id: string; name: string; user_id?: string | null }
+  player1?: { id: string; name: string; user_id?: string | null; player_account_id?: string | null }
+  player2?: { id: string; name: string; user_id?: string | null; player_account_id?: string | null }
 }
 
 type CategoryRow = { id: string; name: string; min_level: number | null; max_level: number | null }
@@ -58,6 +58,7 @@ export default function LadderTournamentView({
   const [orderedTeamIds, setOrderedTeamIds] = useState<string[]>([])
   const [showAddTeam, setShowAddTeam] = useState(false)
   const [limitEdit, setLimitEdit] = useState(5)
+  const [teamClubNames, setTeamClubNames] = useState<Map<string, string>>(new Map())
   const [resultModal, setResultModal] = useState<LadderChallenge | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -100,7 +101,7 @@ export default function LadderTournamentView({
       supabase
         .from('teams')
         .select(
-          'id, name, player1_id, player2_id, category_id, player1:players!teams_player1_id_fkey(id, name, user_id), player2:players!teams_player2_id_fkey(id, name, user_id)'
+          'id, name, player1_id, player2_id, category_id, player1:players!teams_player1_id_fkey(id, name, user_id, player_account_id), player2:players!teams_player2_id_fkey(id, name, user_id, player_account_id)'
         )
         .eq('tournament_id', tournament.id)
         .eq('category_id', resolved)
@@ -116,6 +117,34 @@ export default function LadderTournamentView({
     }
     const tl = (teamsRes.data || []) as TeamRow[]
     setTeams(tl)
+
+    const paIds = [...new Set(tl.flatMap(tm => [tm.player1?.player_account_id, tm.player2?.player_account_id]).filter(Boolean))] as string[]
+    if (paIds.length > 0) {
+      const { data: paRows } = await supabase
+        .from('player_accounts')
+        .select('id, favorite_club_id')
+        .in('id', paIds)
+      const favByPa = new Map((paRows || []).map((r: { id: string; favorite_club_id: string | null }) => [r.id, r.favorite_club_id]))
+      const clubIds = [...new Set([...favByPa.values()].filter(Boolean))] as string[]
+      let clubNameById = new Map<string, string>()
+      if (clubIds.length > 0) {
+        const { data: clubRows } = await supabase.from('clubs').select('id, name').in('id', clubIds)
+        clubNameById = new Map((clubRows || []).map((c: { id: string; name: string }) => [c.id, c.name]))
+      }
+      const tcn = new Map<string, string>()
+      for (const tm of tl) {
+        const fav1 = tm.player1?.player_account_id ? favByPa.get(tm.player1.player_account_id) : null
+        const fav2 = tm.player2?.player_account_id ? favByPa.get(tm.player2.player_account_id) : null
+        const clubId = (fav1 === fav2 && fav1) ? fav1 : (fav1 || fav2 || null)
+        if (clubId) {
+          const name = clubNameById.get(clubId)
+          if (name) tcn.set(tm.id, name)
+        }
+      }
+      setTeamClubNames(tcn)
+    } else {
+      setTeamClubNames(new Map())
+    }
 
     const positions = parsePositions(ladderRes.data?.positions)
     if (positions.length > 0) {
@@ -277,6 +306,40 @@ export default function LadderTournamentView({
     if (error) alert(L.errorGeneric + ': ' + error.message)
     else {
       alert(L.challengeCreated)
+
+      const challengerTeam = teamById.get(challengerTeamId)
+      const challengedTeam = teamById.get(challengedTeamId)
+      const challengerName = challengerTeam?.name ?? '?'
+      const deadlineStr = deadline.toLocaleDateString()
+      const venue = teamClubNames.get(challengedTeamId)
+      let bodyMsg = `${challengerName} ${L.challengeNotifBody ?? 'desafiou a vossa equipa! Prazo:'} ${deadlineStr}`
+      if (venue) bodyMsg += ` | ${L.playAt} ${venue}`
+      const pushBody = {
+        title: L.challengeNotifTitle ?? 'Novo desafio!',
+        body: bodyMsg,
+        url: '/?screen=compete',
+        tag: `ladder-challenge-${ch.id}`,
+      }
+      const paIds = [challengedTeam?.player1?.player_account_id, challengedTeam?.player2?.player_account_id].filter(Boolean) as string[]
+      if (paIds.length > 0) {
+        try {
+          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co'
+          const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaXdueGNleHNjY2d1cnVpdGVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3Njc5MzcsImV4cCI6MjA3NTM0MzkzN30.Dl05zPQDtPVpmvn_Y-JokT3wDq0Oh9uF3op5xcHZpkY'
+          const { data: { session } } = await supabase.auth.getSession()
+          for (const paId of paIds) {
+            fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session?.access_token || supabaseAnonKey}`,
+                'apikey': supabaseAnonKey,
+              },
+              body: JSON.stringify({ playerAccountId: paId, payload: pushBody, appSource: 'player' }),
+            }).catch(err => console.error('[Push] challenge notify error:', err))
+          }
+        } catch (err) { console.error('[Push] challenge error:', err) }
+      }
+
       void load()
     }
   }
@@ -556,6 +619,7 @@ export default function LadderTournamentView({
                 <tr className="text-left text-gray-500 border-b">
                   <th className="py-2 pr-4">{L.rank}</th>
                   <th className="py-2 pr-4">{L.team}</th>
+                  <th className="py-2 pr-4">{L.club}</th>
                   <th className="py-2">{myTeamIds.size ? L.challenge : ''}</th>
                 </tr>
               </thead>
@@ -580,6 +644,7 @@ export default function LadderTournamentView({
                           {tm ? `${tm.player1?.name || '?'} / ${tm.player2?.name || '?'}` : ''}
                         </div>
                       </td>
+                      <td className="py-2 pr-4 text-xs text-gray-500">{teamClubNames.get(row.team_id) ?? '—'}</td>
                       <td className="py-2">
                         {canShowChallenge ? (
                           <button
@@ -610,6 +675,7 @@ export default function LadderTournamentView({
             {pending.map((c) => {
               const t1 = teamById.get(c.challenger_team_id)
               const t2 = teamById.get(c.challenged_team_id)
+              const venue = teamClubNames.get(c.challenged_team_id)
               const canRecord =
                 isOrganizer || myTeamIds.has(c.challenger_team_id) || myTeamIds.has(c.challenged_team_id)
               return (
@@ -621,6 +687,11 @@ export default function LadderTournamentView({
                     <div className="text-xs text-gray-500">
                       {L.deadline}: {new Date(c.deadline_at).toLocaleString()}
                     </div>
+                    {venue && (
+                      <div className="text-xs text-blue-600 mt-0.5">
+                        {L.playAt} {venue}
+                      </div>
+                    )}
                   </div>
                   {canRecord && (
                     <button

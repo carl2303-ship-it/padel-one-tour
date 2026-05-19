@@ -94,7 +94,7 @@ export function reorderAfterChallengerWin(
   if (i < 0 || j < 0 || j >= i) return arr
   const [moved] = arr.splice(i, 1)
   arr.splice(j, 0, moved)
-  return normalizePositions(arr)
+  return arr.map((p, idx) => ({ rank: idx + 1, team_id: p.team_id }))
 }
 
 export function teamHasOpenChallenge(

@@ -368,6 +368,23 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
       }
     }
 
+    // Notify players about the new tournament (fire-and-forget)
+    try {
+      const supabaseUrl = 'https://rqiwnxcexsccguruiteq.supabase.co';
+      const { data: { session } } = await supabase.auth.getSession();
+      fetch(`${supabaseUrl}/functions/v1/notify-new-tournament`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+          'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaXdueGNleHNjY2d1cnVpdGVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3Njc5MzcsImV4cCI6MjA3NTM0MzkzN30.Dl05zPQDtPVpmvn_Y-JokT3wDq0Oh9uF3op5xcHZpkY',
+        },
+        body: JSON.stringify({ tournamentId: newTournamentId }),
+      }).catch(err => console.error('[Push] notify-new-tournament error:', err));
+    } catch (err) {
+      console.error('[Push] Error triggering new tournament notification:', err);
+    }
+
     onSuccess();
     onClose();
   };

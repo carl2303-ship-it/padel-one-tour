@@ -44,6 +44,7 @@ interface Standing {
   tournaments_played: number;
   best_position: number | null;
   player_category?: PlayerCategory;
+  player_level?: number | null;
 }
 
 interface Tournament {
@@ -86,6 +87,50 @@ function getCategoryBadgeColor(category: PlayerCategory): string {
   return categoryColors[category] || 'bg-gray-100 text-gray-500';
 }
 
+interface LevelRange {
+  label: string;
+  min: number;
+  max: number;
+}
+
+function parseLevelRanges(categories: string[]): LevelRange[] {
+  return categories.map(cat => {
+    const c = cat.trim();
+    // "+4.5" or ">4.5" → [4.5, Infinity]
+    const plusMatch = c.match(/^[+>]\s*(\d+(?:\.\d+)?)$/);
+    if (plusMatch) {
+      const min = parseFloat(plusMatch[1]);
+      return { label: c, min, max: Infinity };
+    }
+    // "1-2.9" or "1 - 2.9" or "3-4.5"
+    const rangeMatch = c.match(/^(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+      return { label: c, min: parseFloat(rangeMatch[1]), max: parseFloat(rangeMatch[2]) };
+    }
+    return null;
+  }).filter((r): r is LevelRange => r !== null);
+}
+
+function playerMatchesLevelRange(level: number | null | undefined, range: LevelRange): boolean {
+  if (level == null) return false;
+  return level >= range.min && (range.max === Infinity || level <= range.max);
+}
+
+function getLevelBadgeColor(level: number): string {
+  if (level >= 8) return 'bg-red-100 text-red-700 border border-red-300';
+  if (level >= 7) return 'bg-orange-100 text-orange-700 border border-orange-300';
+  if (level >= 6) return 'bg-amber-100 text-amber-700 border border-amber-300';
+  if (level >= 5) return 'bg-yellow-100 text-yellow-700 border border-yellow-300';
+  if (level >= 4) return 'bg-lime-100 text-lime-700 border border-lime-300';
+  if (level >= 3) return 'bg-green-100 text-green-700 border border-green-300';
+  if (level >= 2) return 'bg-teal-100 text-teal-700 border border-teal-300';
+  return 'bg-blue-100 text-blue-700 border border-blue-300';
+}
+
+function formatLevel(level: number): string {
+  return level % 1 === 0 ? `Nv ${level}` : `Nv ${level.toFixed(1)}`;
+}
+
 export default function LeagueStandings({ league, onBack }: LeagueStandingsProps) {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -96,6 +141,7 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
   const [selectedScoringTab, setSelectedScoringTab] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [selectedPlayerCategory, setSelectedPlayerCategory] = useState<string>('all');
+  const [selectedLevelRange, setSelectedLevelRange] = useState<string>('all');
   const [selectedGender, setSelectedGender] = useState<string>('all');
   const [playerCategories, setPlayerCategories] = useState<Map<string, PlayerCategory>>(new Map());
 
@@ -143,19 +189,24 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
       // Fetch player categories from player_accounts (the source of truth)
       const categoryMapByAccountId = new Map<string, PlayerCategory>();
       const categoryMapByName = new Map<string, PlayerCategory>();
+      const levelMapByAccountId = new Map<string, number>();
+      const levelMapByName = new Map<string, number>();
       
       if (playerAccountIds.length > 0) {
         const { data: playerAccounts } = await supabase
           .from('player_accounts')
-          .select('id, name, player_category')
+          .select('id, name, player_category, level')
           .in('id', playerAccountIds);
 
         if (playerAccounts) {
           playerAccounts.forEach(pa => {
             if (pa.player_category) {
               categoryMapByAccountId.set(pa.id, pa.player_category as PlayerCategory);
-              // Also add by name for fallback matching
               categoryMapByName.set(normalizeName(pa.name), pa.player_category as PlayerCategory);
+            }
+            if (pa.level != null) {
+              levelMapByAccountId.set(pa.id, Number(pa.level));
+              levelMapByName.set(normalizeName(pa.name), Number(pa.level));
             }
           });
         }
@@ -188,22 +239,29 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
       categoryMapByName.forEach((cat, name) => combinedCategoryMap.set(name, cat));
       setPlayerCategories(combinedCategoryMap);
 
-      // Map categories to standings
+      // Map categories and levels to standings
       standingsData = standingsData.map(s => {
         let category: PlayerCategory = null;
+        let level: number | null = null;
         
-        // First try: use player_account_id to get category (most reliable)
         if (s.player_account_id && categoryMapByAccountId.has(s.player_account_id)) {
           category = categoryMapByAccountId.get(s.player_account_id)!;
         } else {
-          // Fallback: try to match by name (for players without player_account_id)
           const normalizedName = normalizeName(s.entity_name);
           category = categoryMapByName.get(normalizedName) || null;
+        }
+
+        if (s.player_account_id && levelMapByAccountId.has(s.player_account_id)) {
+          level = levelMapByAccountId.get(s.player_account_id)!;
+        } else {
+          const normalizedName = normalizeName(s.entity_name);
+          level = levelMapByName.get(normalizedName) ?? null;
         }
         
         return {
           ...s,
-          player_category: category
+          player_category: category,
+          player_level: level,
         };
       });
     }
@@ -271,17 +329,31 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     return category.startsWith('M') ? 'M' : category.startsWith('F') ? 'F' : null;
   };
 
-  // Get combined categories from the league
   const combinedPlayerCategories = league.combined_player_categories || {};
+  const levelRanges = parseLevelRanges(league.categories || []);
+  const hasLevelRanges = levelRanges.length > 0;
+  const hasAnyLevels = standings.some(s => s.player_level != null);
 
   const filteredStandings = standings.filter(standing => {
-    // Filter by category (including combined categories)
+    // Filter by level range
+    let levelMatch = true;
+    if (selectedLevelRange !== 'all') {
+      if (selectedLevelRange === 'none') {
+        levelMatch = standing.player_level == null;
+      } else {
+        const range = levelRanges.find(r => r.label === selectedLevelRange);
+        if (range) {
+          levelMatch = playerMatchesLevelRange(standing.player_level, range);
+        }
+      }
+    }
+
+    // Filter by category (kept for backward compatibility when categories aren't level ranges)
     let categoryMatch = true;
-    if (selectedPlayerCategory !== 'all') {
+    if (!hasLevelRanges && selectedPlayerCategory !== 'all') {
       if (selectedPlayerCategory === 'none') {
         categoryMatch = !standing.player_category;
       } else if (combinedPlayerCategories[selectedPlayerCategory]) {
-        // Combined category: match any of the source categories
         const sourceCats = combinedPlayerCategories[selectedPlayerCategory];
         categoryMatch = standing.player_category != null && sourceCats.includes(standing.player_category);
       } else {
@@ -296,8 +368,13 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
       genderMatch = gender === selectedGender;
     }
 
-    return categoryMatch && genderMatch;
+    return levelMatch && categoryMatch && genderMatch;
   });
+
+  const levelRangeCounts = levelRanges.reduce((acc, range) => {
+    acc[range.label] = standings.filter(s => playerMatchesLevelRange(s.player_level, range)).length;
+    return acc;
+  }, {} as Record<string, number>);
 
   const categoryCounts = standings.reduce((acc, s) => {
     const cat = s.player_category || 'none';
@@ -305,7 +382,7 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
     return acc;
   }, {} as Record<string, number>);
 
-  const hasAnyPlayerCategories = standings.some(s => s.player_category);
+  const hasAnyPlayerCategories = !hasLevelRanges && standings.some(s => s.player_category);
 
   if (loading) {
     return (
@@ -403,7 +480,34 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                 </div>
 
-                {/* Category Filter */}
+                {/* Level Range Filter */}
+                {hasLevelRanges && hasAnyLevels && (
+                  <>
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <Filter className="w-4 h-4" />
+                      <span>Nível:</span>
+                    </div>
+                    <div className="relative">
+                      <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <select
+                        value={selectedLevelRange}
+                        onChange={(e) => setSelectedLevelRange(e.target.value)}
+                        className="pl-9 pr-8 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white text-sm"
+                      >
+                        <option value="all">Todos</option>
+                        {levelRanges.map(range => (
+                          <option key={range.label} value={range.label}>
+                            Nv {range.label} ({levelRangeCounts[range.label] || 0})
+                          </option>
+                        ))}
+                        <option value="none">Sem nível ({standings.filter(s => s.player_level == null).length})</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </>
+                )}
+
+                {/* Category Filter (fallback when no level ranges) */}
                 {hasAnyPlayerCategories && (
                   <>
                     <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -453,7 +557,7 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                   </>
                 )}
                 
-                {(selectedPlayerCategory !== 'all' || selectedGender !== 'all') && (
+                {(selectedLevelRange !== 'all' || selectedPlayerCategory !== 'all' || selectedGender !== 'all') && (
                   <span className="text-sm text-gray-500">
                     ({filteredStandings.length} jogadores)
                   </span>
@@ -465,7 +569,9 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
               <div className="p-12 text-center">
                 <Trophy className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-600">
-                  {selectedPlayerCategory !== 'all'
+                  {selectedLevelRange !== 'all'
+                    ? 'Nenhum jogador encontrado nesta faixa de nível'
+                    : selectedPlayerCategory !== 'all'
                     ? 'Nenhum jogador encontrado nesta categoria'
                     : t.league.standings.noStandings
                   }
@@ -519,9 +625,9 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                             <span className="text-sm font-medium text-gray-900">
                               {standing.entity_name}
                             </span>
-                            {standing.player_category && (
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${getCategoryBadgeColor(standing.player_category)}`}>
-                                {standing.player_category}
+                            {standing.player_level != null && (
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${getLevelBadgeColor(standing.player_level)}`}>
+                                {formatLevel(standing.player_level)}
                               </span>
                             )}
                           </div>
@@ -650,6 +756,65 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
             )}
           </div>
 
+          {hasLevelRanges && hasAnyLevels && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Tag className="w-5 h-5" />
+                Níveis
+              </h3>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setSelectedLevelRange('all')}
+                  className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                    selectedLevelRange === 'all'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'hover:bg-gray-100 text-gray-700'
+                  }`}
+                >
+                  <span className="px-2 py-0.5 rounded font-medium bg-gray-100 text-gray-700">
+                    Todos
+                  </span>
+                  <span className="font-semibold">{standings.length} jogadores</span>
+                </button>
+                {levelRanges.map(range => {
+                  const count = levelRangeCounts[range.label] || 0;
+                  const midLevel = range.max === Infinity ? range.min : (range.min + range.max) / 2;
+                  return (
+                    <button
+                      key={range.label}
+                      onClick={() => setSelectedLevelRange(range.label)}
+                      className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                        selectedLevelRange === range.label
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'hover:bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      <span className={`px-2 py-0.5 rounded font-medium ${getLevelBadgeColor(midLevel)}`}>
+                        Nv {range.label}
+                      </span>
+                      <span className="font-semibold">{count} jogadores</span>
+                    </button>
+                  );
+                })}
+                {standings.filter(s => s.player_level == null).length > 0 && (
+                  <button
+                    onClick={() => setSelectedLevelRange('none')}
+                    className={`w-full flex justify-between items-center px-3 py-2 rounded-lg text-sm transition-colors ${
+                      selectedLevelRange === 'none'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'hover:bg-gray-100 text-gray-700'
+                    }`}
+                  >
+                    <span className="px-2 py-0.5 rounded font-medium bg-gray-100 text-gray-500">
+                      Sem nível
+                    </span>
+                    <span className="font-semibold">{standings.filter(s => s.player_level == null).length} jogadores</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {hasAnyPlayerCategories && (
             <div className="bg-white rounded-lg shadow p-6">
               <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
@@ -657,7 +822,6 @@ export default function LeagueStandings({ league, onBack }: LeagueStandingsProps
                 Categorias de Jogadores
               </h3>
               <div className="space-y-2">
-                {/* Combined categories first */}
                 {Object.entries(combinedPlayerCategories).map(([name, sources]) => {
                   const count = standings.filter(s => 
                     s.player_category && sources.includes(s.player_category)
