@@ -210,7 +210,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
   const isIndividualFormat = () => {
     const fmt = tournament.format;
-    if (['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'].includes(fmt)) {
+    if (['individual_groups_knockout', 'mixed_american'].includes(fmt)) {
       return true;
     }
     if (fmt === 'round_robin' && tournament.round_robin_type === 'individual') {
@@ -304,8 +304,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       ? false // Formato de equipas
       : (category?.format === 'individual_groups_knockout' ||
       category?.format === 'mixed_american' ||
-      category?.format === 'crossed_playoffs' ||
-      category?.format === 'mixed_gender' ||
       (category?.format === 'round_robin' && tournament.round_robin_type === 'individual'));
 
     if (isCategoryIndividual) {
@@ -343,9 +341,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const fetchTeamsCount = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
                          tournament.format === 'individual_groups_knockout' ||
-                         tournament.format === 'mixed_american' ||
-                         tournament.format === 'crossed_playoffs' ||
-                         tournament.format === 'mixed_gender';
+                         tournament.format === 'mixed_american';
 
     if (isIndividual) {
       const { count } = await supabase
@@ -365,9 +361,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const fetchAllRegistered = async () => {
     const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
                          tournament.format === 'individual_groups_knockout' ||
-                         tournament.format === 'mixed_american' ||
-                         tournament.format === 'crossed_playoffs' ||
-                         tournament.format === 'mixed_gender';
+                         tournament.format === 'mixed_american';
 
     if (isIndividual) {
       const { data } = await supabase
@@ -1336,8 +1330,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
         <button
           onClick={() => {
-            setIsNewPlayer(true);
-            setStep('register');
+            const returnUrl = window.location.href;
+            window.location.href = `https://padel1.app/register?returnTo=${encodeURIComponent(returnUrl)}`;
           }}
           className="w-full px-6 py-3 border-2 border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
         >

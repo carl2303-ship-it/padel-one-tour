@@ -14,6 +14,13 @@ export interface AmericanMatch {
   court: string;
 }
 
+export interface ExistingMatch {
+  player1_id: string;
+  player2_id: string;
+  player3_id: string;
+  player4_id: string;
+}
+
 export function generateAmericanSchedule(
   players: Player[],
   numberOfCourts: number,
@@ -22,9 +29,10 @@ export function generateAmericanSchedule(
   endTime: string = '21:00',
   matchDurationMinutes: number = 90,
   matchesPerPlayer: number = 7,
-  outdoorCourtIndices: Set<number> = new Set()
+  outdoorCourtIndices: Set<number> = new Set(),
+  existingMatches: ExistingMatch[] = []
 ): AmericanMatch[] {
-  console.log('[AMERICAN] Generating schedule for', players.length, 'players, requested', matchesPerPlayer, 'matches per player');
+  console.log('[AMERICAN] Generating schedule for', players.length, 'players, requested', matchesPerPlayer, 'matches per player, existing:', existingMatches.length);
 
   if (players.length < 4) {
     console.error('[AMERICAN] Need at least 4 players');
@@ -59,6 +67,32 @@ export function generateAmericanSchedule(
       }
     });
   });
+
+  // Pre-seed counters with existing completed matches
+  const playerMatchCount = new Map<string, number>();
+  players.forEach(p => playerMatchCount.set(p.id, 0));
+
+  if (existingMatches.length > 0) {
+    const playerIds = new Set(players.map(p => p.id));
+    for (const em of existingMatches) {
+      const p1 = em.player1_id, p2 = em.player2_id, p3 = em.player3_id, p4 = em.player4_id;
+      if (!playerIds.has(p1) || !playerIds.has(p2) || !playerIds.has(p3) || !playerIds.has(p4)) continue;
+
+      // Record partnerships: p1+p2 and p3+p4
+      if (partnershipCounts.has(p1)) partnershipCounts.get(p1)!.set(p2, (partnershipCounts.get(p1)!.get(p2) || 0) + 1);
+      if (partnershipCounts.has(p3)) partnershipCounts.get(p3)!.set(p4, (partnershipCounts.get(p3)!.get(p4) || 0) + 1);
+
+      // Record opponents
+      if (opponentCounts.has(p1)) opponentCounts.get(p1)!.set(p3, (opponentCounts.get(p1)!.get(p3) || 0) + 1);
+      if (opponentCounts.has(p1)) opponentCounts.get(p1)!.set(p4, (opponentCounts.get(p1)!.get(p4) || 0) + 1);
+      if (opponentCounts.has(p2)) opponentCounts.get(p2)!.set(p3, (opponentCounts.get(p2)!.get(p3) || 0) + 1);
+      if (opponentCounts.has(p2)) opponentCounts.get(p2)!.set(p4, (opponentCounts.get(p2)!.get(p4) || 0) + 1);
+
+      // Count matches per player
+      [p1, p2, p3, p4].forEach(pid => playerMatchCount.set(pid, (playerMatchCount.get(pid) || 0) + 1));
+    }
+    console.log('[AMERICAN] Pre-seeded with', existingMatches.length, 'existing matches. Current counts:', Array.from(playerMatchCount.entries()).map(([id, c]) => `${players.find(p=>p.id===id)?.name}:${c}`).join(', '));
+  }
 
   const getPartnershipCount = (p1: string, p2: string): number => {
     return (partnershipCounts.get(p1)?.get(p2) || 0) + (partnershipCounts.get(p2)?.get(p1) || 0);
@@ -102,9 +136,6 @@ export function generateAmericanSchedule(
 
     return score;
   };
-
-  const playerMatchCount = new Map<string, number>();
-  players.forEach(p => playerMatchCount.set(p.id, 0));
 
   let matchNumber = 1;
   let roundNumber = 1;

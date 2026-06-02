@@ -14,8 +14,6 @@ type TournamentFormat =
   | 'single_elimination'
   | 'round_robin_teams'
   | 'super_teams'
-  | 'crossed_playoffs'
-  | 'mixed_gender'
   | 'mixed_american';
 
 interface FormatResult {
@@ -81,8 +79,6 @@ export default function TournamentSimulator({ onClose }: TournamentSimulatorProp
       { format: 'single_elimination', name: 'Eliminação Simples' },
       { format: 'round_robin_teams', name: 'Americano Equipas' },
       { format: 'super_teams', name: 'Super Equipas' },
-      { format: 'crossed_playoffs', name: 'Playoffs Cruzados' },
-      { format: 'mixed_gender', name: 'Misto Género' },
       { format: 'mixed_american', name: 'Americano Misto' },
     ];
 
@@ -112,8 +108,6 @@ export default function TournamentSimulator({ onClose }: TournamentSimulatorProp
     if (
       format === 'groups_knockout' ||
       format === 'individual_groups_knockout' ||
-      format === 'crossed_playoffs' ||
-      format === 'mixed_gender' ||
       format === 'mixed_american'
     ) {
       // Para formatos com grupos, tentar diferentes configurações

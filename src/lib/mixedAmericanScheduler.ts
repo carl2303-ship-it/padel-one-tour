@@ -41,12 +41,37 @@ export interface MixedAmericanMatch {
  * @param matchesPerPlayer - Nº exacto de jogos por jogador (default 7)
  * @returns Array de jogos gerados
  */
+function recordPartnershipDirect(counts: Map<string, number>, manId: string, womanId: string) {
+  const key = `${manId}_${womanId}`;
+  counts.set(key, (counts.get(key) || 0) + 1);
+}
+
+function recordOpponentsDirect(counts: Map<string, number>, m1: string, w1: string, m2: string, w2: string) {
+  for (const [a, b] of [[m1, m2], [w1, w2], [m1, w2], [w1, m2]]) {
+    const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+}
+
+export interface ExistingMixedMatch {
+  player1_id: string;
+  player2_id: string;
+  player3_id: string;
+  player4_id: string;
+}
+
 export function generateMixedAmericanSchedule(
   men: MixedPlayer[],
   women: MixedPlayer[],
-  matchesPerPlayer: number = 7
+  matchesPerPlayer: number = 7,
+  numberOfCourts: number = 2,
+  startDate: string = '',
+  startTime: string = '09:00',
+  endTime: string = '21:00',
+  matchDurationMinutes: number = 90,
+  existingMatches: ExistingMixedMatch[] = []
 ): MixedAmericanMatch[] {
-  console.log(`[MIXED-AMERICAN] Generating schedule: ${men.length} men, ${women.length} women, target ${matchesPerPlayer} matches/player`);
+  console.log(`[MIXED-AMERICAN] Generating schedule: ${men.length} men, ${women.length} women, target ${matchesPerPlayer} matches/player, existing: ${existingMatches.length}`);
 
   if (men.length < 2 || women.length < 2) {
     console.error('[MIXED-AMERICAN] Need at least 2 men and 2 women');
@@ -61,6 +86,25 @@ export function generateMixedAmericanSchedule(
   const playerMatchCount = new Map<string, number>();
 
   [...men, ...women].forEach(p => playerMatchCount.set(p.id, 0));
+
+  // Pre-seed counters with existing completed matches
+  if (existingMatches.length > 0) {
+    const allPlayerIds = new Set([...men, ...women].map(p => p.id));
+    for (const em of existingMatches) {
+      if (!allPlayerIds.has(em.player1_id) || !allPlayerIds.has(em.player2_id) ||
+          !allPlayerIds.has(em.player3_id) || !allPlayerIds.has(em.player4_id)) continue;
+
+      // player1=man1, player2=woman1, player3=man2, player4=woman2
+      recordPartnershipDirect(partnershipCounts, em.player1_id, em.player2_id);
+      recordPartnershipDirect(partnershipCounts, em.player3_id, em.player4_id);
+      recordOpponentsDirect(opponentCounts, em.player1_id, em.player2_id, em.player3_id, em.player4_id);
+
+      [em.player1_id, em.player2_id, em.player3_id, em.player4_id].forEach(pid =>
+        playerMatchCount.set(pid, (playerMatchCount.get(pid) || 0) + 1)
+      );
+    }
+    console.log('[MIXED-AMERICAN] Pre-seeded with', existingMatches.length, 'existing matches');
+  }
 
   const getPartnerKey = (manId: string, womanId: string) => `${manId}_${womanId}`;
   const getOpponentKey = (id1: string, id2: string) => id1 < id2 ? `${id1}_${id2}` : `${id2}_${id1}`;
@@ -111,15 +155,30 @@ export function generateMixedAmericanSchedule(
 
   let matchNumber = 1;
 
-  for (let round = 1; round <= matchesPerPlayer; round++) {
+  // Calculate how many rounds still needed (account for existing matches)
+  const maxRounds = matchesPerPlayer * 2;
+
+  for (let round = 1; round <= maxRounds; round++) {
+    // Check if all players have reached target
+    const minCount = Math.min(...Array.from(playerMatchCount.values()));
+    if (minCount >= matchesPerPlayer) {
+      console.log(`[MIXED-AMERICAN] All players reached ${matchesPerPlayer} matches. Stopping.`);
+      break;
+    }
+
+    // Filter only players who haven't reached the target
+    const availMen = men.filter(p => (playerMatchCount.get(p.id) || 0) < matchesPerPlayer);
+    const availWomen = women.filter(p => (playerMatchCount.get(p.id) || 0) < matchesPerPlayer);
+    if (availMen.length < 2 || availWomen.length < 2) break;
+
     // Ordenar jogadores por nº de jogos (quem jogou menos joga primeiro)
-    const sortedMen = [...men].sort((a, b) => {
+    const sortedMen = [...availMen].sort((a, b) => {
       const diff = (playerMatchCount.get(a.id) || 0) - (playerMatchCount.get(b.id) || 0);
       if (diff !== 0) return diff;
       return Math.random() - 0.5; // desempate aleatório
     });
 
-    const sortedWomen = [...women].sort((a, b) => {
+    const sortedWomen = [...availWomen].sort((a, b) => {
       const diff = (playerMatchCount.get(a.id) || 0) - (playerMatchCount.get(b.id) || 0);
       if (diff !== 0) return diff;
       return Math.random() - 0.5;
@@ -214,6 +273,74 @@ export function generateMixedAmericanSchedule(
   let uniquePartnerships = 0;
   partnershipCounts.forEach((count) => { if (count > 0) uniquePartnerships++; });
   console.log(`[MIXED-AMERICAN] Unique M+F partnerships: ${uniquePartnerships} / ${men.length * women.length} possible`);
+
+  // Temporal scheduling: assign times and courts
+  if (startDate) {
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+    const startTotalMinutes = startHour * 60 + startMinute;
+    const endTotalMinutes = endHour * 60 + (endMinute || 0);
+    let availableMinutesPerDay = endTotalMinutes - startTotalMinutes;
+    if (availableMinutesPerDay <= 0) {
+      availableMinutesPerDay = (24 * 60 - startTotalMinutes) + endTotalMinutes;
+    }
+
+    const busyPlayers = new Map<string, Set<string>>();
+    const occupiedCourts = new Map<string, Set<number>>();
+
+    for (const match of matches) {
+      let scheduled = false;
+      let currentTimeSlot = 0;
+      const maxTimeSlots = Math.floor(availableMinutesPerDay / matchDurationMinutes) * 100;
+
+      while (!scheduled && currentTimeSlot < maxTimeSlots) {
+        const totalMinutesFromStart = currentTimeSlot * matchDurationMinutes;
+        const daysFromStart = Math.floor(totalMinutesFromStart / availableMinutesPerDay);
+        const minutesInDay = totalMinutesFromStart % availableMinutesPerDay;
+
+        const totalMinutes = startHour * 60 + startMinute + minutesInDay;
+        const matchHour = Math.floor(totalMinutes / 60) % 24;
+        const matchMinuteVal = totalMinutes % 60;
+
+        const [year, month, day] = startDate.split('-').map(Number);
+        const matchDate = new Date(year, month - 1, day + daysFromStart, matchHour, matchMinuteVal, 0, 0);
+        const dateString = `${matchDate.getFullYear()}-${String(matchDate.getMonth() + 1).padStart(2, '0')}-${String(matchDate.getDate()).padStart(2, '0')}`;
+        const timeString = `${String(matchHour).padStart(2, '0')}:${String(matchMinuteVal).padStart(2, '0')}`;
+        const timeKey = `${dateString}T${timeString}:00`;
+
+        const busyAtThisTime = busyPlayers.get(timeKey) || new Set();
+        const playersInMatch = [match.player1_id, match.player2_id, match.player3_id, match.player4_id];
+        const hasConflict = playersInMatch.some(p => busyAtThisTime.has(p));
+
+        if (!hasConflict) {
+          const usedCourts = occupiedCourts.get(timeKey) || new Set();
+          let bestCourt = -1;
+          for (let c = 1; c <= numberOfCourts; c++) {
+            if (!usedCourts.has(c)) { bestCourt = c; break; }
+          }
+
+          if (bestCourt !== -1) {
+            match.scheduled_time = matchDate.toISOString();
+            match.court = String(bestCourt);
+
+            if (!busyPlayers.has(timeKey)) busyPlayers.set(timeKey, new Set());
+            playersInMatch.forEach(p => busyPlayers.get(timeKey)!.add(p));
+
+            if (!occupiedCourts.has(timeKey)) occupiedCourts.set(timeKey, new Set());
+            occupiedCourts.get(timeKey)!.add(bestCourt);
+
+            scheduled = true;
+          }
+        }
+        currentTimeSlot++;
+      }
+
+      if (!scheduled) {
+        console.error('[MIXED-AMERICAN] Could not schedule match:', match.match_number);
+      }
+    }
+    console.log('[MIXED-AMERICAN] Temporal scheduling complete');
+  }
 
   return matches;
 }

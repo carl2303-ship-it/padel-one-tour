@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
-import { X, Lock, Mail, CheckCircle, AlertCircle, CreditCard, Image, KeyRound, Send, Bell, BellOff } from 'lucide-react';
+import { X, Lock, Mail, CheckCircle, AlertCircle, CreditCard, Image, KeyRound, Send, Bell, BellOff, Upload } from 'lucide-react';
 
 interface UserSettingsProps {
   onClose: () => void;
@@ -33,8 +33,11 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
   const [stripeMessage, setStripeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [logoUrl, setLogoUrl] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoLoading, setLogoLoading] = useState(false);
   const [logoMessage, setLogoMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const [resetPhoneNumber, setResetPhoneNumber] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
@@ -285,13 +288,41 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
     }
   };
 
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setLogoPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
   const handleSaveLogoSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setLogoMessage(null);
     setLogoLoading(true);
 
     try {
-      if (!logoUrl.trim()) {
+      let finalLogoUrl = logoUrl.trim();
+
+      if (logoFile) {
+        const fileExt = logoFile.name.split('.').pop();
+        const fileName = `${user?.id}-${Date.now()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('tournament-images')
+          .upload(`logos/${fileName}`, logoFile, { upsert: true });
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('tournament-images')
+          .getPublicUrl(`logos/${fileName}`);
+
+        finalLogoUrl = publicUrl;
+      }
+
+      if (!finalLogoUrl) {
         setLogoMessage({ type: 'error', text: t.settings.logo.error });
         setLogoLoading(false);
         return;
@@ -307,7 +338,7 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
         const { error } = await supabase
           .from('user_logo_settings')
           .update({
-            logo_url: logoUrl,
+            logo_url: finalLogoUrl,
             updated_at: new Date().toISOString(),
           })
           .eq('user_id', user?.id);
@@ -318,12 +349,15 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
           .from('user_logo_settings')
           .insert({
             user_id: user?.id,
-            logo_url: logoUrl,
+            logo_url: finalLogoUrl,
           });
 
         if (error) throw error;
       }
 
+      setLogoUrl(finalLogoUrl);
+      setLogoFile(null);
+      setLogoPreview(null);
       setLogoMessage({ type: 'success', text: t.settings.logo.saved });
       setTimeout(() => {
         window.location.reload();
@@ -456,34 +490,59 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
             <form onSubmit={handleSaveLogoSettings} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {(t.settings.logo as any).upload || 'Upload Logo'}
+                </label>
+                <div
+                  onClick={() => logoInputRef.current?.click()}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
+                >
+                  {logoPreview || logoUrl ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <img
+                        src={logoPreview || logoUrl}
+                        alt={t.settings.logo.previewAlt}
+                        className="h-20 max-w-[200px] object-contain"
+                      />
+                      <p className="text-sm text-blue-600 font-medium">
+                        {(t.settings.logo as any).changeImage || 'Click to change'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2">
+                      <Upload className="w-10 h-10 text-gray-400" />
+                      <p className="text-sm text-gray-600 font-medium">
+                        {(t.settings.logo as any).clickToUpload || 'Click to upload your logo'}
+                      </p>
+                      <p className="text-xs text-gray-400">PNG, JPG, SVG (max 2MB)</p>
+                    </div>
+                  )}
+                </div>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoFileChange}
+                  className="hidden"
+                />
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200"></div></div>
+                <div className="relative flex justify-center"><span className="bg-white px-3 text-xs text-gray-400">{(t.settings.logo as any).orCustomUrl || 'or enter a URL'}</span></div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   {t.settings.logo.url}
                 </label>
                 <input
                   type="url"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
+                  value={logoFile ? '' : logoUrl}
+                  onChange={(e) => { setLogoUrl(e.target.value); setLogoFile(null); setLogoPreview(null); }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="https://example.com/your-logo.png"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  {t.settings.logo.urlHelper}
-                </p>
               </div>
-
-              {logoUrl && (
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm font-medium text-gray-700 mb-2">{t.settings.logo.preview}</p>
-                  <img
-                    src={logoUrl}
-                    alt={t.settings.logo.previewAlt}
-                    className="h-16 object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = '';
-                      (e.target as HTMLImageElement).alt = 'Failed to load image';
-                    }}
-                  />
-                </div>
-              )}
 
               {logoMessage && (
                 <div className={`flex items-center gap-2 p-4 rounded-lg ${

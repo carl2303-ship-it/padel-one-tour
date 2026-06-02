@@ -102,8 +102,6 @@ export default function AddIndividualPlayerModal({
       const individualCategories = data.filter(cat =>
         cat.format === 'round_robin' ||
         cat.format === 'individual_groups_knockout' ||
-        cat.format === 'crossed_playoffs' ||
-        cat.format === 'mixed_gender' ||
         cat.format === 'mixed_american'
       );
       setCategories(individualCategories);
@@ -156,6 +154,33 @@ export default function AddIndividualPlayerModal({
         return acc;
       }, []);
 
+      const phones = uniquePlayers
+        .map(p => p.phone_number?.replace(/\s+/g, ''))
+        .filter((p): p is string => !!p);
+
+      if (phones.length > 0) {
+        const { data: accounts } = await supabase
+          .from('player_accounts')
+          .select('phone_number, name')
+          .in('phone_number', phones);
+
+        if (accounts) {
+          const nameByPhone = new Map<string, string>();
+          for (const acc of accounts) {
+            if (acc.phone_number && acc.name) {
+              nameByPhone.set(acc.phone_number.replace(/\s+/g, ''), acc.name);
+            }
+          }
+          for (const player of uniquePlayers) {
+            const normalizedPhone = player.phone_number?.replace(/\s+/g, '');
+            if (normalizedPhone && nameByPhone.has(normalizedPhone)) {
+              player.name = nameByPhone.get(normalizedPhone)!;
+            }
+          }
+        }
+      }
+
+      uniquePlayers.sort((a, b) => a.name.localeCompare(b.name));
       setExistingPlayers(uniquePlayers);
       if (uniquePlayers.length === 0) {
         setMode('new');

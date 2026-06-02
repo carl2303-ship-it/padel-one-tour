@@ -103,8 +103,8 @@ Deno.serve(async (req: Request) => {
     const { data: standings, error: standingsError } = await supabase
       .from('league_standings')
       .select(`
-        id, league_id, total_points, tournaments_played, entity_name,
-        leagues!inner(id, name)
+        id, league_id, total_points, tournaments_played, entity_name, category,
+        leagues!inner(id, name, status, end_date, categories)
       `)
       .or(standingsConditions.join(','))
       .order('total_points', { ascending: false });
@@ -140,6 +140,10 @@ Deno.serve(async (req: Request) => {
         return {
           league_id: leagueId,
           league_name: s.leagues?.name || '',
+          league_status: s.leagues?.status || 'active',
+          league_end_date: s.leagues?.end_date || null,
+          league_categories: s.leagues?.categories || [],
+          player_category: s.category || null,
           position,
           total_participants: allStandings?.length || 0,
           points: s.total_points,

@@ -65,8 +65,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const [loading, setLoading] = useState(true);
 
   const isIndividualRoundRobin = format === 'round_robin' && roundRobinType === 'individual';
-  const isIndividualGroupsKnockout = format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender' || format === 'mixed_american';
-  const isMixedAmerican = format === 'mixed_american' || format === 'mixed_gender'; // Kept for rendering label only
+  const isIndividualGroupsKnockout = format === 'individual_groups_knockout' || format === 'mixed_american';
+  const isMixedAmerican = format === 'mixed_american';
   const isCrossedPlayoffsTeams = format === 'crossed_playoffs_teams';
 
   useEffect(() => {

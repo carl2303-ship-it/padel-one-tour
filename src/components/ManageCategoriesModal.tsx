@@ -36,8 +36,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [tournamentFormat, setTournamentFormat] = useState<string>('groups_knockout');
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
 
-  const individualFormats = ['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'];
-  const isGroupsFormat = (fmt: string) => ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'].includes(fmt);
+  const individualFormats = ['individual_groups_knockout', 'mixed_american'];
+  const isGroupsFormat = (fmt: string) => ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs_teams', 'mixed_american'].includes(fmt);
   const isIndividualFormat = (fmt: string, rrType: string | null) =>
     individualFormats.includes(fmt) || (fmt === 'round_robin' && rrType === 'individual');
 

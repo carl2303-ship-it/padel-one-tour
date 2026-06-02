@@ -990,7 +990,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         }
       }
 
-      if ((tournament?.format === 'individual_groups_knockout' || tournament?.format === 'mixed_american' || tournament?.format === 'mixed_gender') && currentMatch) {
+      if ((tournament?.format === 'individual_groups_knockout' || tournament?.format === 'mixed_american') && currentMatch) {
         const isGroupMatch = currentMatch.round.startsWith('group_');
 
         if (isGroupMatch) {
@@ -1004,9 +1004,9 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             const allGroupsDone = groupMatchesAll.every(m => m.status === 'completed');
 
             if (allGroupsDone) {
-              // Para mixed_american/mixed_gender, NÃO usar populatePlacementMatches genérica
+              // Para mixed_american, NÃO usar populatePlacementMatches genérica
               // O auto-fill correto (com cruzamento F+M) é feito no fetchTournamentData / handleMatchRealtime
-              if (tournament?.format === 'mixed_american' || tournament?.format === 'mixed_gender') {
+              if (tournament?.format === 'mixed_american') {
                 console.log('[MATCH_MODAL] All group matches completed (mixed format) - knockout will be populated by fetchTournamentData');
               } else {
                 console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');

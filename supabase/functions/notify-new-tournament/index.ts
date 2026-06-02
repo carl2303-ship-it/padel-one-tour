@@ -149,7 +149,6 @@ Deno.serve(async (req: Request) => {
         ladder: "Escada",
         individual_groups_knockout: "Individual",
         mixed_american: "Misto Americano",
-        mixed_gender: "Misto",
         super_teams: "Super Equipas",
       };
       const formatLabel = formatLabels[tournament.format] || tournament.format || "";

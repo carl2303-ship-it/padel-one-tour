@@ -19,7 +19,7 @@ type BracketViewProps = {
 };
 
 export default function BracketView({ matches, onMatchClick, isIndividual = false, individualPlayers = [], tournamentFormat }: BracketViewProps) {
-  const isMixedFormat = tournamentFormat === 'mixed_american' || tournamentFormat === 'mixed_gender';
+  const isMixedFormat = tournamentFormat === 'mixed_american';
   const hasR2Semifinals = matches.some(m => m.round === 'crossed_r2_j1' || m.round === 'crossed_r2_j2');
   const isDirectCrossedSemifinals = !hasR2Semifinals;
   

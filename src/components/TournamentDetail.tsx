@@ -18,6 +18,7 @@ import { processAllUnratedMatches, awardTournamentRewardPoints } from '../lib/ra
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
+import { generateMixedAmericanSchedule, MixedPlayer } from '../lib/mixedAmericanScheduler';
 import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner } from '../lib/groups';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
@@ -205,18 +206,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           } else if (newRecord.round === 'semifinal') {
             // Avançar meias-finais → final e 3°/4° lugar
             setTimeout(() => autoAdvanceSemifinals(updated), 500);
-          } else if (newRecord.round?.startsWith('group_')) {
-            const groupMatches = updated.filter(m => m.round.startsWith('group_'));
+          } else if (newRecord.round?.startsWith('group_') || newRecord.round?.startsWith('round_')) {
+            const fmt = tournament.format;
+            const roundPrefix = fmt === 'mixed_american' ? 'round_' : 'group_';
+            const groupMatches = updated.filter(m => m.round.startsWith(roundPrefix));
             const allGroupsDone = groupMatches.length > 0 && groupMatches.every(m => m.status === 'completed');
             
             if (allGroupsDone) {
-              // Use tournament.format (prop) instead of currentTournament (potentially stale state)
-              const fmt = tournament.format;
-              if (fmt === 'mixed_american' || fmt === 'mixed_gender') {
-                console.log('[REALTIME] All groups done (mixed_american/mixed_gender) - refetching to auto-populate knockouts');
+              if (fmt === 'mixed_american') {
+                console.log('[REALTIME] All rounds done (mixed_american) - refetching to auto-populate knockouts');
                 setTimeout(() => fetchTournamentData(), 500);
-              } else if (fmt === 'crossed_playoffs') {
-                setTimeout(() => autoFillCrossedPlayoffsR1(updated), 500);
               } else if (fmt === 'crossed_playoffs_teams') {
                 console.log('[REALTIME] Crossed playoffs teams - groups done, refetching');
                 setTimeout(() => fetchTournamentData(), 500);
@@ -298,8 +297,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const isIndividualRoundRobin = resolvedFormat === 'round_robin' && resolvedRoundRobinType === 'individual';
   const isIndividualGroupsKnockout = resolvedFormat === 'individual_groups_knockout' ||
-    resolvedFormat === 'crossed_playoffs' ||
-    resolvedFormat === 'mixed_gender' ||
     resolvedFormat === 'mixed_american';
   const isSuperTeams = resolvedFormat === 'super_teams';
 
@@ -1083,7 +1080,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     // Prefer currentTournament (estado local atualizado) e fazer fallback para prop inicial.
     const effectiveFormat = currentTournament?.format || tournament.format;
     let effectiveRoundRobinType = (currentTournament as any)?.round_robin_type ?? (tournament as any).round_robin_type;
-    const individualFormats = ['individual_groups_knockout', 'crossed_playoffs', 'mixed_gender', 'mixed_american'];
+    const individualFormats = ['individual_groups_knockout', 'mixed_american'];
 
     // Auto-detect round_robin type for legacy tournaments with null round_robin_type
     if (effectiveFormat === 'round_robin' && !effectiveRoundRobinType) {
@@ -1298,19 +1295,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // ================================================================
       if (matchesResult.data && playersResult.data && categoriesResult.data) {
         const allMatchesLocal = matchesResult.data as unknown as MatchWithTeams[];
-        const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('group_'));
+        const roundPrefix = effectiveFormat === 'mixed_american' ? 'round_' : 'group_';
+        const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith(roundPrefix));
         const allGroupsDoneLocal = groupMatchesLocal.length > 0 && groupMatchesLocal.every(m => m.status === 'completed');
         const hasCrossedRounds = matchesResult.data.some((m: any) => m.round === 'crossed_r1_j1');
         const hasSemifinalRounds = matchesResult.data.some((m: any) => m.round === 'semifinal');
         
         console.log('[FETCH-CHECK] Format:', effectiveFormat, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
-        
-        // [DISABLED] AUTO-FIX que apagava crossed rounds e recriava knockouts em cada fetch.
-        // Causava alteração contínua de campos/horários sempre que se abria a app.
-        // Para regenerar manualmente, use o botão "Gerar Calendário".
-        // if ((effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') && hasCrossedRounds) {
-        //   ...
-        // }
         
         if (allGroupsDoneLocal) {
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
@@ -1358,121 +1349,134 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           try {
             // ================================================================
-            // MIXED AMERICAN: popular meias-finais com cruzamento F + M
+            // MIXED AMERICAN (1H+1M): popular semifinals com equipas mistas
+            // Ranking geral individual → top 4 homens + top 4 mulheres
+            // SF1: 1°H + 4°M vs 2°H + 3°M
+            // SF2: 3°H + 2°M vs 4°H + 1°M
             // ================================================================
-            if (effectiveFormat === 'mixed_american' || effectiveFormat === 'mixed_gender') {
-              // [DISABLED] Apagar crossed rounds e recriar knockouts em cada fetch.
-              // Causava alteração contínua de campos/horários sempre que se abria a app.
-              // if (hasCrossedRounds) { ... }
-              
-              // Popular meias-finais (verificar sempre para corrigir populações incorretas)
-              if (hasSemifinalRounds && sortedCats.length >= 2) {
-                const sfMatches = matchesResult.data!
-                  .filter((m: any) => m.round === 'semifinal')
-                  .sort((a: any, b: any) => a.match_number - b.match_number);
-                
-                if (sfMatches.length >= 2) {
-                  const rankF = getCatRankings(sortedCats[0].id);
-                  const rankM = getCatRankings(sortedCats[1].id);
-                  console.log(`[FETCH-FILL] MA Rankings: ${sortedCats[0].name}=[${rankF.map(p=>p.name)}], ${sortedCats[1].name}=[${rankM.map(p=>p.name)}]`);
-                  
-                  if (rankF.length >= 4 && rankM.length >= 4) {
-                    // Verificar se os emparelhamentos estão corretos
-                    const sf1 = sfMatches[0];
-                    const expectedSF1 = {
-                      p1: rankF[0].id, p2: rankM[3].id,
-                      p3: rankF[1].id, p4: rankM[2].id
-                    };
-                    const expectedSF2 = {
-                      p1: rankF[2].id, p2: rankM[1].id,
-                      p3: rankF[3].id, p4: rankM[0].id
-                    };
-                    
-                    const sf1Correct = sf1.player1_individual_id === expectedSF1.p1 &&
-                                       sf1.player2_individual_id === expectedSF1.p2 &&
-                                       sf1.player3_individual_id === expectedSF1.p3 &&
-                                       sf1.player4_individual_id === expectedSF1.p4;
-                    const sf2 = sfMatches[1];
-                    const sf2Correct = sf2.player1_individual_id === expectedSF2.p1 &&
-                                       sf2.player2_individual_id === expectedSF2.p2 &&
-                                       sf2.player3_individual_id === expectedSF2.p3 &&
-                                       sf2.player4_individual_id === expectedSF2.p4;
-                    
-                    if (!autoPopulateAttemptedRef.current && (!sf1Correct || !sf2Correct)) {
-                      autoPopulateAttemptedRef.current = true;
-                      console.log('[FETCH-FILL] MA Semifinals incorretas ou vazias, corrigindo...');
+            if (effectiveFormat === 'mixed_american' && hasSemifinalRounds) {
+              const sfMatches = matchesResult.data!
+                .filter((m: any) => m.round === 'semifinal')
+                .sort((a: any, b: any) => a.match_number - b.match_number);
+
+              if (sfMatches.length >= 2) {
+                // Get gender for all players from player_accounts
+                const allPlayerIds = allMatchesLocal.flatMap(m => [
+                  m.player1_individual_id, m.player2_individual_id,
+                  m.player3_individual_id, m.player4_individual_id
+                ].filter(Boolean));
+                const enrolledPlayers = playersResult.data || [];
+                const playerPhones = enrolledPlayers
+                  .map((p: any) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
+                  .filter(Boolean);
+                const { data: genderAccounts } = await supabase
+                  .from('player_accounts')
+                  .select('phone_number, gender')
+                  .in('phone_number', playerPhones);
+                const genderByPhone = new Map<string, string>();
+                (genderAccounts || []).forEach((a: any) => {
+                  if (a.phone_number && a.gender) {
+                    genderByPhone.set(a.phone_number.replace(/[\s\-\(\)\.]/g, ''), a.gender);
+                  }
+                });
+
+                // Build ranking from all round_* matches (individual points)
+                const groupMatches = allMatchesLocal.filter(m => m.round?.startsWith('round_'));
+                const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number; gender: string }>();
+                for (const p of enrolledPlayers) {
+                  const phone = ((p as any).phone_number || '').replace(/[\s\-\(\)\.]/g, '');
+                  const g = genderByPhone.get(phone) === 'female' ? 'F' : 'M';
+                  playerStats.set(p.id, { id: p.id, name: p.name, wins: 0, gamesWon: 0, gamesLost: 0, gender: g });
+                }
+
+                for (const m of groupMatches) {
+                  if (m.status !== 'completed') continue;
+                  const s1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+                  const s2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+                  const t1Players = [m.player1_individual_id, m.player2_individual_id].filter(Boolean);
+                  const t2Players = [m.player3_individual_id, m.player4_individual_id].filter(Boolean);
+                  const t1Won = s1 > s2;
+                  for (const pid of t1Players) {
+                    const st = playerStats.get(pid!);
+                    if (st) { st.gamesWon += s1; st.gamesLost += s2; if (t1Won) st.wins++; }
+                  }
+                  for (const pid of t2Players) {
+                    const st = playerStats.get(pid!);
+                    if (st) { st.gamesWon += s2; st.gamesLost += s1; if (!t1Won) st.wins++; }
+                  }
+                }
+
+                const allRanked = Array.from(playerStats.values())
+                  .sort((a, b) => b.wins - a.wins || (b.gamesWon - b.gamesLost) - (a.gamesWon - a.gamesLost) || b.gamesWon - a.gamesWon);
+                const rankedMen = allRanked.filter(p => p.gender === 'M');
+                const rankedWomen = allRanked.filter(p => p.gender === 'F');
+
+                console.log(`[FETCH-FILL] MA Mixed Rankings: Men=[${rankedMen.map(p=>p.name)}], Women=[${rankedWomen.map(p=>p.name)}]`);
+
+                if (rankedMen.length >= 2 && rankedWomen.length >= 2) {
+                  const topMen = rankedMen.slice(0, Math.min(4, rankedMen.length));
+                  const topWomen = rankedWomen.slice(0, Math.min(4, rankedWomen.length));
+
+                  // SF1: 1°H + last°F vs 2°H + (last-1)°F
+                  // SF2: (last-1)°H + 2°F vs last°H + 1°F
+                  const expectedSF1 = {
+                    p1: topMen[0].id, p2: topWomen[topWomen.length - 1].id,
+                    p3: topMen[1].id, p4: topWomen[topWomen.length > 1 ? topWomen.length - 2 : 0].id
+                  };
+                  const expectedSF2 = {
+                    p1: topMen.length > 2 ? topMen[topMen.length - 2].id : topMen[topMen.length - 1].id,
+                    p2: topWomen[1].id,
+                    p3: topMen[topMen.length - 1].id,
+                    p4: topWomen[0].id
+                  };
+
+                  const sf1 = sfMatches[0];
+                  const sf1Correct = sf1.player1_individual_id === expectedSF1.p1 &&
+                                     sf1.player2_individual_id === expectedSF1.p2 &&
+                                     sf1.player3_individual_id === expectedSF1.p3 &&
+                                     sf1.player4_individual_id === expectedSF1.p4;
+                  const sf2 = sfMatches[1];
+                  const sf2Correct = sf2.player1_individual_id === expectedSF2.p1 &&
+                                     sf2.player2_individual_id === expectedSF2.p2 &&
+                                     sf2.player3_individual_id === expectedSF2.p3 &&
+                                     sf2.player4_individual_id === expectedSF2.p4;
+
+                  if (!autoPopulateAttemptedRef.current && (!sf1Correct || !sf2Correct)) {
+                    autoPopulateAttemptedRef.current = true;
+                    console.log('[FETCH-FILL] MA Mixed Semifinals incorretas ou vazias, corrigindo...');
+                    await supabase.from('matches').update({
+                      player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
+                      player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
+                    }).eq('id', sf1.id);
+                    await supabase.from('matches').update({
+                      player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
+                      player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
+                    }).eq('id', sf2.id);
+
+                    const finalMatch = matchesResult.data!.find((m: any) => m.round === 'final');
+                    const thirdMatch = matchesResult.data!.find((m: any) => m.round === '3rd_place');
+                    if (finalMatch && finalMatch.status !== 'completed') {
                       await supabase.from('matches').update({
-                        player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
-                        player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
-                      }).eq('id', sfMatches[0].id);
-                      await supabase.from('matches').update({
-                        player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
-                        player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
-                      }).eq('id', sfMatches[1].id);
-                      
-                      const finalMatch = matchesResult.data!.find((m: any) => m.round === 'final');
-                      const thirdMatch = matchesResult.data!.find((m: any) => m.round === '3rd_place');
-                      if (finalMatch && finalMatch.status !== 'completed') {
-                        await supabase.from('matches').update({
-                          player1_individual_id: null, player2_individual_id: null,
-                          player3_individual_id: null, player4_individual_id: null
-                        }).eq('id', finalMatch.id);
-                      }
-                      if (thirdMatch && thirdMatch.status !== 'completed') {
-                        await supabase.from('matches').update({
-                          player1_individual_id: null, player2_individual_id: null,
-                          player3_individual_id: null, player4_individual_id: null
-                        }).eq('id', thirdMatch.id);
-                      }
-                      
-                      console.log('[FETCH-FILL] MA Semifinals corrigidas! Refreshing...');
-                      await fetchTournamentData(silent); return;
-                    } else {
-                      console.log('[FETCH-FILL] MA Semifinals já estão corretas');
+                        player1_individual_id: null, player2_individual_id: null,
+                        player3_individual_id: null, player4_individual_id: null
+                      }).eq('id', finalMatch.id);
                     }
+                    if (thirdMatch && thirdMatch.status !== 'completed') {
+                      await supabase.from('matches').update({
+                        player1_individual_id: null, player2_individual_id: null,
+                        player3_individual_id: null, player4_individual_id: null
+                      }).eq('id', thirdMatch.id);
+                    }
+
+                    console.log('[FETCH-FILL] MA Mixed Semifinals corrigidas! Refreshing...');
+                    await fetchTournamentData(silent); return;
+                  } else {
+                    console.log('[FETCH-FILL] MA Mixed Semifinals já estão corretas');
                   }
                 }
               }
             }
             
-            // ================================================================
-            // CROSSED PLAYOFFS: preencher R1 se vazio
-            // ================================================================
-            if ((effectiveFormat === 'crossed_playoffs') && hasCrossedRounds) {
-              const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
-              
-              // NOTA: crossed_playoffs_teams é tratado no bloco de TEAMS (mais abaixo)
-              // Aqui só tratamos crossed_playoffs individual
-              
-              // Para formato individual (crossed_playoffs)
-              if (!autoPopulateAttemptedRef.current && effectiveFormat === 'crossed_playoffs' && r1j1Local && !r1j1Local.player1_individual_id && sortedCats.length >= 2 && sortedCats.length <= 3) {
-                autoPopulateAttemptedRef.current = true;
-                console.log('[FETCH-FILL] Filling crossed playoffs R1...');
-                
-                if (sortedCats.length === 3) {
-                  const [catA, catB, catC] = sortedCats;
-                  const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id), rankC = getCatRankings(catC.id);
-                  if (rankA.length >= 4 && rankB.length >= 4 && rankC.length >= 4) {
-                    console.log(`[FETCH-FILL] 3-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}], C=[${rankC.map(p=>p.name)}]`);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankC[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    await supabase.from('matches').update({ player1_individual_id: rankB[0].id, player2_individual_id: rankC[1].id, player3_individual_id: rankA[2].id, player4_individual_id: rankB[2].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[3].id, player2_individual_id: rankC[2].id, player3_individual_id: rankB[3].id, player4_individual_id: rankC[3].id }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-                    console.log('[FETCH-FILL] R1 filled (3 cat)! Refreshing...');
-                    await fetchTournamentData(silent); return;
-                  }
-                } else if (sortedCats.length === 2) {
-                  const [catA, catB] = sortedCats;
-                  const rankA = getCatRankings(catA.id), rankB = getCatRankings(catB.id);
-                  if (rankA.length >= 4 && rankB.length >= 4) {
-                    console.log(`[FETCH-FILL] 2-cat: A=[${rankA.map(p=>p.name)}], B=[${rankB.map(p=>p.name)}]`);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[0].id, player2_individual_id: rankB[1].id, player3_individual_id: rankB[0].id, player4_individual_id: rankA[1].id }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-                    await supabase.from('matches').update({ player1_individual_id: rankA[2].id, player2_individual_id: rankB[3].id, player3_individual_id: rankB[2].id, player4_individual_id: rankA[3].id }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-                    console.log('[FETCH-FILL] R1 filled (2 cat)! Refreshing...');
-                    await fetchTournamentData(silent); return;
-                  }
-                }
-              }
-            }
           } catch (err) {
             console.error('[FETCH-FILL] Error:', err);
           }
@@ -2180,15 +2184,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleAssignGroups = async () => {
-    const validFormats = ['groups_knockout', 'individual_groups_knockout', 'crossed_playoffs', 'crossed_playoffs_teams', 'mixed_gender', 'mixed_american'];
+    const validFormats = ['groups_knockout', 'individual_groups_knockout', 'crossed_playoffs_teams', 'mixed_american'];
     if (!validFormats.includes(currentTournament.format || '')) {
       alert('Group assignment is only available for Groups + Knockout, Crossed Playoffs, Mixed Gender and Mixed American formats');
       return;
     }
 
     const isIndividualFormat = currentTournament.format === 'individual_groups_knockout' || 
-                               currentTournament.format === 'crossed_playoffs' || 
-                               currentTournament.format === 'mixed_gender' ||
                                currentTournament.format === 'mixed_american';
     // crossed_playoffs_teams é formato de EQUIPAS, não individual
     const participantLabel = isIndividualFormat ? 'players' : 'teams';
@@ -2230,30 +2232,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const allPlayersWithGroups: any[] = [];
           const tournamentNumberOfGroups = (latestTournament as any).number_of_groups || 2;
           
-          // Para mixed_american / mixed_gender, cada categoria = 1 grupo (A, B)
-          if (currentTournament.format === 'mixed_american' || currentTournament.format === 'mixed_gender') {
-            const allCatsMA = [...categories].sort((a, b) => a.name.localeCompare(b.name));
-            const sortedCatsMA = selectedCategory
-              ? allCatsMA.filter(c => c.id === selectedCategory)
-              : allCatsMA;
-            const allPlayersWithCatGroups: any[] = [];
-            sortedCatsMA.forEach((cat, catIdx) => {
-              const groupName = String.fromCharCode(65 + catIdx); // A, B
-              const catPlayers = individualPlayers.filter(p => p.category_id === cat.id);
-              catPlayers.forEach(player => {
-                allPlayersWithCatGroups.push({ ...player, group_name: groupName });
-              });
-              console.log(`[ASSIGN GROUPS] Mixed American: ${catPlayers.length} players of ${cat.name} → group ${groupName}`);
-            });
-            await savePlayerGroupAssignments(allPlayersWithCatGroups);
-            console.log('[ASSIGN GROUPS] Mixed American: Total', allPlayersWithCatGroups.length, 'players assigned');
-            await fetchTournamentData();
-            setLoading(false);
-            return;
-          }
-          
-          // Para playoffs cruzados, cada categoria = 1 grupo com nome diferente (A, B, C...)
-          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs' || currentTournament.format === 'crossed_playoffs_teams';
+          // Para playoffs cruzados de equipas, cada categoria = 1 grupo com nome diferente (A, B, C...)
+          const isCrossedPlayoffs = currentTournament.format === 'crossed_playoffs_teams';
           
           // Ordenar categorias por nome para consistência (primeira = A, segunda = B, terceira = C)
           const allSortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
@@ -4162,469 +4142,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         return;
       }
     }
-    
-    // Usar novos nomes de rounds: j4, j5, j6, j7, j8
-    const r1j1 = currentMatches.find(m => m.round === 'crossed_r1_j1');
-    const r1j2 = currentMatches.find(m => m.round === 'crossed_r1_j2');
-    const r1j3 = currentMatches.find(m => m.round === 'crossed_r1_j3');
-    const r2j4 = currentMatches.find(m => m.round === 'crossed_r2_j4'); // SF1: Vencedor J1 vs Vencedor J2
-    const r2j5 = currentMatches.find(m => m.round === 'crossed_r2_j5'); // SF2: Vencedor J3 vs Melhor Perdedor
-    const r2j6 = currentMatches.find(m => m.round === 'crossed_r2_j6'); // 5º/6º: Perdedor J3 vs Pior Perdedor
-    const r3j7 = currentMatches.find(m => m.round === 'crossed_r3_j7'); // Final
-    const r3j8 = currentMatches.find(m => m.round === 'crossed_r3_j8'); // 3º/4º
-
-    if (!r1j1 || !r1j2 || !r1j3 || !r2j4 || !r2j5 || !r2j6 || !r3j7 || !r3j8) {
-      console.log('[AUTO_ADVANCE] Not all matches found');
-      return;
-    }
-
-    const getMatchResult = (match: MatchWithTeams) => {
-      if (match.status !== 'completed') return null;
-      const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-      const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-      return {
-        winner: t1Games > t2Games ? 'team1' : 'team2',
-        loser: t1Games > t2Games ? 'team2' : 'team1',
-        t1Games,
-        t2Games
-      };
-    };
-
-    try {
-      // Se R1 está completo e R2 tem TBD, preencher R2
-      if (r1j1.status === 'completed' && r1j2.status === 'completed' && r1j3.status === 'completed' && !r2j4.player1_individual_id) {
-        console.log('[AUTO_ADVANCE] R1 complete, advancing to R2...');
-        
-        const res1 = getMatchResult(r1j1)!;
-        const res2 = getMatchResult(r1j2)!;
-        const res3 = getMatchResult(r1j3)!;
-
-        const loser1Games = res1.loser === 'team1' ? res1.t1Games : res1.t2Games;
-        const loser2Games = res2.loser === 'team1' ? res2.t1Games : res2.t2Games;
-        
-        const bestLoserIsJ1 = loser1Games >= loser2Games;
-        const bestLoserMatch = bestLoserIsJ1 ? r1j1 : r1j2;
-        const worstLoserMatch = bestLoserIsJ1 ? r1j2 : r1j1;
-        const bestLoserResult = bestLoserIsJ1 ? res1 : res2;
-        const worstLoserResult = bestLoserIsJ1 ? res2 : res1;
-
-        // J4: Vencedor J1 vs Vencedor J2
-        const winner1 = res1.winner === 'team1' 
-          ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
-          : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
-        const winner2 = res2.winner === 'team1'
-          ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
-          : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
-
-        await supabase.from('matches').update({
-          player1_individual_id: winner1.p1,
-          player2_individual_id: winner1.p2,
-          player3_individual_id: winner2.p1,
-          player4_individual_id: winner2.p2,
-        }).eq('id', r2j4.id);
-
-        // J5: Vencedor J3 vs Melhor Perdedor
-        const winner3 = res3.winner === 'team1'
-          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-        const bestLoser = bestLoserResult.loser === 'team1'
-          ? { p1: bestLoserMatch.player1_individual_id, p2: bestLoserMatch.player2_individual_id }
-          : { p1: bestLoserMatch.player3_individual_id, p2: bestLoserMatch.player4_individual_id };
-
-        await supabase.from('matches').update({
-          player1_individual_id: winner3.p1,
-          player2_individual_id: winner3.p2,
-          player3_individual_id: bestLoser.p1,
-          player4_individual_id: bestLoser.p2,
-        }).eq('id', r2j5.id);
-
-        // J6: Perdedor J3 vs Pior Perdedor (5º/6º)
-        const loser3 = res3.loser === 'team1'
-          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-        const worstLoser = worstLoserResult.loser === 'team1'
-          ? { p1: worstLoserMatch.player1_individual_id, p2: worstLoserMatch.player2_individual_id }
-          : { p1: worstLoserMatch.player3_individual_id, p2: worstLoserMatch.player4_individual_id };
-
-        await supabase.from('matches').update({
-          player1_individual_id: loser3.p1,
-          player2_individual_id: loser3.p2,
-          player3_individual_id: worstLoser.p1,
-          player4_individual_id: worstLoser.p2,
-        }).eq('id', r2j6.id);
-
-        console.log('[AUTO_ADVANCE] R2 updated!');
-      }
-
-      // Se R2 Semi-finais (J4, J5) estão completas e R3 tem TBD, preencher R3
-      if (r2j4.status === 'completed' && r2j5.status === 'completed' && !r3j7.player1_individual_id) {
-        console.log('[AUTO_ADVANCE] R2 semifinals complete, advancing to R3...');
-        
-        const resJ4 = getMatchResult(r2j4)!;
-        const resJ5 = getMatchResult(r2j5)!;
-
-        const winnerJ4 = resJ4.winner === 'team1'
-          ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
-          : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
-        const winnerJ5 = resJ5.winner === 'team1'
-          ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
-          : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
-
-        // J7: Final
-        await supabase.from('matches').update({
-          player1_individual_id: winnerJ4.p1,
-          player2_individual_id: winnerJ4.p2,
-          player3_individual_id: winnerJ5.p1,
-          player4_individual_id: winnerJ5.p2,
-        }).eq('id', r3j7.id);
-
-        const loserJ4 = resJ4.loser === 'team1'
-          ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
-          : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
-        const loserJ5 = resJ5.loser === 'team1'
-          ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
-          : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
-
-        // J8: 3º/4º
-        await supabase.from('matches').update({
-          player1_individual_id: loserJ4.p1,
-          player2_individual_id: loserJ4.p2,
-          player3_individual_id: loserJ5.p1,
-          player4_individual_id: loserJ5.p2,
-        }).eq('id', r3j8.id);
-
-        console.log('[AUTO_ADVANCE] R3 updated!');
-      }
-
-      // Refresh data
-      await fetchTournamentData();
-    } catch (error) {
-      console.error('[AUTO_ADVANCE] Error:', error);
-    }
-  };
-  
-  // Função para verificar se todos os grupos terminaram e preencher R1 automaticamente
-  const autoFillCrossedPlayoffsR1 = async (currentMatches: MatchWithTeams[]) => {
-    console.log('[AUTO_FILL_R1] Checking if groups are complete...');
-    
-    // Verificar se existe R1 e se tem TBD
-    const r1j1 = currentMatches.find(m => m.round === 'crossed_r1_j1');
-    if (!r1j1 || r1j1.player1_individual_id) {
-      console.log('[AUTO_FILL_R1] R1 already filled or not found');
-      return;
-    }
-    
-    // Verificar se todos os jogos de grupo estão completos
-    const groupMatches = currentMatches.filter(m => m.round.startsWith('group_'));
-    const incompleteGroups = groupMatches.filter(m => m.status !== 'completed');
-    
-    if (incompleteGroups.length > 0) {
-      console.log(`[AUTO_FILL_R1] ${incompleteGroups.length} group matches still incomplete`);
-      return;
-    }
-    
-    if (groupMatches.length === 0) {
-      console.log('[AUTO_FILL_R1] No group matches found');
-      return;
-    }
-    
-    console.log('[AUTO_FILL_R1] All groups complete! Filling R1 with ranked players...');
-    
-    // Ordenar categorias
-    const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
-    if (sortedCategories.length < 2 || sortedCategories.length > 3) {
-      console.log('[AUTO_FILL_R1] Need 2 or 3 categories, got', sortedCategories.length);
-      return;
-    }
-    
-    // Função para calcular ranking de uma categoria
-    const getCategoryRankings = (categoryId: string) => {
-      const categoryPlayers = individualPlayers.filter(p => p.category_id === categoryId);
-      const categoryMatches = currentMatches.filter(m => 
-        m.category_id === categoryId && 
-        m.round.startsWith('group_') && 
-        m.status === 'completed'
-      );
-
-      const playerStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
-      
-      categoryPlayers.forEach(player => {
-        playerStats.set(player.id, { 
-          id: player.id, 
-          name: player.name, 
-          wins: 0, 
-          gamesWon: 0, 
-          gamesLost: 0 
-        });
-      });
-
-      categoryMatches.forEach(match => {
-        const team1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-        const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-        const team1Won = team1Games > team2Games;
-
-        const team1Players = [match.player1_individual_id, match.player2_individual_id].filter(Boolean);
-        const team2Players = [match.player3_individual_id, match.player4_individual_id].filter(Boolean);
-
-        team1Players.forEach(playerId => {
-          const stats = playerStats.get(playerId!);
-          if (stats) {
-            stats.gamesWon += team1Games;
-            stats.gamesLost += team2Games;
-            if (team1Won) stats.wins++;
-          }
-        });
-
-        team2Players.forEach(playerId => {
-          const stats = playerStats.get(playerId!);
-          if (stats) {
-            stats.gamesWon += team2Games;
-            stats.gamesLost += team1Games;
-            if (!team1Won) stats.wins++;
-          }
-        });
-      });
-
-      return Array.from(playerStats.values())
-        .sort((a, b) => {
-          if (b.wins !== a.wins) return b.wins - a.wins;
-          return (b.gamesWon - b.gamesLost) - (a.gamesWon - a.gamesLost);
-        });
-    };
-    
-    try {
-      if (sortedCategories.length === 3) {
-        // === 3 CATEGORIAS: lógica original ===
-        const [catA, catB, catC] = sortedCategories;
-        const rankA = getCategoryRankings(catA.id);
-        const rankB = getCategoryRankings(catB.id);
-        const rankC = getCategoryRankings(catC.id);
-        
-        if (rankA.length < 4 || rankB.length < 4 || rankC.length < 4) {
-          console.log('[AUTO_FILL_R1] Not enough players ranked (need 4 per category)');
-          return;
-        }
-        
-        console.log(`[AUTO_FILL_R1] Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}, C=${rankC.map(p=>p.name)}`);
-        
-        // J1: (A1 + B2) vs (C1 + A2) - cruzamento rotativo
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[0].id,
-          player2_individual_id: rankB[1].id,
-          player3_individual_id: rankC[0].id,
-          player4_individual_id: rankA[1].id,
-        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-        
-        // J2: (B1 + C2) vs (A3 + B3)
-        await supabase.from('matches').update({
-          player1_individual_id: rankB[0].id,
-          player2_individual_id: rankC[1].id,
-          player3_individual_id: rankA[2].id,
-          player4_individual_id: rankB[2].id,
-        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-        
-        // J3: (A4 + C3) vs (B4 + C4)
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[3].id,
-          player2_individual_id: rankC[2].id,
-          player3_individual_id: rankB[3].id,
-          player4_individual_id: rankC[3].id,
-        }).eq('round', 'crossed_r1_j3').eq('tournament_id', tournament.id);
-        
-      } else {
-        // === 2 CATEGORIAS: nova lógica ===
-        const [catA, catB] = sortedCategories;
-        const rankA = getCategoryRankings(catA.id);
-        const rankB = getCategoryRankings(catB.id);
-        
-        if (rankA.length < 4 || rankB.length < 4) {
-          console.log('[AUTO_FILL_R1] Not enough players ranked for 2 categories (need 4 per category)');
-          return;
-        }
-        
-        console.log(`[AUTO_FILL_R1] 2-cat Rankings: A=${rankA.map(p=>p.name)}, B=${rankB.map(p=>p.name)}`);
-        
-        // J1: (A1 + B2) vs (B1 + A2) - cruzamento rotativo
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[0].id,
-          player2_individual_id: rankB[1].id,
-          player3_individual_id: rankB[0].id,
-          player4_individual_id: rankA[1].id,
-        }).eq('round', 'crossed_r1_j1').eq('tournament_id', tournament.id);
-        
-        // J2: (A3 + B4) vs (B3 + A4) - cruzamento rotativo
-        await supabase.from('matches').update({
-          player1_individual_id: rankA[2].id,
-          player2_individual_id: rankB[3].id,
-          player3_individual_id: rankB[2].id,
-          player4_individual_id: rankA[3].id,
-        }).eq('round', 'crossed_r1_j2').eq('tournament_id', tournament.id);
-      }
-      
-      console.log('[AUTO_FILL_R1] R1 matches filled with players!');
-      await fetchTournamentData();
-    } catch (error) {
-      console.error('[AUTO_FILL_R1] Error:', error);
-    }
   };
 
-  // Função manual para avançar jogadores nos playoffs cruzados (botão)
-  const handleAdvanceCrossedPlayoffs = async () => {
-    console.log('[ADVANCE_CROSSED] Checking for matches to advance...');
-    console.log('[ADVANCE_CROSSED] All crossed matches:', matches.filter(m => m.round.startsWith('crossed_')).map(m => ({ round: m.round, status: m.status, p1: m.player1_individual_id })));
 
-    // Obter todas as partidas de playoffs cruzados - usar novos nomes
-    const r1j1 = matches.find(m => m.round === 'crossed_r1_j1');
-    const r1j2 = matches.find(m => m.round === 'crossed_r1_j2');
-    const r1j3 = matches.find(m => m.round === 'crossed_r1_j3');
-    const r2j4 = matches.find(m => m.round === 'crossed_r2_j4'); // SF1
-    const r2j5 = matches.find(m => m.round === 'crossed_r2_j5'); // SF2
-    const r2j6 = matches.find(m => m.round === 'crossed_r2_j6'); // 5º/6º
-    const r3j7 = matches.find(m => m.round === 'crossed_r3_j7'); // Final
-    const r3j8 = matches.find(m => m.round === 'crossed_r3_j8'); // 3º/4º
 
-    if (!r1j1 || !r1j2 || !r1j3 || !r2j4 || !r2j5 || !r2j6 || !r3j7 || !r3j8) {
-      const missing = [
-        !r1j1 && 'J1', !r1j2 && 'J2', !r1j3 && 'J3',
-        !r2j4 && 'J4', !r2j5 && 'J5', !r2j6 && 'J6',
-        !r3j7 && 'J7', !r3j8 && 'J8'
-      ].filter(Boolean).join(', ');
-      alert(`Jogos não encontrados: ${missing}. Tenta refrescar a página.`);
-      console.log('[ADVANCE_CROSSED] Missing matches:', missing);
-      return;
-    }
-
-    console.log('[ADVANCE_CROSSED] R1 status:', { j1: r1j1.status, j2: r1j2.status, j3: r1j3.status });
-    console.log('[ADVANCE_CROSSED] R2 TBD:', { j4: r2j4.player1_individual_id, j5: r2j5.player1_individual_id, j6: r2j6.player1_individual_id });
-
-    const getMatchResult = (match: MatchWithTeams) => {
-      if (match.status !== 'completed') return null;
-      const t1Games = (match.team1_score_set1 || 0) + (match.team1_score_set2 || 0) + (match.team1_score_set3 || 0);
-      const t2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
-      return {
-        winner: t1Games > t2Games ? 'team1' : 'team2',
-        loser: t1Games > t2Games ? 'team2' : 'team1',
-        t1Games,
-        t2Games
-      };
-    };
-
-    setLoading(true);
-
-    try {
-      // Se R1 está completo, preencher R2 (posições FIXAS, não baseadas em pontuação)
-      if (r1j1.status === 'completed' && r1j2.status === 'completed' && r1j3.status === 'completed') {
-        const res1 = getMatchResult(r1j1)!;
-        const res2 = getMatchResult(r1j2)!;
-        const res3 = getMatchResult(r1j3)!;
-
-        // Extrair vencedores e perdedores de cada jogo
-        const winner1 = res1.winner === 'team1' 
-          ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
-          : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
-        const loser1 = res1.loser === 'team1'
-          ? { p1: r1j1.player1_individual_id, p2: r1j1.player2_individual_id }
-          : { p1: r1j1.player3_individual_id, p2: r1j1.player4_individual_id };
-        
-        const winner2 = res2.winner === 'team1'
-          ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
-          : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
-        const loser2 = res2.loser === 'team1'
-          ? { p1: r1j2.player1_individual_id, p2: r1j2.player2_individual_id }
-          : { p1: r1j2.player3_individual_id, p2: r1j2.player4_individual_id };
-        
-        const winner3 = res3.winner === 'team1'
-          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-        const loser3 = res3.loser === 'team1'
-          ? { p1: r1j3.player1_individual_id, p2: r1j3.player2_individual_id }
-          : { p1: r1j3.player3_individual_id, p2: r1j3.player4_individual_id };
-
-        // J4: Vencedor J1 vs Vencedor J2
-        if (!r2j4.player1_individual_id) {
-          await supabase.from('matches').update({
-            player1_individual_id: winner1.p1,
-            player2_individual_id: winner1.p2,
-            player3_individual_id: winner2.p1,
-            player4_individual_id: winner2.p2,
-          }).eq('id', r2j4.id);
-        }
-
-        // J5: Vencedor J3 vs Melhor Perdedor (J1 ou J2)
-        const loser1Games = res1.loser === 'team1' ? res1.t1Games : res1.t2Games;
-        const loser2Games = res2.loser === 'team1' ? res2.t1Games : res2.t2Games;
-        const bestLoser = loser1Games >= loser2Games ? loser1 : loser2;
-        const worstLoser = loser1Games >= loser2Games ? loser2 : loser1;
-        
-        if (!r2j5.player1_individual_id) {
-          await supabase.from('matches').update({
-            player1_individual_id: winner3.p1,
-            player2_individual_id: winner3.p2,
-            player3_individual_id: bestLoser.p1,
-            player4_individual_id: bestLoser.p2,
-          }).eq('id', r2j5.id);
-        }
-
-        // J6 (5º/6º): Perdedor J3 vs Pior Perdedor
-        if (!r2j6.player1_individual_id) {
-          await supabase.from('matches').update({
-            player1_individual_id: loser3.p1,
-            player2_individual_id: loser3.p2,
-            player3_individual_id: worstLoser.p1,
-            player4_individual_id: worstLoser.p2,
-          }).eq('id', r2j6.id);
-        }
-      }
-
-      // Se R2 (J4, J5) estão completas, preencher R3
-      if (r2j4.status === 'completed' && r2j5.status === 'completed') {
-        const resJ4 = getMatchResult(r2j4)!;
-        const resJ5 = getMatchResult(r2j5)!;
-
-        // J7: Final - Vencedor J4 vs Vencedor J5
-        if (!r3j7.player1_individual_id) {
-          const winnerJ4 = resJ4.winner === 'team1'
-            ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
-            : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
-          const winnerJ5 = resJ5.winner === 'team1'
-            ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
-            : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
-
-          await supabase.from('matches').update({
-            player1_individual_id: winnerJ4.p1,
-            player2_individual_id: winnerJ4.p2,
-            player3_individual_id: winnerJ5.p1,
-            player4_individual_id: winnerJ5.p2,
-          }).eq('id', r3j7.id);
-        }
-
-        // J8: 3º/4º - Perdedor J4 vs Perdedor J5
-        if (!r3j8.player1_individual_id) {
-          const loserJ4 = resJ4.loser === 'team1'
-            ? { p1: r2j4.player1_individual_id, p2: r2j4.player2_individual_id }
-            : { p1: r2j4.player3_individual_id, p2: r2j4.player4_individual_id };
-          const loserJ5 = resJ5.loser === 'team1'
-            ? { p1: r2j5.player1_individual_id, p2: r2j5.player2_individual_id }
-            : { p1: r2j5.player3_individual_id, p2: r2j5.player4_individual_id };
-
-          await supabase.from('matches').update({
-            player1_individual_id: loserJ4.p1,
-            player2_individual_id: loserJ4.p2,
-            player3_individual_id: loserJ5.p1,
-            player4_individual_id: loserJ5.p2,
-          }).eq('id', r3j8.id);
-        }
-      }
-
-      await fetchTournamentData();
-      alert('Jogadores avançados com sucesso!');
-    } catch (error) {
-      console.error('Error advancing crossed playoffs:', error);
-      alert('Erro ao avançar jogadores. Tente novamente.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Função para gerar Playoffs Cruzados (3 grupos: A, B, C) - dentro de uma categoria
   const handleGenerateCrossedPlayoffs = async (categoryId: string) => {
@@ -5056,7 +4577,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // Carregar jogos existentes para preservar os completed
       const { data: existingMatchesRaw } = await supabase
         .from('matches')
-        .select('id, team1_id, team2_id, round, status, category_id, scheduled_time, court, match_number')
+        .select('id, team1_id, team2_id, round, status, category_id, scheduled_time, court, match_number, player1_individual_id, player2_individual_id, player3_individual_id, player4_individual_id')
         .eq('tournament_id', currentTournament.id);
 
       const completedMatches = (existingMatchesRaw || []).filter(m => m.status === 'completed');
@@ -5138,96 +4659,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         if (!id || id === 'TBD' || id === 'tbd') return null;
         return id;
       };
-      
-      // Helper to generate American format combinations for any number of players
-      // Each player plays with every other player as partner at least once
-      const generateAmericanCombinations = (players: typeof individualPlayers): Array<{ p1: string; p2: string; p3: string; p4: string }> => {
-        const n = players.length;
-        if (n < 4) return [];
 
-        // Baralhar para variedade
-        const ids = [...players].sort(() => Math.random() - 0.5).map(p => p.id);
-        const pKey = (a: string, b: string) => [a, b].sort().join('+');
-        const combinations: Array<{ p1: string; p2: string; p3: string; p4: string }> = [];
-
-        if (n === 4) {
-          // 4 jogadores → 3 jogos perfeitos (todos os 6 pares usados uma vez)
-          const [a, b, c, d] = ids;
-          combinations.push(
-            { p1: a, p2: b, p3: c, p4: d },
-            { p1: a, p2: c, p3: b, p4: d },
-            { p1: a, p2: d, p3: b, p4: c },
-          );
-        } else if (n === 5) {
-          // 5 jogadores → 5 jogos perfeitos, cada jogador joga 4 vezes (fica de fora 1 vez)
-          const [a, b, c, d, e] = ids;
-          combinations.push(
-            { p1: a, p2: b, p3: c, p4: d }, // e descansa
-            { p1: a, p2: c, p3: b, p4: e }, // d descansa
-            { p1: a, p2: e, p3: b, p4: d }, // c descansa
-            { p1: a, p2: d, p3: c, p4: e }, // b descansa
-            { p1: b, p2: c, p3: d, p4: e }, // a descansa
-          );
-        } else {
-          // n ≥ 6: algoritmo por ronda melhorado
-          const usedPairs = new Set<string>();
-          const playerMatchCount = new Map<string, number>();
-          ids.forEach(id => playerMatchCount.set(id, 0));
-
-          const maxRounds = Math.floor(n * (n - 1) / 4) + n;
-          let roundsWithoutMatch = 0;
-
-          for (let r = 0; r < maxRounds && roundsWithoutMatch < 3; r++) {
-            const byCount = [...ids].sort((a, b) =>
-              (playerMatchCount.get(a) || 0) - (playerMatchCount.get(b) || 0)
-            );
-
-            let bestMatch: { p1: string; p2: string; p3: string; p4: string } | null = null;
-            let bestScore = -Infinity;
-
-            outer:
-            for (let i = 0; i < byCount.length; i++) {
-              for (let j = i + 1; j < byCount.length; j++) {
-                for (let k = j + 1; k < byCount.length; k++) {
-                  for (let l = k + 1; l < byCount.length; l++) {
-                    const four = [byCount[i], byCount[j], byCount[k], byCount[l]];
-                    const pairings = [
-                      { p1: [four[0], four[1]], p2: [four[2], four[3]] },
-                      { p1: [four[0], four[2]], p2: [four[1], four[3]] },
-                      { p1: [four[0], four[3]], p2: [four[1], four[2]] },
-                    ];
-                    for (const opt of pairings) {
-                      const k1 = pKey(opt.p1[0], opt.p1[1]);
-                      const k2 = pKey(opt.p2[0], opt.p2[1]);
-                      if (usedPairs.has(k1) || usedPairs.has(k2)) continue;
-                      const score = -Math.max(...four.map(p => playerMatchCount.get(p) || 0));
-                      if (score > bestScore) {
-                        bestScore = score;
-                        bestMatch = { p1: opt.p1[0], p2: opt.p1[1], p3: opt.p2[0], p4: opt.p2[1] };
-                      }
-                    }
-                    if (bestMatch) break outer;
-                  }
-                }
-              }
-            }
-
-            if (bestMatch) {
-              usedPairs.add(pKey(bestMatch.p1, bestMatch.p2));
-              usedPairs.add(pKey(bestMatch.p3, bestMatch.p4));
-              [bestMatch.p1, bestMatch.p2, bestMatch.p3, bestMatch.p4].forEach(id =>
-                playerMatchCount.set(id, (playerMatchCount.get(id) || 0) + 1)
-              );
-              combinations.push(bestMatch);
-              roundsWithoutMatch = 0;
-            } else {
-              roundsWithoutMatch++;
-            }
-          }
-        }
-
-        return combinations;
-      };
+      // Calculate effective start time after completed matches
+      let effectiveStartDate = startDate;
+      let effectiveStartTime = startTime;
+      const completedWithTimes = completedMatches.filter((m: any) => m.scheduled_time);
+      if (completedWithTimes.length > 0) {
+        const latestCompletedMs = Math.max(...completedWithTimes.map((m: any) => new Date(m.scheduled_time).getTime()));
+        const nextSlot = new Date(latestCompletedMs + matchDuration * 60000);
+        effectiveStartDate = `${nextSlot.getFullYear()}-${String(nextSlot.getMonth() + 1).padStart(2, '0')}-${String(nextSlot.getDate()).padStart(2, '0')}`;
+        effectiveStartTime = `${String(nextSlot.getHours()).padStart(2, '0')}:${String(nextSlot.getMinutes()).padStart(2, '0')}`;
+        console.log(`[SCHEDULE] Effective start after ${completedWithTimes.length} completed matches: ${effectiveStartDate} ${effectiveStartTime}`);
+      }
       
       if (schedFormat === 'round_robin' && schedRoundRobinType === 'individual') {
         // Individual Round Robin (Americano SEM grupos) - todos jogam contra todos com parceiros rotativos
@@ -5241,14 +4684,26 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const matchesPerPlayer = playersForSchedule.length - 1;
         console.log('[SCHEDULE] American matchesPerPlayer:', matchesPerPlayer, '(all-vs-all: n-1 =', playersForSchedule.length, '- 1)');
 
+        // Build completed matches for this category to seed the scheduler
+        const completedForAmericano = completedMatches
+          .filter((m: any) => m.player1_individual_id && (!categories.length || !m.category_id || categories.some(c => c.id === m.category_id)))
+          .map((m: any) => ({
+            player1_id: m.player1_individual_id,
+            player2_id: m.player2_individual_id,
+            player3_id: m.player3_individual_id,
+            player4_id: m.player4_individual_id,
+          }));
+
         const americanMatches = generateAmericanSchedule(
           playersForSchedule,
           numberOfCourts,
-          startDate,
-          startTime,
+          effectiveStartDate,
+          effectiveStartTime,
           endTime,
           matchDuration,
-          matchesPerPlayer
+          matchesPerPlayer,
+          outdoorCourtIndices,
+          completedForAmericano
         );
         
         matchesToInsert = americanMatches.map(m => {
@@ -5269,142 +4724,125 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           };
         });
         
-      } else if (schedFormat === 'mixed_american' || schedFormat === 'mixed_gender') {
+      } else if (schedFormat === 'mixed_american') {
         // ================================================================
-        // AMERICANO MISTO / MIXED GENDER: Cada categoria joga separadamente nos grupos,
-        // depois as fases finais cruzam F + M
-        // Grupos: F joga contra F (grupo A), M joga contra M (grupo B)  
-        // Knockout: SF1(1°F+4°M vs 2°F+3°M), SF2(3°F+2°M vs 4°F+1°M), 3rd, Final
+        // AMERICANO MISTO 1H+1M vs 1H+1M
+        // Todos os jogadores juntos, cada jogo tem 1 Homem + 1 Mulher por equipa
+        // Usa gender de player_accounts para separar jogadores
         // ================================================================
-        console.log('[SCHEDULE] MIXED AMERICAN/GENDER: Generating separate category groups + mixed knockouts');
-        
-        const sortedCats = [...categories].sort((a, b) => a.name.localeCompare(b.name));
-        
-        if (sortedCats.length < 2) {
-          alert('O torneio Americano Misto precisa de exatamente 2 categorias (ex: F4-F5-F6 e M5-M6).');
+        console.log('[SCHEDULE] MIXED AMERICAN (1H+1M vs 1H+1M): Generating mixed pairs schedule');
+
+        // Fetch gender from player_accounts for all enrolled players
+        const phones = individualPlayers
+          .map(p => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
+          .filter(Boolean);
+        const { data: accountsData } = await supabase
+          .from('player_accounts')
+          .select('phone_number, gender')
+          .in('phone_number', phones);
+
+        const genderByPhone = new Map<string, string>();
+        (accountsData || []).forEach(a => {
+          if (a.phone_number && a.gender) {
+            genderByPhone.set(a.phone_number.replace(/[\s\-\(\)\.]/g, ''), a.gender);
+          }
+        });
+
+        const menPlayers: MixedPlayer[] = [];
+        const womenPlayers: MixedPlayer[] = [];
+
+        for (const p of individualPlayers) {
+          const phone = (p.phone_number || '').replace(/[\s\-\(\)\.]/g, '');
+          const gender = genderByPhone.get(phone);
+          if (gender === 'female') {
+            womenPlayers.push({ id: p.id, name: p.name, gender: 'F' });
+          } else {
+            menPlayers.push({ id: p.id, name: p.name, gender: 'M' });
+          }
+        }
+
+        console.log(`[SCHEDULE] MA: ${menPlayers.length} men, ${womenPlayers.length} women`);
+
+        if (menPlayers.length < 2 || womenPlayers.length < 2) {
+          alert(`O torneio Americano Misto precisa de pelo menos 2 homens e 2 mulheres. Tem ${menPlayers.length} homens e ${womenPlayers.length} mulheres.`);
           setLoading(false);
           return;
         }
-        
-        let matchNumber = 1;
-        const baseStartTime = new Date(`${startDate}T${startTime}:00`);
+
+        const matchesPerPlayer = categories.length > 0
+          ? ((categories[0] as any).rounds || 7)
+          : 7;
+
+        // Build completed matches for mixed american
+        const completedForMixed = completedMatches
+          .filter((m: any) => m.player1_individual_id && m.round?.startsWith('round_'))
+          .map((m: any) => ({
+            player1_id: m.player1_individual_id,
+            player2_id: m.player2_individual_id,
+            player3_id: m.player3_individual_id,
+            player4_id: m.player4_individual_id,
+          }));
+
+        const mixedMatches = generateMixedAmericanSchedule(
+          menPlayers,
+          womenPlayers,
+          matchesPerPlayer,
+          numberOfCourts,
+          effectiveStartDate,
+          effectiveStartTime,
+          endTime,
+          matchDuration,
+          completedForMixed
+        );
+
+        matchesToInsert = mixedMatches.map(m => {
+          const cNum = parseInt(m.court);
+          const cLabel = (!isNaN(cNum) && courtNames[cNum - 1]) ? courtNames[cNum - 1] : m.court;
+          return {
+            tournament_id: currentTournament.id,
+            category_id: categories.length === 1 ? categories[0].id : null,
+            round: m.round,
+            match_number: m.match_number,
+            player1_individual_id: m.player1_id,
+            player2_individual_id: m.player2_id,
+            player3_individual_id: m.player3_id,
+            player4_individual_id: m.player4_id,
+            scheduled_time: m.scheduled_time,
+            court: cLabel,
+            status: 'scheduled'
+          };
+        });
+
+        // Add knockout matches (empty, filled when group stage finishes)
+        const lastTime = mixedMatches.length > 0
+          ? new Date(mixedMatches[mixedMatches.length - 1].scheduled_time)
+          : new Date(`${startDate}T${startTime}:00`);
+        let knockoutTime = new Date(lastTime.getTime() + matchDuration * 60000);
         const endOfDay = new Date(`${startDate}T${endTime}:00`);
-        
-        // Gerar jogos de grupo para CADA CATEGORIA separadamente
-        const categoryData: Array<{
-          category: typeof sortedCats[0];
-          players: typeof individualPlayers;
-          combinations: Array<{ p1: string; p2: string; p3: string; p4: string }>;
-          courtsPerGroup: number;
-          baseCourtForGroup: number;
-          groupName: string;
-        }> = [];
-        
-        let totalCourtsUsed = 0;
-        for (let catIdx = 0; catIdx < sortedCats.length; catIdx++) {
-          const category = sortedCats[catIdx];
-          const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
-          const groupName = String.fromCharCode(65 + catIdx); // A, B
-          
-          console.log(`[SCHEDULE] MA Category ${category.name} (Group ${groupName}): ${categoryPlayers.length} players`);
-          
-          if (categoryPlayers.length < 4) {
-            alert(`A categoria ${category.name} precisa de pelo menos 4 jogadores. Tem ${categoryPlayers.length}.`);
-            setLoading(false);
-            return;
-          }
-          
-          const americanCombinations = generateAmericanCombinations(categoryPlayers);
-          const courtsPerGroup = Math.max(1, Math.floor(categoryPlayers.length / 4));
-          const baseCourtForGroup = totalCourtsUsed;
-          totalCourtsUsed += courtsPerGroup;
-          
-          categoryData.push({
-            category,
-            players: categoryPlayers,
-            combinations: americanCombinations,
-            courtsPerGroup,
-            baseCourtForGroup,
-            groupName
-          });
-          
-          console.log(`[SCHEDULE] MA ${category.name}: ${americanCombinations.length} matches, ${courtsPerGroup} courts`);
-        }
-        
-        // Gerar jogos de grupo (ambas categorias em paralelo, cada uma nos seus campos)
-        let maxGroupEndTime = new Date(baseStartTime);
-        for (const catData of categoryData) {
-          let groupTime = new Date(baseStartTime);
-          
-          for (let i = 0; i < catData.combinations.length; i++) {
-            const combo = catData.combinations[i];
-            const courtInGroup = (i % catData.courtsPerGroup);
-            const courtIdx = catData.baseCourtForGroup + courtInGroup;
-            const court = courtNames[courtIdx] || (courtIdx + 1).toString();
-            
-            matchesToInsert.push({
-              tournament_id: currentTournament.id,
-              category_id: catData.category.id,
-              round: `group_${catData.groupName}`,
-              match_number: matchNumber++,
-              player1_individual_id: combo.p1,
-              player2_individual_id: combo.p2,
-              player3_individual_id: combo.p3,
-              player4_individual_id: combo.p4,
-              scheduled_time: groupTime.toISOString(),
-              court: court,
-              status: 'scheduled'
-            });
-            
-            if ((i + 1) % catData.courtsPerGroup === 0) {
-              groupTime = new Date(groupTime.getTime() + matchDuration * 60000);
-              if (groupTime >= endOfDay) {
-                groupTime.setDate(groupTime.getDate() + 1);
-                groupTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-              }
-            }
-          }
-          if (groupTime > maxGroupEndTime) maxGroupEndTime = groupTime;
-        }
-        
-        console.log(`[SCHEDULE] MA: Generated ${matchesToInsert.length} group matches across ${categoryData.length} categories`);
-
-        // Atribuir group_name a cada jogador por categoria
-        for (const catData of categoryData) {
-          const playerIds = catData.players.map(p => p.id);
-          if (playerIds.length > 0) {
-            await supabase
-              .from('players')
-              .update({ group_name: catData.groupName })
-              .in('id', playerIds);
-            console.log(`[SCHEDULE] MA: Assigned group "${catData.groupName}" to ${playerIds.length} players of ${catData.category.name}`);
-          }
-        }
-
-        // Criar 4 matches de knockout (vazios - preenchidos quando grupos terminam)
-        let knockoutTime = new Date(maxGroupEndTime.getTime() + matchDuration * 60000);
         if (knockoutTime >= endOfDay) {
           knockoutTime.setDate(knockoutTime.getDate() + 1);
           knockoutTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
         }
 
-        // SF1 + SF2 (simultâneas)
+        let koMatchNum = matchesToInsert.length + 1;
+
+        // SF1 + SF2 (simultaneous, mixed pairs: 1H+1M vs 1H+1M)
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
-          round: 'semifinal', match_number: matchNumber++,
+          round: 'semifinal', match_number: koMatchNum++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
           scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
-          round: 'semifinal', match_number: matchNumber++,
+          round: 'semifinal', match_number: koMatchNum++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
           scheduled_time: knockoutTime.toISOString(), court: courtName(1), status: 'scheduled'
         });
 
-        // Final (após SFs). Jogo de 3º/4º intencionalmente NÃO gerado.
+        // Final
         knockoutTime = new Date(knockoutTime.getTime() + matchDuration * 60000);
         if (knockoutTime >= endOfDay) {
           knockoutTime.setDate(knockoutTime.getDate() + 1);
@@ -5412,224 +4850,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         matchesToInsert.push({
           tournament_id: currentTournament.id, category_id: null,
-          round: 'final', match_number: matchNumber++,
+          round: 'final', match_number: koMatchNum++,
           player1_individual_id: null, player2_individual_id: null,
           player3_individual_id: null, player4_individual_id: null,
           scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
 
-        console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (groups + 2SF + Final, no 3rd/4th)`);
+        console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (${mixedMatches.length} group + 2SF + Final)`);
 
-      } else if (schedFormat === 'individual_groups_knockout' ||
-                 schedFormat === 'crossed_playoffs') {
-        // Americano COM grupos + eliminatórias (inclui crossed_playoffs)
+      } else if (schedFormat === 'individual_groups_knockout') {
+        // Americano COM grupos + eliminatórias
         console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', schedFormat);
         
-        // Verificar se é formato de playoffs cruzados (cada categoria = 1 grupo)
-        const isCrossedPlayoffs = schedFormat === 'crossed_playoffs';
-        
-        if (isCrossedPlayoffs) {
-          // PLAYOFFS CRUZADOS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
-          console.log('[SCHEDULE] Crossed Playoffs mode - generating group matches for categories');
-          
-          const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
-          let matchNumber = 1;
-          const baseStartTime = new Date(`${startDate}T${startTime}:00`);
-          const endOfDay = new Date(`${startDate}T${endTime}:00`);
-          
-          // Primeiro, processar cada categoria para calcular campos por grupo
-          const categoryData: Array<{
-            category: typeof sortedCategories[0];
-            players: typeof individualPlayers;
-            combinations: Array<{ p1: string; p2: string; p3: string; p4: string }>;
-            courtsPerGroup: number;
-            baseCourtForGroup: number;
-            groupName: string;
-          }> = [];
-          
-          let totalCourtsUsed = 0;
-          for (let catIdx = 0; catIdx < sortedCategories.length; catIdx++) {
-            const category = sortedCategories[catIdx];
-            const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
-            const groupName = String.fromCharCode(65 + catIdx); // A, B, C
-            
-            console.log(`[SCHEDULE] Category ${category.name} (Group ${groupName}): ${categoryPlayers.length} players`);
-            
-            if (categoryPlayers.length < 4) {
-              console.warn(`[SCHEDULE] Category ${category.name} has fewer than 4 players, skipping`);
-              continue;
-            }
-            
-            const americanCombinations = generateAmericanCombinations(categoryPlayers);
-            const courtsPerGroup = Math.max(1, Math.floor(categoryPlayers.length / 4));
-            const baseCourtForGroup = totalCourtsUsed;
-            totalCourtsUsed += courtsPerGroup;
-            
-            categoryData.push({
-              category,
-              players: categoryPlayers,
-              combinations: americanCombinations,
-              courtsPerGroup,
-              baseCourtForGroup,
-              groupName
-            });
-            
-            console.log(`[SCHEDULE] Category ${category.name}: ${categoryPlayers.length} players, ${americanCombinations.length} matches, ${courtsPerGroup} courts (courts ${baseCourtForGroup + 1}-${baseCourtForGroup + courtsPerGroup})`);
-          }
-          
-          // Agora, gerar jogos COM TODOS OS GRUPOS EM PARALELO
-          // Cada grupo começa ao mesmo tempo mas tem os seus próprios campos
-          for (const catData of categoryData) {
-            // Cada grupo tem o seu próprio tracking de tempo (todos começam ao mesmo tempo)
-            let groupTime = new Date(baseStartTime);
-            
-            for (let i = 0; i < catData.combinations.length; i++) {
-              const combo = catData.combinations[i];
-              // Atribuir campos dentro do grupo
-              const courtInGroup = (i % catData.courtsPerGroup);
-              const courtIdx = catData.baseCourtForGroup + courtInGroup;
-              const court = courtName(courtIdx);
-              
-              matchesToInsert.push({
-                tournament_id: currentTournament.id,
-                category_id: catData.category.id,
-                round: `group_${catData.groupName}`,
-                match_number: matchNumber++,
-                player1_individual_id: combo.p1,
-                player2_individual_id: combo.p2,
-                player3_individual_id: combo.p3,
-                player4_individual_id: combo.p4,
-                scheduled_time: groupTime.toISOString(),
-                court: court,
-                status: 'scheduled'
-              });
-              
-              // Avançar tempo do GRUPO a cada X jogos (baseado nos campos por grupo)
-              if ((i + 1) % catData.courtsPerGroup === 0) {
-                groupTime = new Date(groupTime.getTime() + matchDuration * 60000);
-                if (groupTime >= endOfDay) {
-                  groupTime.setDate(groupTime.getDate() + 1);
-                  groupTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-                }
-              }
-            }
-          }
-          
-          console.log(`[SCHEDULE] Crossed/Mixed Playoffs: Generated ${matchesToInsert.length} group matches total (all groups in parallel)`);
-          
-          // AGORA GERAR AUTOMATICAMENTE OS PLAYOFFS CRUZADOS COM TBD
-          // Estrutura: R1 (3 jogos) + R2 (3 jogos) + R3 (2 jogos) = 8 jogos total
-          console.log('[SCHEDULE] Generating Crossed Playoffs matches with TBD...');
-          
-          // Calcular o tempo máximo dos grupos para começar os playoffs depois
-          let maxGroupEndTime = new Date(baseStartTime);
-          for (const catData of categoryData) {
-            const numRounds = Math.ceil(catData.combinations.length / catData.courtsPerGroup);
-            const groupEndTime = new Date(baseStartTime.getTime() + numRounds * matchDuration * 60000);
-            if (groupEndTime > maxGroupEndTime) {
-              maxGroupEndTime = groupEndTime;
-            }
-          }
-          
-          let playoffsTime = new Date(maxGroupEndTime);
-          // Verificar se passou do fim do dia
-          if (playoffsTime >= endOfDay) {
-            playoffsTime.setDate(playoffsTime.getDate() + 1);
-            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-          }
-          
-          // RONDA 1 - Playoffs Cruzados (3 jogos simultâneos)
-          // J1: (1°A + 4°C) vs (2°A + 3°C)
-          // J2: (3°A + 2°B) vs (4°A + 1°B)
-          // J3: (3°B + 2°C) vs (4°B + 1°C)
-          const r1Matches = [
-            { round: 'crossed_r1_j1', court: courtName(0) },
-            { round: 'crossed_r1_j2', court: courtName(1) },
-            { round: 'crossed_r1_j3', court: courtName(2) },
-          ];
-          
-          for (const m of r1Matches) {
-            matchesToInsert.push({
-              tournament_id: currentTournament.id,
-              category_id: null,
-              round: m.round,
-              match_number: matchNumber++,
-              player1_individual_id: null, // TBD - será preenchido quando grupos terminarem
-              player2_individual_id: null,
-              player3_individual_id: null,
-              player4_individual_id: null,
-              scheduled_time: playoffsTime.toISOString(),
-              court: m.court,
-              status: 'scheduled'
-            });
-          }
-          
-          // RONDA 2 - Meias-finais (3 jogos)
-          playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
-          if (playoffsTime >= endOfDay) {
-            playoffsTime.setDate(playoffsTime.getDate() + 1);
-            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-          }
-          
-          // J4: Vencedor J1 vs Vencedor J2
-          // J5: Vencedor J3 vs Melhor Perdedor
-          // J6: Perdedor J3 vs Pior Perdedor (5º/6º lugar)
-          const r2Matches = [
-            { round: 'crossed_r2_j4', court: courtName(0) },
-            { round: 'crossed_r2_j5', court: courtName(1) },
-            { round: 'crossed_r2_j6', court: courtName(2) },
-          ];
-          
-          for (const m of r2Matches) {
-            matchesToInsert.push({
-              tournament_id: currentTournament.id,
-              category_id: null,
-              round: m.round,
-              match_number: matchNumber++,
-              player1_individual_id: null,
-              player2_individual_id: null,
-              player3_individual_id: null,
-              player4_individual_id: null,
-              scheduled_time: playoffsTime.toISOString(),
-              court: m.court,
-              status: 'scheduled'
-            });
-          }
-          
-          // RONDA 3 - Finais (2 jogos)
-          playoffsTime = new Date(playoffsTime.getTime() + matchDuration * 60000);
-          if (playoffsTime >= endOfDay) {
-            playoffsTime.setDate(playoffsTime.getDate() + 1);
-            playoffsTime.setHours(parseInt(startTime.split(':')[0]), parseInt(startTime.split(':')[1] || '0'), 0, 0);
-          }
-          
-          // J7: Final (Vencedor J4 vs Vencedor J5)
-          // J8: 3º/4º lugar (Perdedor J4 vs Perdedor J5)
-          const r3Matches = [
-            { round: 'crossed_r3_j7', court: courtName(0) },
-            { round: 'crossed_r3_j8', court: courtName(1) },
-          ];
-          
-          for (const m of r3Matches) {
-            matchesToInsert.push({
-              tournament_id: currentTournament.id,
-              category_id: null,
-              round: m.round,
-              match_number: matchNumber++,
-              player1_individual_id: null,
-              player2_individual_id: null,
-              player3_individual_id: null,
-              player4_individual_id: null,
-              scheduled_time: playoffsTime.toISOString(),
-              court: m.court,
-              status: 'scheduled'
-            });
-          }
-          
-          console.log(`[SCHEDULE] Crossed Playoffs: Added 8 playoff matches (R1:3 + R2:3 + R3:2) with TBD. Total matches: ${matchesToInsert.length}`);
-          
-        } else {
-          const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
+        const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
           const numberOfGroups = groupNames.length || Math.min(Math.floor(individualPlayers.length / 4), 4);
 
           const categoryKnockoutStage = categories.length > 0
@@ -5646,16 +4879,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           console.log(`[SCHEDULE] Individual Groups Knockout: ${numberOfGroups} groups, ${qualifiedPerGroup} qualified per group, stage: ${categoryKnockoutStage}`);
 
+          // Build list of completed individual matches for this category to pass to scheduler
+          const catId = categories.length > 0 ? categories[0].id : null;
+          const completedIndividualForScheduler = completedMatches
+            .filter((m: any) => m.player1_individual_id && (!catId || m.category_id === catId))
+            .map((m: any) => ({
+              player1_id: m.player1_individual_id,
+              player2_id: m.player2_individual_id,
+              player3_id: m.player3_individual_id,
+              player4_id: m.player4_individual_id,
+            }));
+
           const individualMatches = generateIndividualGroupsKnockoutSchedule(
             individualPlayers,
             numberOfGroups,
             numberOfCourts,
-            startDate,
-            startTime,
+            effectiveStartDate,
+            effectiveStartTime,
             endTime,
             matchDuration,
             qualifiedPerGroup,
-            categoryKnockoutStage as 'semifinals' | 'quarterfinals' | 'round_of_16' | 'final'
+            categoryKnockoutStage as 'semifinals' | 'quarterfinals' | 'round_of_16' | 'final',
+            completedIndividualForScheduler
           );
 
           const groupOnlyMatches = individualMatches.filter(m =>
@@ -5824,7 +5069,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}, 3rd/4th: ${hasThirdPlace}). Total: ${matchesToInsert.length}`);
-        }
         
       } else if (schedFormat === 'round_robin' && schedRoundRobinType === 'teams') {
         // Equipas Round Robin - por categoria se existirem categorias
@@ -6692,9 +5936,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       }
       
-      // Filtrar pares que ja tem jogo completed (nao duplicar)
+      // Filtrar pares/combinações que ja tem jogo completed (nao duplicar)
+      // For individual matches: build set of completed 4-player combinations
+      const completedIndividualCombos = new Set(
+        completedMatches
+          .filter(m => (m as any).player1_individual_id)
+          .map(m => [
+            (m as any).player1_individual_id,
+            (m as any).player2_individual_id,
+            (m as any).player3_individual_id,
+            (m as any).player4_individual_id
+          ].filter(Boolean).sort().join('|'))
+      );
+      if (completedIndividualCombos.size > 0) {
+        console.log(`[SCHEDULE] ${completedIndividualCombos.size} completed individual match combinations to skip`);
+      }
+      
       const beforeFilter = matchesToInsert.length;
       matchesToInsert = matchesToInsert.filter(m => {
+        // Dedup individual matches (player*_individual_id)
+        if (m.player1_individual_id) {
+          const key = [
+            m.player1_individual_id, m.player2_individual_id,
+            m.player3_individual_id, m.player4_individual_id
+          ].filter(Boolean).sort().join('|');
+          if (completedIndividualCombos.has(key)) return false;
+        }
+        // Dedup team matches (team1_id/team2_id)
         if (!m.team1_id || !m.team2_id) return true;
         const key = [m.team1_id, m.team2_id].sort().join('|');
         return !completedPairs.has(key);

@@ -621,7 +621,7 @@ Deno.serve(async (req: Request) => {
         }
 
         const isIndividual = (players?.length || 0) > 0 && (teams?.length || 0) === 0;
-        const isMixedFormat = tournament && ((tournament as any).format === 'mixed_american' || (tournament as any).format === 'mixed_gender');
+        const isMixedFormat = tournament && ((tournament as any).format === 'mixed_american');
         const standingsMap = new Map<string, any>();
 
         if (isIndividual && players) {

@@ -48,6 +48,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
   const [selectedClubIds, setSelectedClubIds] = useState<string[]>([]);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
   const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>([]);
+  const [manualCourtNames, setManualCourtNames] = useState<string[]>([]);
+  const [newCourtName, setNewCourtName] = useState('');
   const [ladderCategoryRows, setLadderCategoryRows] = useState<LadderCategoryFormRow[]>([
     { name: '', min_level: '', max_level: '', max_teams: '999' },
   ]);
@@ -233,15 +235,18 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         }
       }
     } else {
-      if (!selectedClubId) {
-        setError(t.tournament.errorSelectClub);
-        setLoading(false);
-        return;
-      }
-      if (selectedCourtNames.length === 0) {
-        setError(t.tournament.errorSelectCourts);
-        setLoading(false);
-        return;
+      if (selectedClubId) {
+        if (selectedCourtNames.length === 0) {
+          setError(t.tournament.errorSelectCourts);
+          setLoading(false);
+          return;
+        }
+      } else {
+        if (manualCourtNames.length === 0) {
+          setError((t.tournament as any).errorNoCourts || 'Add at least one court');
+          setLoading(false);
+          return;
+        }
       }
     }
 
@@ -273,7 +278,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     }
 
     const isLadderFmt = formData.format === 'ladder';
-    const primaryClubId = isLadderFmt ? selectedClubIds[0] : selectedClubId;
+    const primaryClubId = isLadderFmt ? selectedClubIds[0] : (selectedClubId || null);
+    const effectiveCourtNames = isLadderFmt ? [] : (selectedClubId ? selectedCourtNames : manualCourtNames);
     const { data: tournamentData, error: submitError } = await supabase.from('tournaments').insert([
       {
         name: formData.name,
@@ -288,7 +294,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         format: formData.format,
         round_robin_type: isLadderFmt ? null : formData.round_robin_type,
         max_teams: 999,
-        number_of_courts: isLadderFmt ? 1 : selectedCourtNames.length,
+        number_of_courts: isLadderFmt ? 1 : effectiveCourtNames.length,
         match_duration_minutes: 30,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
@@ -300,7 +306,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         user_id: user?.id,
         club_id: primaryClubId,
         club_ids: isLadderFmt ? selectedClubIds : null,
-        court_names: isLadderFmt ? [] : selectedCourtNames,
+        court_names: effectiveCourtNames,
       },
     ]).select();
 
@@ -494,9 +500,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <optgroup label={t.tournament.formatOptgroupIndividual}>
                 <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
                 <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
-                <option value="mixed_gender">{t.tournament.formatOption_mixed_gender}</option>
                 <option value="mixed_american">{t.tournament.formatOption_mixed_american}</option>
-                <option value="crossed_playoffs">{t.tournament.formatOption_crossed_playoffs}</option>
               </optgroup>
               <optgroup label={t.tournament.formatOptgroupTeams}>
                 <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
@@ -720,7 +724,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
                 {dailySchedules.map((schedule, index) => {
-                  const dayCourtNames = schedule.court_names || selectedCourtNames;
+                  const allCourtNames = selectedClubId ? selectedCourtNames : manualCourtNames;
+                  const dayCourtNames = schedule.court_names || allCourtNames;
                   const isExpanded = expandedDayIndex === index;
                   const hasCustomCourts = !!schedule.court_names && schedule.court_names.length > 0;
                   return (
@@ -749,7 +754,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                           }}
                         />
                       </div>
-                      {clubCourts.length > 0 && (
+                      {(clubCourts.length > 0 || manualCourtNames.length > 0) && (
                         <div className="px-2 pb-2">
                           <button
                             type="button"
@@ -762,7 +767,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                           >
                             {hasCustomCourts
                               ? `Campos: ${dayCourtNames.length} personalizados`
-                              : `Campos: ${selectedCourtNames.length} (global)`
+                              : `Campos: ${allCourtNames.length} (global)`
                             }
                             <span className="ml-1">{isExpanded ? '▲' : '▼'}</span>
                           </button>
@@ -783,9 +788,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                                 </button>
                               </div>
                               <div className="space-y-1">
-                                {clubCourts.map((court) => (
+                                {(selectedClubId ? clubCourts.map(c => ({ name: c.name, type: c.type })) : manualCourtNames.map(n => ({ name: n, type: '' }))).map((court) => (
                                   <label
-                                    key={court.id}
+                                    key={court.name}
                                     className={`flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors ${
                                       dayCourtNames.includes(court.name)
                                         ? 'bg-blue-50 border border-blue-200'
@@ -797,7 +802,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                                       checked={dayCourtNames.includes(court.name)}
                                       onChange={() => {
                                         const updated = [...dailySchedules];
-                                        const currentCourts = updated[index].court_names || [...selectedCourtNames];
+                                        const currentCourts = updated[index].court_names || [...allCourtNames];
                                         const newCourts = currentCourts.includes(court.name)
                                           ? currentCourts.filter(n => n !== court.name)
                                           : [...currentCourts, court.name];
@@ -807,7 +812,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                                       className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded"
                                     />
                                     <span className="text-gray-700">{court.name}</span>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                    {court.type && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
                                       court.type === 'indoor'
                                         ? 'bg-blue-100 text-blue-700'
                                         : court.type === 'outdoor'
@@ -815,7 +820,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                                         : 'bg-yellow-100 text-yellow-700'
                                     }`}>
                                       {court.type}
-                                    </span>
+                                    </span>}
                                   </label>
                                 ))}
                               </div>
@@ -939,7 +944,7 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
             ) : (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel}</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel?.replace(' *', '') || 'Club'}</label>
                 <select
                   value={selectedClubId}
                   onChange={(e) => {
@@ -947,9 +952,8 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
                     setSelectedCourtNames([]);
                   }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                  required
                 >
-                  <option value="">{t.tournament.chooseClubPlaceholder}</option>
+                  <option value="">{(t.tournament as any).noClubOption || '-- No club (independent organizer) --'}</option>
                   {clubs.map((club) => (
                     <option key={club.id} value={club.id}>{club.name}</option>
                   ))}
@@ -1011,9 +1015,73 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               )}
 
               {!selectedClubId && (
-                <p className="text-xs text-gray-500">
-                  {t.tournament.selectClubToSeeCourts}
-                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {(t.tournament as any).manualCourts || 'Tournament Courts'} *
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    {(t.tournament as any).manualCourtsHint || 'Add the courts where the tournament will take place.'}
+                  </p>
+                  {manualCourtNames.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {manualCourtNames.map((name, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => {
+                              const updated = [...manualCourtNames];
+                              updated[idx] = e.target.value;
+                              setManualCourtNames(updated);
+                            }}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setManualCourtNames(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCourtName}
+                      onChange={(e) => setNewCourtName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newCourtName.trim()) {
+                          e.preventDefault();
+                          setManualCourtNames(prev => [...prev, newCourtName.trim()]);
+                          setNewCourtName('');
+                        }
+                      }}
+                      placeholder={(t.tournament as any).courtNamePlaceholder || 'Court name (e.g. Court 1)'}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newCourtName.trim()) {
+                          setManualCourtNames(prev => [...prev, newCourtName.trim()]);
+                          setNewCourtName('');
+                        }
+                      }}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium flex items-center gap-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {(t.tournament as any).addCourt || 'Add'}
+                    </button>
+                  </div>
+                  {manualCourtNames.length > 0 && (
+                    <p className="text-xs text-green-600 mt-2 font-medium">
+                      {manualCourtNames.length} {t.tournament.courtsSelectedCount}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
             )}

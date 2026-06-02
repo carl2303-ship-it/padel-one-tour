@@ -54,7 +54,6 @@ export function ManualGroupAssignmentModal({
   onSuccess,
 }: ManualGroupAssignmentModalProps) {
   const isCrossedFormat =
-    tournament.format === 'crossed_playoffs' ||
     tournament.format === 'crossed_playoffs_teams';
   const initialCategoryValue =
     initialSelectedCategory || (isCrossedFormat && categories.length > 0 ? categories[0].id : 'all');

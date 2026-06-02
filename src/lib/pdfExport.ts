@@ -275,9 +275,7 @@ export async function exportTournamentPDF(
   // Nome do formato = exactamente o tipo definido no torneio
   const formatLabels: Record<string, string> = {
     individual_groups_knockout: 'Americano - Grupos + Eliminatórias',
-    crossed_playoffs: 'Playoffs Cruzados',
     crossed_playoffs_teams: 'Playoffs Cruzados por Equipas',
-    mixed_gender: 'Americano Misto',
     round_robin: roundRobinType === 'individual' || roundRobinType === 'american' ? 'Americano Individual - Todos contra Todos' : roundRobinType === 'teams' ? 'Americano Equipas - Todos contra Todos' : 'Torneio Non Stop (Round Robin)',
     groups_knockout: 'Equipas - Grupos + Eliminatórias',
     single_elimination: 'Equipas - Eliminatória Direta (Cuadros)',
@@ -320,7 +318,7 @@ export async function exportTournamentPDF(
   // Escolha do PDF = exactamente o tipo definido nas definições do torneio (sem inferências)
   if (format === 'crossed_playoffs_teams') {
     yPos = exportCrossedPlayoffsTeamsTournament(doc, yPos, tournament, teams, completedMatches, categories);
-  } else if (format === 'individual_groups_knockout' || format === 'crossed_playoffs' || format === 'mixed_gender') {
+  } else if (format === 'individual_groups_knockout' || format === 'mixed_american') {
     yPos = await exportIndividualTournament(doc, yPos, tournament, players, groupMatches, knockoutMatches, categories);
   } else if (format === 'round_robin') {
     if (roundRobinType === 'individual' || roundRobinType === 'american') {
