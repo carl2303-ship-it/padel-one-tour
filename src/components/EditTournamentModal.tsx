@@ -1,21 +1,23 @@
 import { useState, useEffect } from 'react';
 import { supabase, Tournament, DailyScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
-import { X, Upload, TrendingUp, Plus, Trash2 } from 'lucide-react';
+import { X, Upload, TrendingUp, Plus, Trash2, MapPin } from 'lucide-react';
 import { useAuth } from '../lib/authContext';
 import RichTextEditor from './RichTextEditor';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { processAllUnratedMatches } from '../lib/ratingEngine';
 import { parseClubIds } from '../lib/parseClubIds';
+import { geocodeAddress } from '../lib/geocoding';
 
 type EditTournamentModalProps = {
   tournament: Tournament;
   onClose: () => void;
   onSuccess: (updated: Tournament) => void;
+  isIndependentOrganizer?: boolean;
 };
 
-export default function EditTournamentModal({ tournament, onClose, onSuccess }: EditTournamentModalProps) {
+export default function EditTournamentModal({ tournament, onClose, onSuccess, isIndependentOrganizer }: EditTournamentModalProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -65,6 +67,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     !(tournament as any).club_id && (tournament as any).court_names ? (tournament as any).court_names : []
   );
   const [newCourtName, setNewCourtName] = useState('');
+  const [venueAddress, setVenueAddress] = useState((tournament as any).venue_address || '');
+  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState((tournament as any).visibility_radius_km || 25);
+  const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     if (user) {
@@ -315,6 +320,20 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
     const primaryClubId = isLadderFmt ? selectedClubIds[0] : (selectedClubId || null);
     const effectiveCourtNames = isLadderFmt ? [] : (selectedClubId ? selectedCourtNames : manualCourtNames);
 
+    let venueLat: number | null = (tournament as any).venue_lat || null;
+    let venueLng: number | null = (tournament as any).venue_lng || null;
+    if (isIndependentOrganizer && venueAddress.trim() && venueAddress !== (tournament as any).venue_address) {
+      setGeocodingStatus('loading');
+      const geo = await geocodeAddress(venueAddress.trim());
+      if (geo) {
+        venueLat = geo.lat;
+        venueLng = geo.lng;
+        setGeocodingStatus('success');
+      } else {
+        setGeocodingStatus('error');
+      }
+    }
+
     const { error: submitError } = await supabase
       .from('tournaments')
       .update({
@@ -348,6 +367,10 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
         club_id: primaryClubId || null,
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames.length > 0 ? effectiveCourtNames : null,
+        venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : (tournament as any).venue_address || null,
+        venue_lat: venueLat,
+        venue_lng: venueLng,
+        visibility_radius_km: isIndependentOrganizer ? visibilityRadiusKm : ((tournament as any).visibility_radius_km || 25),
       })
       .eq('id', tournament.id);
 
@@ -355,6 +378,14 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
       setError(submitError.message);
       setLoading(false);
       return;
+    }
+
+    if (formData.status === 'cancelled' && tournament.status !== 'cancelled') {
+      await supabase
+        .from('court_bookings')
+        .update({ status: 'cancelled' })
+        .eq('tournament_id', tournament.id)
+        .neq('status', 'cancelled');
     }
 
     await supabase
@@ -513,6 +544,48 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess }: 
               Associe este torneio a uma ou mais ligas para contribuir para as classificacoes
             </p>
           </div>
+
+          {isIndependentOrganizer && (
+            <div className="border-t border-gray-200 pt-6 space-y-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-blue-600" />
+                Local do Torneio
+              </h3>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Morada / Local</label>
+                <input
+                  type="text"
+                  value={venueAddress}
+                  onChange={(e) => { setVenueAddress(e.target.value); setGeocodingStatus('idle'); }}
+                  placeholder="Ex: Pavilhão Municipal, Rua da Escola, Lisboa"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  A morada será convertida em coordenadas para mostrar o torneio aos jogadores próximos.
+                  {geocodingStatus === 'success' && <span className="text-green-600 ml-1">Localização encontrada.</span>}
+                  {geocodingStatus === 'error' && <span className="text-amber-600 ml-1">Morada não encontrada.</span>}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="5"
+                    max="200"
+                    step="5"
+                    value={visibilityRadiusKm}
+                    onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
+                    className="flex-1"
+                  />
+                  <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="border-t border-gray-200 pt-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">

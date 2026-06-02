@@ -18,9 +18,12 @@ import TournamentSimulator from './components/TournamentSimulator';
 import { useI18n } from './lib/i18nContext';
 import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
-import { LogOut, Settings, Menu, X, Trophy, CheckCircle } from 'lucide-react';
+import OrganizerDashboard from './components/OrganizerDashboard';
+import OrganizerMembers from './components/OrganizerMembers';
+import OrganizerSponsors from './components/OrganizerSponsors';
+import { LogOut, Settings, Menu, X, Trophy, CheckCircle, BarChart3, Users, Award } from 'lucide-react';
 
-type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live';
+type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors';
 
 function App() {
   const { t } = useI18n();
@@ -37,6 +40,7 @@ function App() {
   const [isLoadingDeepLink, setIsLoadingDeepLink] = useState(true);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [userRole, setUserRole] = useState<'organizer' | 'player' | null>(null);
+  const [isIndependentOrganizer, setIsIndependentOrganizer] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
 
   // License / contract validation
@@ -58,7 +62,7 @@ function App() {
   };
 
   const handleBack = () => {
-    setView('list');
+    setView(isIndependentOrganizer ? 'dashboard' : 'list');
     setSelectedTournament(null);
     setRefreshKey((k) => k + 1);
   };
@@ -158,7 +162,14 @@ function App() {
       return;
     }
 
-    // Super admins bypass
+    // Check if user owns a club (needed for multiple paths below)
+    const { data: ownedClub } = await supabase
+      .from('clubs')
+      .select('id, contract_expires_at')
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    // Super admins bypass license but still detect independent organizer
     const { data: saRecord } = await supabase
       .from('super_admins')
       .select('id')
@@ -166,7 +177,9 @@ function App() {
       .maybeSingle();
     if (saRecord) {
       setNeedsLicense(false);
+      setIsIndependentOrganizer(!ownedClub);
       await loadUserRole();
+      if (!ownedClub) setView('dashboard');
       return;
     }
 
@@ -199,22 +212,19 @@ function App() {
       }
 
       setNeedsLicense(false);
-      setUserRole(settings?.role === 'organizer' ? 'organizer' : 'organizer');
+      setIsIndependentOrganizer(!ownedClub);
+      setUserRole('organizer');
+      if (!ownedClub) setView('dashboard');
       return;
     }
 
     // Club owner: check club contract
-    const { data: ownedClub } = await supabase
-      .from('clubs')
-      .select('id, contract_expires_at')
-      .eq('owner_id', user.id)
-      .maybeSingle();
-
     if (ownedClub) {
       const hasValidContract = ownedClub.contract_expires_at &&
         new Date(ownedClub.contract_expires_at) > new Date();
       if (hasValidContract) {
         setNeedsLicense(false);
+        setIsIndependentOrganizer(false);
         setUserRole('organizer');
         return;
       }
@@ -419,6 +429,38 @@ function App() {
                   {/* Desktop Menu */}
                   <div className="hidden md:flex items-center gap-3">
                     <span className="text-sm text-gray-600">{user.email}</span>
+                    {isIndependentOrganizer && (
+                      <>
+                        <button
+                          onClick={() => setView('dashboard')}
+                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'dashboard' ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                        >
+                          <BarChart3 className="w-4 h-4" />
+                          Dashboard
+                        </button>
+                        <button
+                          onClick={() => { setView('list'); setSelectedTournament(null); }}
+                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'list' || view === 'detail' ? 'bg-emerald-700 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+                        >
+                          <Trophy className="w-4 h-4" />
+                          {t.nav.tournaments}
+                        </button>
+                        <button
+                          onClick={() => setView('members')}
+                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'members' ? 'bg-purple-700 text-white' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+                        >
+                          <Users className="w-4 h-4" />
+                          {(t as any).organizerNav?.members || 'Membros'}
+                        </button>
+                        <button
+                          onClick={() => setView('sponsors')}
+                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'sponsors' ? 'bg-amber-700 text-white' : 'bg-amber-600 text-white hover:bg-amber-700'}`}
+                        >
+                          <Award className="w-4 h-4" />
+                          Sponsors
+                        </button>
+                      </>
+                    )}
                     {userRole === 'organizer' && (
                       <button
                         onClick={() => setView('leagues')}
@@ -467,6 +509,38 @@ function App() {
                   {user.email}
                 </div>
                 <LanguageSelector />
+                {isIndependentOrganizer && (
+                  <>
+                    <button
+                      onClick={() => { setView('dashboard'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition shadow-md"
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                      Dashboard
+                    </button>
+                    <button
+                      onClick={() => { setView('list'); setSelectedTournament(null); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition shadow-md"
+                    >
+                      <Trophy className="w-4 h-4" />
+                      {t.nav.tournaments}
+                    </button>
+                    <button
+                      onClick={() => { setView('members'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition shadow-md"
+                    >
+                      <Users className="w-4 h-4" />
+                      {(t as any).organizerNav?.members || 'Membros'}
+                    </button>
+                    <button
+                      onClick={() => { setView('sponsors'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition shadow-md"
+                    >
+                      <Award className="w-4 h-4" />
+                      Sponsors
+                    </button>
+                  </>
+                )}
                 {userRole === 'organizer' && (
                   <button
                     onClick={() => {
@@ -553,7 +627,15 @@ function App() {
               : <RegistrationLanding tournament={selectedTournament} onClose={handleBack} />
           )}
 
-          {view === 'leagues' && <LeagueManagement onBack={() => setView('list')} />}
+          {view === 'leagues' && <LeagueManagement onBack={() => setView(isIndependentOrganizer ? 'dashboard' : 'list')} />}
+
+          {view === 'dashboard' && isIndependentOrganizer && (
+            <OrganizerDashboard onNavigate={(v) => setView(v as View)} />
+          )}
+
+          {view === 'members' && isIndependentOrganizer && <OrganizerMembers />}
+
+          {view === 'sponsors' && isIndependentOrganizer && <OrganizerSponsors />}
         </main>
       </div>
 
@@ -561,6 +643,7 @@ function App() {
         <CreateTournamentModal
           onClose={() => setShowCreateTournament(false)}
           onSuccess={handleCreateSuccess}
+          isIndependentOrganizer={isIndependentOrganizer}
         />
       )}
 

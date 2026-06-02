@@ -76,7 +76,7 @@ type RegistrationLandingProps = {
   onClose: () => void;
 };
 
-type RegistrationStep = 'check_account' | 'login' | 'register';
+type RegistrationStep = 'check_account' | 'login' | 'register' | 'no_account';
 
 interface PlayerAccount {
   phone_number: string;
@@ -94,7 +94,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [step, setStep] = useState<RegistrationStep>('check_account');
   const [checkPhone, setCheckPhone] = useState('');
   const [existingAccount, setExistingAccount] = useState<PlayerAccount | null>(null);
-  const [isNewPlayer, setIsNewPlayer] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -255,6 +254,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           setLoggedInPlayer(account);
           checkMembership(normalized);
           setStep('register');
+        } else {
+          setStep('no_account');
         }
       })();
     }
@@ -278,6 +279,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
   const checkLoggedInPlayer = async () => {
     if (!user) return;
+
+    if (user.id === tournament.user_id) return;
 
     const { data: playerAccount } = await supabase
       .from('player_accounts')
@@ -517,13 +520,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       checkMembership(normalizedPhone);
       setStep('login');
     } else {
-      setIsNewPlayer(true);
-      setFormData(prev => ({
-        ...prev,
-        player1Phone: normalizedPhone,
-      }));
-      checkMembership(normalizedPhone);
-      setStep('register');
+      setCheckPhone(normalizedPhone);
+      setStep('no_account');
     }
 
     setLoading(false);
@@ -1438,6 +1436,64 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     </div>
   );
 
+  const renderNoAccountStep = () => {
+    const returnUrl = window.location.href;
+    const playerAppUrl = `https://padel1.app/register?returnTo=${encodeURIComponent(returnUrl)}&phone=${encodeURIComponent(checkPhone)}`;
+
+    return (
+      <div className="bg-white rounded-2xl shadow-lg p-8">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <User className="w-8 h-8 text-amber-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Conta não encontrada</h2>
+          <p className="text-gray-600">
+            O número <span className="font-semibold">{checkPhone}</span> não está registado na nossa plataforma.
+          </p>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-6">
+          <h3 className="font-semibold text-blue-900 mb-2">Para se inscrever neste torneio:</h3>
+          <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
+            <li>Crie a sua conta de jogador na app Padel One</li>
+            <li>Após criar a conta, volte a esta página</li>
+            <li>Insira novamente o seu telefone para se inscrever</li>
+          </ol>
+        </div>
+
+        <div className="space-y-4">
+          <button
+            onClick={() => { window.location.href = playerAppUrl; }}
+            className="w-full px-6 py-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold text-lg flex items-center justify-center gap-2"
+          >
+            Criar Conta de Jogador
+            <ArrowRight className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={() => {
+              setStep('check_account');
+              setCheckPhone('');
+              setError('');
+            }}
+            className="w-full px-6 py-3 border-2 border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+          >
+            Usar outro número de telefone
+          </button>
+        </div>
+
+        <div className="mt-6 text-center">
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 transition-colors text-sm"
+          >
+            {t.registration.back}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const renderRegistrationForm = () => (
     <div className="bg-white rounded-2xl shadow-lg p-8">
       <h2 className="text-2xl font-bold text-gray-900 mb-6">
@@ -1680,7 +1736,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   required
                   value={formData.player1Phone}
                   onChange={(e) => setFormData({ ...formData, player1Phone: e.target.value })}
-                  onBlur={(e) => { if (e.target.value && isNewPlayer) checkMembership(normalizePhone(e.target.value)); }}
                   className={`w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${(!!loggedInPlayer || !!existingAccount) ? 'bg-gray-50' : ''}`}
                   placeholder="+351 912 345 678"
                   disabled={!!loggedInPlayer || !!existingAccount}
@@ -1814,7 +1869,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                 } else {
                   setStep('check_account');
                   setExistingAccount(null);
-                  setIsNewPlayer(false);
                 }
               }}
               className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
@@ -1906,6 +1960,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
           {step === 'check_account' && renderCheckAccountStep()}
           {step === 'login' && renderLoginStep()}
+          {step === 'no_account' && renderNoAccountStep()}
           {step === 'register' && renderRegistrationForm()}
         </div>
 

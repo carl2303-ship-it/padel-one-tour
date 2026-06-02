@@ -24,6 +24,15 @@ interface RequestBody {
   mode?: "cron" | "direct";
 }
 
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -57,7 +66,7 @@ Deno.serve(async (req: Request) => {
       // Direct call: notify about a specific tournament
       const { data: tournament } = await admin
         .from("tournaments")
-        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration")
+        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, user_id, venue_lat, venue_lng, visibility_radius_km")
         .eq("id", body.tournamentId)
         .maybeSingle();
 
@@ -71,7 +80,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: recentTournaments } = await admin
         .from("tournaments")
-        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, created_at")
+        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, created_at, user_id, venue_lat, venue_lng, visibility_radius_km")
         .in("status", ["draft", "active", "in_progress"])
         .gte("end_date", today)
         .gte("created_at", thirtyMinAgo)
@@ -162,28 +171,75 @@ Deno.serve(async (req: Request) => {
         tag: `new-tournament-${tournament.id}`,
       };
 
-      // Send to ALL players with push subscriptions (public tournament = notify everyone)
-      // For gender-specific tournaments, filter accordingly
-      let query = admin
-        .from("push_subscriptions")
-        .select("player_account_id")
-        .eq("app_source", "player")
-        .not("player_account_id", "is", null);
+      // Determine target players based on tournament type
+      let targetPlayerIds: string[] = [];
 
-      const { data: subscriptions } = await query;
+      const isIndependentTournament = !tournament.club_id && !tournament.club_ids;
 
-      if (!subscriptions || subscriptions.length === 0) continue;
+      if (isIndependentTournament) {
+        // For independent organizer tournaments: target by organizer contacts + geolocation
+        const targetSet = new Set<string>();
 
-      // Deduplicate by player_account_id
-      const uniquePlayerIds = [...new Set(subscriptions.map((s: any) => s.player_account_id).filter(Boolean))];
+        // 1. Players in organizer's contact list (organizer_players)
+        const { data: contacts } = await admin
+          .from("organizer_players")
+          .select("phone_number")
+          .eq("organizer_id", tournament.user_id)
+          .not("phone_number", "is", null);
 
-      // If tournament has gender restriction, filter players
-      let targetPlayerIds = uniquePlayerIds;
+        if (contacts && contacts.length > 0) {
+          const phones = contacts.map((c: any) => c.phone_number).filter(Boolean);
+          if (phones.length > 0) {
+            const { data: matchedAccounts } = await admin
+              .from("player_accounts")
+              .select("id")
+              .in("phone_number", phones);
+            if (matchedAccounts) {
+              matchedAccounts.forEach((a: any) => targetSet.add(a.id));
+            }
+          }
+        }
+
+        // 2. Nearby players (if tournament has venue coordinates)
+        if (tournament.venue_lat && tournament.venue_lng) {
+          const radius = tournament.visibility_radius_km || 25;
+          const { data: nearbyPlayers } = await admin
+            .from("player_accounts")
+            .select("id, lat, lng")
+            .not("lat", "is", null)
+            .not("lng", "is", null);
+
+          if (nearbyPlayers) {
+            for (const p of nearbyPlayers) {
+              const dist = haversineKm(tournament.venue_lat, tournament.venue_lng, p.lat, p.lng);
+              if (dist <= radius) {
+                targetSet.add(p.id);
+              }
+            }
+          }
+        }
+
+        targetPlayerIds = [...targetSet];
+      } else {
+        // Club tournaments: notify all subscribed players
+        const { data: subscriptions } = await admin
+          .from("push_subscriptions")
+          .select("player_account_id")
+          .eq("app_source", "player")
+          .not("player_account_id", "is", null);
+
+        if (!subscriptions || subscriptions.length === 0) continue;
+        targetPlayerIds = [...new Set(subscriptions.map((s: any) => s.player_account_id).filter(Boolean))];
+      }
+
+      if (targetPlayerIds.length === 0) continue;
+
+      // Gender filter
       if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
         const { data: players } = await admin
           .from("player_accounts")
           .select("id, gender, player_category")
-          .in("id", uniquePlayerIds.slice(0, 500));
+          .in("id", targetPlayerIds.slice(0, 500));
 
         if (players) {
           targetPlayerIds = players

@@ -2,18 +2,20 @@ import { useState, useEffect } from 'react';
 import { supabase, DailyScheduleEntry } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { X, Upload, Plus, Trash2 } from 'lucide-react';
+import { X, Upload, Plus, Trash2, MapPin } from 'lucide-react';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
+import { geocodeAddress } from '../lib/geocoding';
 
 type CreateTournamentModalProps = {
   onClose: () => void;
   onSuccess: () => void;
+  isIndependentOrganizer?: boolean;
 };
 
 type LadderCategoryFormRow = { name: string; min_level: string; max_level: string; max_teams: string };
 
-export default function CreateTournamentModal({ onClose, onSuccess }: CreateTournamentModalProps) {
+export default function CreateTournamentModal({ onClose, onSuccess, isIndependentOrganizer }: CreateTournamentModalProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -53,6 +55,9 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
   const [ladderCategoryRows, setLadderCategoryRows] = useState<LadderCategoryFormRow[]>([
     { name: '', min_level: '', max_level: '', max_teams: '999' },
   ]);
+  const [venueAddress, setVenueAddress] = useState('');
+  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState(25);
+  const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     fetchClubs();
@@ -214,6 +219,21 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
     }
 
     const isLadder = formData.format === 'ladder';
+
+    let venueLat: number | null = null;
+    let venueLng: number | null = null;
+    if (isIndependentOrganizer && venueAddress.trim()) {
+      setGeocodingStatus('loading');
+      const geo = await geocodeAddress(venueAddress.trim());
+      if (geo) {
+        venueLat = geo.lat;
+        venueLng = geo.lng;
+        setGeocodingStatus('success');
+      } else {
+        setGeocodingStatus('error');
+      }
+    }
+
     if (isLadder) {
       if (selectedClubIds.length === 0) {
         setError(t.tournament.errorSelectLadderClubs);
@@ -307,6 +327,12 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
         club_id: primaryClubId,
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames,
+        allow_public_registration: isIndependentOrganizer ? true : false,
+        visibility: 'public',
+        venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : null,
+        venue_lat: venueLat,
+        venue_lng: venueLng,
+        visibility_radius_km: isIndependentOrganizer ? visibilityRadiusKm : 25,
       },
     ]).select();
 
@@ -908,6 +934,48 @@ export default function CreateTournamentModal({ onClose, onSuccess }: CreateTour
               Se ativo, os jogadores podem indicar na inscrição se querem jantar.
             </p>
           </div>
+
+          {isIndependentOrganizer && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-blue-600" />
+                Local do Torneio
+              </h3>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Morada / Local</label>
+                <input
+                  type="text"
+                  value={venueAddress}
+                  onChange={(e) => { setVenueAddress(e.target.value); setGeocodingStatus('idle'); }}
+                  placeholder="Ex: Pavilhão Municipal, Rua da Escola, Lisboa"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  A morada será convertida em coordenadas para mostrar o torneio aos jogadores próximos.
+                  {geocodingStatus === 'success' && <span className="text-green-600 ml-1">Localização encontrada.</span>}
+                  {geocodingStatus === 'error' && <span className="text-amber-600 ml-1">Morada não encontrada - o torneio será criado sem geolocalização.</span>}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="5"
+                    max="200"
+                    step="5"
+                    value={visibilityRadiusKm}
+                    onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
+                    className="flex-1"
+                  />
+                  <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente na app Player.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">

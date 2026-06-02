@@ -8002,6 +8002,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             setShowEditTournament(false);
             fetchTournamentData();
           }}
+          isIndependentOrganizer={!(currentTournament as any).club_id}
         />
       )}
 

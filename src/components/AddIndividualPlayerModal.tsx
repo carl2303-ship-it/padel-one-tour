@@ -48,7 +48,24 @@ type ExistingPlayer = {
   id: string;
   name: string;
   phone_number: string | null;
+  email?: string | null;
 };
+
+function normalizePlayerName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function normalizePlayerPhone(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  if (cleaned.startsWith('+351')) return cleaned;
+  if (cleaned.startsWith('351') && cleaned.length >= 12) return '+' + cleaned;
+  if (cleaned.startsWith('+')) return cleaned;
+  if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
+  if (cleaned.length === 9) return '+351' + cleaned;
+  if (cleaned.length === 11 && cleaned.startsWith('351')) return '+' + cleaned;
+  return cleaned;
+}
 
 type Tournament = {
   id: string;
@@ -128,63 +145,107 @@ export default function AddIndividualPlayerModal({
       .select('id')
       .eq('user_id', user.id);
 
-    if (!userTournaments || userTournaments.length === 0) {
-      setMode('new');
-      return;
+    const tournamentIds = userTournaments?.map(t => t.id) || [];
+
+    const [playersResult, teamsResult, organizerResult, accountsResult] = await Promise.all([
+      tournamentIds.length > 0
+        ? supabase
+            .from('players')
+            .select('id, name, phone_number, email')
+            .in('tournament_id', tournamentIds)
+        : Promise.resolve({ data: [] as { id: string; name: string; phone_number: string | null; email: string | null }[] }),
+      tournamentIds.length > 0
+        ? supabase
+            .from('teams')
+            .select(`
+              player1:players!teams_player1_id_fkey(name, email, phone_number),
+              player2:players!teams_player2_id_fkey(name, email, phone_number)
+            `)
+            .in('tournament_id', tournamentIds)
+        : Promise.resolve({ data: [] as any[] }),
+      supabase
+        .from('organizer_players')
+        .select('name, email, phone_number')
+        .eq('organizer_id', user.id),
+      supabase
+        .from('player_accounts')
+        .select('name, email, phone_number'),
+    ]);
+
+    const accountsByPhone = new Map<string, { name: string; email: string | null; phone_number: string }>();
+    for (const acc of accountsResult.data || []) {
+      const key = normalizePlayerPhone(acc.phone_number);
+      if (key) accountsByPhone.set(key, acc);
     }
 
-    const tournamentIds = userTournaments.map(t => t.id);
+    const playerMap = new Map<string, ExistingPlayer>();
 
-    const { data } = await supabase
-      .from('players')
-      .select('id, name, phone_number, email')
-      .in('tournament_id', tournamentIds)
-      .order('name');
+    const addPlayer = (name: string, phone: string | null | undefined, email: string | null | undefined) => {
+      if (!name?.trim()) return;
 
-    if (data) {
-      const uniquePlayers = data.reduce((acc: typeof data, player) => {
-        const key = player.phone_number?.replace(/\s+/g, '') || player.name;
-        const existing = acc.find(p =>
-          (p.phone_number?.replace(/\s+/g, '') === key) ||
-          (!p.phone_number && !player.phone_number && p.name === player.name)
+      const phoneKey = normalizePlayerPhone(phone);
+      const normalizedName = normalizePlayerName(name);
+      const account = phoneKey ? accountsByPhone.get(phoneKey) : undefined;
+      const displayName = (account?.name || name).trim();
+      const displayPhone = phoneKey || phone || null;
+      const displayEmail = email || account?.email || null;
+
+      if (!phoneKey) {
+        const duplicateWithPhone = Array.from(playerMap.values()).find(
+          (p) => p.phone_number && normalizePlayerName(p.name) === normalizedName
         );
-        if (!existing) {
-          acc.push(player);
-        }
-        return acc;
-      }, []);
-
-      const phones = uniquePlayers
-        .map(p => p.phone_number?.replace(/\s+/g, ''))
-        .filter((p): p is string => !!p);
-
-      if (phones.length > 0) {
-        const { data: accounts } = await supabase
-          .from('player_accounts')
-          .select('phone_number, name')
-          .in('phone_number', phones);
-
-        if (accounts) {
-          const nameByPhone = new Map<string, string>();
-          for (const acc of accounts) {
-            if (acc.phone_number && acc.name) {
-              nameByPhone.set(acc.phone_number.replace(/\s+/g, ''), acc.name);
-            }
-          }
-          for (const player of uniquePlayers) {
-            const normalizedPhone = player.phone_number?.replace(/\s+/g, '');
-            if (normalizedPhone && nameByPhone.has(normalizedPhone)) {
-              player.name = nameByPhone.get(normalizedPhone)!;
-            }
-          }
+        if (duplicateWithPhone) {
+          if (account?.name) duplicateWithPhone.name = account.name;
+          if (!duplicateWithPhone.email && displayEmail) duplicateWithPhone.email = displayEmail;
+          return;
         }
       }
 
-      uniquePlayers.sort((a, b) => a.name.localeCompare(b.name));
-      setExistingPlayers(uniquePlayers);
-      if (uniquePlayers.length === 0) {
-        setMode('new');
+      const dedupeKey = phoneKey || `name:${normalizedName}`;
+
+      const existing = playerMap.get(dedupeKey);
+      if (existing) {
+        if (account?.name) existing.name = account.name;
+        if (!existing.email && displayEmail) existing.email = displayEmail;
+        if (!existing.phone_number && displayPhone) existing.phone_number = displayPhone;
+        return;
       }
+
+      if (phoneKey) {
+        const nameOnlyKey = `name:${normalizePlayerName(displayName)}`;
+        if (playerMap.has(nameOnlyKey)) {
+          playerMap.delete(nameOnlyKey);
+        }
+      }
+
+      playerMap.set(dedupeKey, {
+        id: dedupeKey,
+        name: displayName,
+        phone_number: displayPhone,
+        email: displayEmail,
+      });
+    };
+
+    for (const p of playersResult.data || []) {
+      addPlayer(p.name, p.phone_number, p.email);
+    }
+
+    for (const team of teamsResult.data || []) {
+      if (team.player1) addPlayer(team.player1.name, team.player1.phone_number, team.player1.email);
+      if (team.player2) addPlayer(team.player2.name, team.player2.phone_number, team.player2.email);
+    }
+
+    for (const op of organizerResult.data || []) {
+      addPlayer(op.name, op.phone_number, op.email);
+    }
+
+    const uniquePlayers = Array.from(playerMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, 'pt')
+    );
+
+    setExistingPlayers(uniquePlayers);
+    if (uniquePlayers.length === 0) {
+      setMode('new');
     }
   };
 
