@@ -103,11 +103,11 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     const superTeamsTournamentIds = tournamentsList.filter(t => t.format === 'super_teams').map(t => t.id);
 
     const [teamsResult, playersResult, categoriesResult, superTeamsResult] = await Promise.all([
-      supabase.from('teams').select('tournament_id').in('tournament_id', tournamentIds),
-      supabase.from('players').select('tournament_id').in('tournament_id', tournamentIds),
+      supabase.from('teams').select('tournament_id').in('tournament_id', tournamentIds).limit(10000),
+      supabase.from('players').select('tournament_id').in('tournament_id', tournamentIds).limit(10000),
       supabase.from('tournament_categories').select('tournament_id, max_teams, format').in('tournament_id', tournamentIds),
       superTeamsTournamentIds.length > 0
-        ? supabase.from('super_teams').select('tournament_id').in('tournament_id', superTeamsTournamentIds)
+        ? supabase.from('super_teams').select('tournament_id').in('tournament_id', superTeamsTournamentIds).limit(10000)
         : Promise.resolve({ data: [] })
     ]);
 
@@ -124,11 +124,18 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     superTeamsData.forEach((st: { tournament_id: string }) => superTeamCountMap.set(st.tournament_id, (superTeamCountMap.get(st.tournament_id) || 0) + 1));
 
     const formatById = new Map(tournamentsList.map(t => [t.id, t.format]));
+    const individualFormats = ['individual_groups_knockout', 'mixed_american'];
 
     tournamentIds.forEach(id => {
       const format = formatById.get(id);
+      const tournament = tournamentsList.find(t => t.id === id);
+      const isIndividual = individualFormats.includes(format || '') ||
+        (format === 'round_robin' && tournament?.round_robin_type === 'individual');
+
       if (format === 'super_teams') {
         counts[id] = superTeamCountMap.get(id) || 0;
+      } else if (isIndividual) {
+        counts[id] = playerCountMap.get(id) || 0;
       } else {
         const teamCount = teamCountMap.get(id) || 0;
         const playerCount = playerCountMap.get(id) || 0;

@@ -126,6 +126,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [allRegistered, setAllRegistered] = useState<any[]>([]);
   const [payAtClubSelected, setPayAtClubSelected] = useState(false);
   const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
+  const [player2IsMember, setPlayer2IsMember] = useState<boolean | null>(null);
   const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
 
   // Normalizar telefone: se não tem indicativo, adicionar +351
@@ -430,22 +431,29 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const canPayOnline = clubSupportsOnline;
   const canPayAtClub = clubSupportsAtClub && tournament.allow_club_payment === true;
 
-  const getRegistrationFee = () => {
+  const getPlayerFee = (isMember: boolean | null) => {
     const cat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
-    const mp = (cat as any)?.member_price ?? tournament.member_price;
-    const nmp = (cat as any)?.non_member_price ?? tournament.non_member_price;
-    if (playerIsMember === true && mp) return mp;
-    if (playerIsMember === false && nmp) return nmp;
-    if (nmp) return nmp;
-    if (mp) return mp;
-    const catFee = cat?.registration_fee;
-    if (catFee !== undefined && catFee !== null) return catFee;
-    return tournament.registration_fee || 0;
+    const mp = (cat as any)?.member_price || tournament.member_price;
+    const nmp = (cat as any)?.non_member_price || tournament.non_member_price;
+    if (isMember === true && mp) return Number(mp);
+    if (isMember === false && nmp) return Number(nmp);
+    if (nmp) return Number(nmp);
+    if (mp) return Number(mp);
+    const catFee = (cat as any)?.registration_fee;
+    if (catFee != null && catFee > 0) return Number(catFee);
+    return Number(tournament.registration_fee) || 0;
   };
 
-  const checkMembership = async (phone: string) => {
+  const getRegistrationFee = () => {
+    const p1Fee = getPlayerFee(playerIsMember);
+    if (isIndividualFormat()) return p1Fee;
+    const p2Fee = getPlayerFee(player2IsMember);
+    return p1Fee + p2Fee;
+  };
+
+  const checkMembershipFor = async (phone: string, setter: (v: boolean | null) => void) => {
     if (!phone || !tournament.club_id) {
-      setPlayerIsMember(null);
+      setter(null);
       return;
     }
     const normalized = normalizePhone(phone);
@@ -454,7 +462,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       .select('owner_id')
       .eq('id', tournament.club_id)
       .maybeSingle();
-    if (!club) { setPlayerIsMember(null); return; }
+    if (!club) { setter(null); return; }
     const { data: membership } = await supabase
       .from('member_subscriptions')
       .select('id')
@@ -463,8 +471,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       .eq('status', 'active')
       .limit(1)
       .maybeSingle();
-    setPlayerIsMember(!!membership);
+    setter(!!membership);
   };
+
+  const checkMembership = (phone: string) => checkMembershipFor(phone, setPlayerIsMember);
 
   const getCategoryMaxSlots = () => {
     // Se uma categoria está selecionada, retorna o max dessa categoria
@@ -630,12 +640,14 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         player2Email: account.email || '',
       }));
       setPartnerFound(true);
+      checkMembershipFor(normalizedPhone, setPlayer2IsMember);
     } else {
       setFormData(prev => ({
         ...prev,
         player2Phone: normalizedPhone,
       }));
       setPartnerFound(false);
+      setPlayer2IsMember(null);
     }
 
     setPartnerLookupLoading(false);
@@ -1621,31 +1633,48 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   <p className="text-sm font-semibold text-blue-900">Preço de Inscrição</p>
                   {(() => {
                     const selectedCat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
-                    const memberPrice = (selectedCat as any)?.member_price ?? tournament.member_price;
-                    const nonMemberPrice = (selectedCat as any)?.non_member_price ?? tournament.non_member_price;
+                    const memberPrice = Number((selectedCat as any)?.member_price) || Number(tournament.member_price) || 0;
+                    const nonMemberPrice = Number((selectedCat as any)?.non_member_price) || Number(tournament.non_member_price) || 0;
                     const hasPrices = memberPrice || nonMemberPrice;
                     if (!hasPrices) return <p className="text-2xl font-bold text-blue-600">{getRegistrationFee()}€</p>;
+                    const isTeam = !isIndividualFormat();
+                    const p1Fee = getPlayerFee(playerIsMember);
+                    const p2Fee = isTeam ? getPlayerFee(player2IsMember) : 0;
+                    const total = p1Fee + p2Fee;
+                    const p1Known = playerIsMember !== null;
+                    const p2Known = player2IsMember !== null;
+                    if (isTeam && p1Known) {
+                      return (
+                        <div className="mt-1 space-y-1">
+                          <p className="text-xs text-blue-700">
+                            Jogador 1: {playerIsMember ? 'Membro' : 'Não-Membro'} — <span className="font-bold">{p1Fee}€</span>
+                          </p>
+                          {p2Known ? (
+                            <p className="text-xs text-blue-700">
+                              Jogador 2: {player2IsMember ? 'Membro' : 'Não-Membro'} — <span className="font-bold">{p2Fee}€</span>
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-500">Jogador 2: aguardando telefone</p>
+                          )}
+                          <p className="text-2xl font-bold text-blue-600">{total}€</p>
+                        </div>
+                      );
+                    }
+                    if (p1Known) {
+                      return (
+                        <div className="mt-1">
+                          <p className="text-sm text-gray-600">{playerIsMember ? 'Membro do clube' : 'Não-Membro'}</p>
+                          <p className={`text-2xl font-bold ${playerIsMember ? 'text-green-600' : 'text-blue-600'}`}>{p1Fee}€</p>
+                        </div>
+                      );
+                    }
                     return (
-                      <div className="mt-1 space-y-1">
-                        {playerIsMember === true ? (
-                          <div>
-                            <p className="text-sm text-green-700 font-medium">Membro do clube</p>
-                            <p className="text-2xl font-bold text-green-600">{memberPrice || 0}€</p>
-                          </div>
-                        ) : playerIsMember === false ? (
-                          <div>
-                            <p className="text-sm text-gray-600">Não-Membro</p>
-                            <p className="text-2xl font-bold text-blue-600">{nonMemberPrice || 0}€</p>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {memberPrice != null && memberPrice > 0 && (
-                              <p className="text-sm text-blue-800">Membros: <span className="font-bold">{memberPrice}€</span></p>
-                            )}
-                            {nonMemberPrice != null && nonMemberPrice > 0 && (
-                              <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{nonMemberPrice}€</span></p>
-                            )}
-                          </div>
+                      <div className="space-y-1">
+                        {memberPrice > 0 && (
+                          <p className="text-sm text-blue-800">Membros: <span className="font-bold">{memberPrice}€{isTeam ? ' /jogador' : ''}</span></p>
+                        )}
+                        {nonMemberPrice > 0 && (
+                          <p className="text-sm text-blue-800">Não-Membros: <span className="font-bold">{nonMemberPrice}€{isTeam ? ' /jogador' : ''}</span></p>
                         )}
                       </div>
                     );
@@ -1883,7 +1912,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               {loading
                 ? t.message.saving
                 : getRegistrationFee() > 0
-                  ? (payAtClubSelected || (!canPayOnline && canPayAtClub)
+                  ? (canPayAtClub && (payAtClubSelected || !canPayOnline)
                       ? 'Inscrever (Pagar no Clube)'
                       : `Pagar ${getRegistrationFee()}€`)
                   : t.registration.submit

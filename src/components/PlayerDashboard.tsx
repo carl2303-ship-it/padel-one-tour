@@ -285,8 +285,8 @@ export default function PlayerDashboard() {
 
         const uniqueTournamentIds = uniqueTournaments.map(t => t.id);
         const [playersResult, teamsResult] = await Promise.all([
-          supabase.from('players').select('tournament_id').in('tournament_id', uniqueTournamentIds),
-          supabase.from('teams').select('tournament_id').in('tournament_id', uniqueTournamentIds)
+          supabase.from('players').select('tournament_id').in('tournament_id', uniqueTournamentIds).limit(10000),
+          supabase.from('teams').select('tournament_id').in('tournament_id', uniqueTournamentIds).limit(10000)
         ]);
 
         const playerCountMap = new Map<string, number>();
@@ -294,7 +294,13 @@ export default function PlayerDashboard() {
         (playersResult.data || []).forEach(p => playerCountMap.set(p.tournament_id, (playerCountMap.get(p.tournament_id) || 0) + 1));
         (teamsResult.data || []).forEach(t => teamCountMap.set(t.tournament_id, (teamCountMap.get(t.tournament_id) || 0) + 1));
 
+        const individualFormats = ['individual_groups_knockout', 'mixed_american'];
         const tournamentsWithCounts = uniqueTournaments.map(t => {
+          const isIndividual = individualFormats.includes(t.format) ||
+            (t.format === 'round_robin' && (t as any).round_robin_type === 'individual');
+          if (isIndividual) {
+            return { ...t, enrolled_count: playerCountMap.get(t.id) || 0 };
+          }
           const teamCount = teamCountMap.get(t.id) || 0;
           const playerCount = playerCountMap.get(t.id) || 0;
           return {

@@ -46,7 +46,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: tournament } = await supabaseClient
       .from("tournaments")
-      .select("registration_fee, name, registration_redirect_url")
+      .select("registration_fee, member_price, non_member_price, name, registration_redirect_url, club_id")
       .eq("id", tournamentId)
       .maybeSingle();
 
@@ -54,26 +54,70 @@ Deno.serve(async (req: Request) => {
       throw new Error("Tournament not found");
     }
 
-    let effectiveFee = tournament.registration_fee;
     let categoryName = tournament.name;
+    let catRegFee = null;
+    let catMemberPrice = null;
+    let catNonMemberPrice = null;
 
     if (categoryId) {
       const { data: category } = await supabaseClient
         .from("tournament_categories")
-        .select("registration_fee, name")
+        .select("registration_fee, member_price, non_member_price, name")
         .eq("id", categoryId)
         .maybeSingle();
 
       if (category) {
-        if (category.registration_fee !== undefined && category.registration_fee !== null) {
-          effectiveFee = category.registration_fee;
-        }
+        catRegFee = category.registration_fee;
+        catMemberPrice = category.member_price;
+        catNonMemberPrice = category.non_member_price;
         categoryName = category.name;
       }
     }
 
-    if (effectiveFee && Number(effectiveFee) > 0) {
-      amount = Math.round(Number(effectiveFee) * 100);
+    // Determine effective prices — category price 0 means "inherit from tournament"
+    const mp = Number(catMemberPrice) || Number(tournament.member_price) || 0;
+    const nmp = Number(catNonMemberPrice) || Number(tournament.non_member_price) || 0;
+    const regFee = Number(catRegFee) || Number(tournament.registration_fee) || 0;
+
+    // Check membership for each player to calculate per-player fee
+    const checkIsMember = async (phone: string): Promise<boolean> => {
+      if (!phone || !tournament.club_id) return false;
+      const normalized = phone.replace(/\s+/g, "").replace(/^00/, "+");
+      const { data: club } = await supabaseClient
+        .from("clubs")
+        .select("owner_id")
+        .eq("id", tournament.club_id)
+        .maybeSingle();
+      if (!club) return false;
+      const { data: membership } = await supabaseClient
+        .from("member_subscriptions")
+        .select("id")
+        .eq("club_owner_id", club.owner_id)
+        .eq("member_phone", normalized)
+        .eq("status", "active")
+        .limit(1)
+        .maybeSingle();
+      return !!membership;
+    };
+
+    const getFeeForPlayer = (isMember: boolean): number => {
+      if (isMember && mp) return mp;
+      if (!isMember && nmp) return nmp;
+      return nmp || mp || regFee || 0;
+    };
+
+    const p1Member = await checkIsMember(player1.phone);
+    const p1Fee = getFeeForPlayer(p1Member);
+    let totalFee = p1Fee;
+
+    if (!isIndividual && player2?.phone) {
+      const p2Member = await checkIsMember(player2.phone);
+      const p2Fee = getFeeForPlayer(p2Member);
+      totalFee += p2Fee;
+    }
+
+    if (totalFee > 0) {
+      amount = Math.round(totalFee * 100);
       description = isIndividual ? `${player1.name} - ${categoryName}` : `${teamName} - ${categoryName}`;
     }
 

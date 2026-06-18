@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase, Tournament } from '../lib/supabase'
 import { useI18n } from '../lib/i18nContext'
 import { useAuth } from '../lib/authContext'
-import { ArrowLeft, ChevronDown, ChevronUp, Plus } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronUp, Plus, Pencil, Trash2 } from 'lucide-react'
 import AddTeamModal from './AddTeamModal'
+import EditTeamModal from './EditTeamModal'
 import {
   LadderRow,
   parsePositions,
@@ -57,6 +58,7 @@ export default function LadderTournamentView({
   const [teams, setTeams] = useState<TeamRow[]>([])
   const [orderedTeamIds, setOrderedTeamIds] = useState<string[]>([])
   const [showAddTeam, setShowAddTeam] = useState(false)
+  const [editingTeam, setEditingTeam] = useState<TeamRow | null>(null)
   const [limitEdit, setLimitEdit] = useState(5)
   const [teamClubNames, setTeamClubNames] = useState<Map<string, string>>(new Map())
   const [resultModal, setResultModal] = useState<LadderChallenge | null>(null)
@@ -228,6 +230,39 @@ export default function LadderTournamentView({
     }
     await supabase.from('tournaments').update({ status: 'active' }).eq('id', tournament.id)
     await load()
+  }
+
+  const handleDeleteTeam = async (teamId: string, teamName: string) => {
+    if (!isOrganizer) return
+    if (!confirm(`Eliminar equipa "${teamName}" e todos os seus jogadores?`)) return
+    setBusy(true)
+    try {
+      // Remove from ladder positions if published
+      if (ladder) {
+        const positions = parsePositions(ladder.positions).filter((p) => p.team_id !== teamId)
+        const renumbered = positions.map((p, i) => ({ rank: i + 1, team_id: p.team_id }))
+        const pendingChallenges = parsePending(ladder.pending_challenges).filter(
+          (c) => c.challenger_team_id !== teamId && c.challenged_team_id !== teamId
+        )
+        await supabase
+          .from('ladder_tournaments')
+          .update({ positions: renumbered, pending_challenges: pendingChallenges })
+          .eq('tournament_id', tournament.id)
+          .eq('category_id', activeCategoryId)
+      }
+      // Delete team and associated players
+      const team = teams.find((t) => t.id === teamId)
+      if (team) {
+        const playerIds = [team.player1_id, team.player2_id].filter(Boolean)
+        await supabase.from('teams').delete().eq('id', teamId)
+        if (playerIds.length > 0) {
+          await supabase.from('players').delete().in('id', playerIds)
+        }
+      }
+      await load()
+    } finally {
+      setBusy(false)
+    }
   }
 
   const syncNewTeamsToBottom = async () => {
@@ -564,6 +599,25 @@ export default function LadderTournamentView({
                     )}
                   </span>
                   <div className="flex gap-1">
+                    {tm && (
+                      <button
+                        type="button"
+                        className="p-2 rounded border hover:bg-gray-50"
+                        onClick={() => setEditingTeam(tm)}
+                        title="Editar"
+                      >
+                        <Pencil className="w-4 h-4 text-gray-500" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="p-2 rounded border hover:bg-red-50"
+                      disabled={busy}
+                      onClick={() => void handleDeleteTeam(tid, tm?.name ?? tid)}
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-400" />
+                    </button>
                     <button
                       type="button"
                       className="p-2 rounded border hover:bg-gray-50"
@@ -621,6 +675,7 @@ export default function LadderTournamentView({
                   <th className="py-2 pr-4">{L.team}</th>
                   <th className="py-2 pr-4">{L.club}</th>
                   <th className="py-2">{myTeamIds.size ? L.challenge : ''}</th>
+                  {isOrganizer && <th className="py-2 w-20"></th>}
                 </tr>
               </thead>
               <tbody>
@@ -659,6 +714,31 @@ export default function LadderTournamentView({
                           <span className="text-gray-300">{L.notEligible}</span>
                         )}
                       </td>
+                      {isOrganizer && (
+                        <td className="py-2">
+                          <div className="flex gap-1">
+                            {tm && (
+                              <button
+                                type="button"
+                                onClick={() => setEditingTeam(tm)}
+                                className="p-1.5 hover:bg-gray-100 rounded-lg transition"
+                                title="Editar"
+                              >
+                                <Pencil className="w-4 h-4 text-gray-500" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleDeleteTeam(row.team_id, tm?.name ?? row.team_id)}
+                              className="p-1.5 hover:bg-red-50 rounded-lg transition"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-400" />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -715,6 +795,24 @@ export default function LadderTournamentView({
           lockedCategoryId={activeCategoryId}
           onClose={() => setShowAddTeam(false)}
           onSuccess={() => void load()}
+        />
+      )}
+
+      {editingTeam && (
+        <EditTeamModal
+          team={{
+            id: editingTeam.id,
+            name: editingTeam.name,
+            player1_id: editingTeam.player1_id,
+            player2_id: editingTeam.player2_id,
+            category_id: editingTeam.category_id || '',
+            seed: 0,
+            tournament_id: tournament.id,
+            created_at: '',
+          }}
+          tournamentId={tournament.id}
+          onClose={() => setEditingTeam(null)}
+          onSuccess={() => { setEditingTeam(null); void load() }}
         />
       )}
 
