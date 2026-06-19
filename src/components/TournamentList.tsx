@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, Tournament } from '../lib/supabase';
+import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Contact, Filter, Calculator } from 'lucide-react';
@@ -97,55 +98,22 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   };
 
   const fetchRegistrationCounts = async (tournamentsList: Tournament[]) => {
-    const counts: Record<string, number> = {};
-    const maxTeams: Record<string, number> = {};
     const tournamentIds = tournamentsList.map(t => t.id);
-    const superTeamsTournamentIds = tournamentsList.filter(t => t.format === 'super_teams').map(t => t.id);
 
-    const [teamsResult, playersResult, categoriesResult, superTeamsResult] = await Promise.all([
-      supabase.from('teams').select('tournament_id').in('tournament_id', tournamentIds).limit(10000),
-      supabase.from('players').select('tournament_id').in('tournament_id', tournamentIds).limit(10000),
-      supabase.from('tournament_categories').select('tournament_id, max_teams, format').in('tournament_id', tournamentIds),
-      superTeamsTournamentIds.length > 0
-        ? supabase.from('super_teams').select('tournament_id').in('tournament_id', superTeamsTournamentIds).limit(10000)
-        : Promise.resolve({ data: [] })
+    const [counts, categoriesResult] = await Promise.all([
+      fetchTournamentRegistrationCounts(tournamentsList),
+      supabase
+        .from('tournament_categories')
+        .select('tournament_id, max_teams')
+        .in('tournament_id', tournamentIds),
     ]);
 
-    const teamsData = teamsResult.data || [];
-    const playersData = playersResult.data || [];
-    const categoriesData = categoriesResult.data || [];
-    const superTeamsData = superTeamsResult.data || [];
-
-    const teamCountMap = new Map<string, number>();
-    const playerCountMap = new Map<string, number>();
-    const superTeamCountMap = new Map<string, number>();
-    teamsData.forEach(t => teamCountMap.set(t.tournament_id, (teamCountMap.get(t.tournament_id) || 0) + 1));
-    playersData.forEach(p => playerCountMap.set(p.tournament_id, (playerCountMap.get(p.tournament_id) || 0) + 1));
-    superTeamsData.forEach((st: { tournament_id: string }) => superTeamCountMap.set(st.tournament_id, (superTeamCountMap.get(st.tournament_id) || 0) + 1));
-
-    const formatById = new Map(tournamentsList.map(t => [t.id, t.format]));
-    const individualFormats = ['individual_groups_knockout', 'mixed_american'];
-
-    tournamentIds.forEach(id => {
-      const format = formatById.get(id);
-      const tournament = tournamentsList.find(t => t.id === id);
-      const isIndividual = individualFormats.includes(format || '') ||
-        (format === 'round_robin' && tournament?.round_robin_type === 'individual');
-
-      if (format === 'super_teams') {
-        counts[id] = superTeamCountMap.get(id) || 0;
-      } else if (isIndividual) {
-        counts[id] = playerCountMap.get(id) || 0;
-      } else {
-        const teamCount = teamCountMap.get(id) || 0;
-        const playerCount = playerCountMap.get(id) || 0;
-        counts[id] = teamCount > 0 ? teamCount : playerCount;
+    const maxTeams: Record<string, number> = {};
+    (categoriesResult.data || []).forEach((category) => {
+      if (!maxTeams[category.tournament_id]) {
+        maxTeams[category.tournament_id] = 0;
       }
-
-      const tournamentCats = categoriesData.filter(c => c.tournament_id === id);
-      if (tournamentCats.length > 0) {
-        maxTeams[id] = tournamentCats.reduce((sum, cat) => sum + (cat.max_teams || 0), 0);
-      }
+      maxTeams[category.tournament_id] += category.max_teams || 0;
     });
 
     setRegistrationCounts(counts);
