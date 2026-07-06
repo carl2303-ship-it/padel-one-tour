@@ -140,7 +140,8 @@ Deno.serve(async (req: Request) => {
     const stripe = (await import("npm:stripe@14")).default(stripeSettings.secret_key);
 
     const origin = req.headers.get("origin") || "http://localhost:5173";
-    const redirectUrl = tournament.registration_redirect_url || origin;
+    const defaultPlayerAppUrl = "https://padel1.app";
+    const successRedirectUrl = tournament.registration_redirect_url || defaultPlayerAppUrl;
 
     const session = await stripe.checkout.sessions.create({
       line_items: [
@@ -157,8 +158,8 @@ Deno.serve(async (req: Request) => {
         },
       ],
       mode: "payment",
-      success_url: `${redirectUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${redirectUrl}?payment=cancelled`,
+      success_url: `${successRedirectUrl}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}?payment=cancelled`,
       metadata: {
         tournamentId,
         categoryId: categoryId || "",

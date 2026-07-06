@@ -304,7 +304,10 @@ export default function SuperTeamRegistration({ tournament, onClose }: SuperTeam
             O capitão receberá instruções por email para definir as duplas antes de cada confronto.
           </p>
           <button
-            onClick={onClose}
+            onClick={() => {
+              const redirectUrl = (tournament as { registration_redirect_url?: string }).registration_redirect_url || 'https://padel1.app';
+              window.location.href = redirectUrl;
+            }}
             className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
           >
             Fechar

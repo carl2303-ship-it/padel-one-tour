@@ -1027,12 +1027,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
       if (pendingSignOut) {
         await supabase.auth.signOut();
       }
-      const redirectUrl = (tournament as any).registration_redirect_url;
-      if (redirectUrl) {
-        window.location.href = redirectUrl;
-      } else {
-        onClose();
-      }
+      const redirectUrl = (tournament as any).registration_redirect_url || 'https://padel1.app';
+      window.location.href = redirectUrl;
     };
 
     return (
