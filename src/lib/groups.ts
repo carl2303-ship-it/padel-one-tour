@@ -2211,6 +2211,45 @@ export async function advanceKnockoutWinner(
 }
 
 /**
+ * Emparelha equipas de 2 grupos para eliminatórias, colocando os vencedores
+ * de cada grupo em lados opostos do quadro (só se encontram na final se
+ * ganharem todos os jogos).
+ *
+ * Ex. quartos com 2 grupos de 4:
+ *   J1: 1°A vs 2°B | J2: 3°A vs 4°B | J3: 4°A vs 3°B | J4: 1°B vs 2°A
+ */
+function buildTwoGroupKnockoutPairs<T extends { id: string }>(
+  rankA: T[],
+  rankB: T[],
+  numMatches: number
+): Array<[T, T]> {
+  const pairs: Array<[T, T]> = [];
+  const half = numMatches / 2;
+
+  for (let i = 0; i < half; i++) {
+    const a = rankA[i * 2];
+    const b = rankB[i * 2 + 1];
+    if (a && b) pairs.push([a, b]);
+  }
+
+  for (let k = 0; k < half; k++) {
+    if (k === half - 1) {
+      const bWinner = rankB[0];
+      const aRunnerUp = rankA[1];
+      if (bWinner && aRunnerUp) pairs.push([bWinner, aRunnerUp]);
+    } else {
+      const posA = numMatches - 1 - k;
+      const posB = numMatches - 2 - k;
+      const a = rankA[posA];
+      const b = rankB[posB];
+      if (a && b) pairs.push([a, b]);
+    }
+  }
+
+  return pairs;
+}
+
+/**
  * Popula matches de knockout (semi_final, quarter_final, round_of_16) com TEAMS
  * a partir do ranking dos grupos. Funciona por categoria.
  *
@@ -2424,42 +2463,42 @@ async function populateTeamPlacementForCategory(
     return pairs;
   };
 
-  if (ro16.length > 0 && ro16.some(isEmpty) && overallRanking.length >= 2) {
-    const need = ro16.length * 2;
-    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
-    for (let i = 0; i < ro16.length && i < pairs.length; i++) {
-      const m = ro16[i];
+  const buildKnockoutPairs = (numMatches: number): Array<[Stats, Stats]> => {
+    if (sortedGroupNames.length === 2) {
+      const rankA = rankedByGroup.get(sortedGroupNames[0])!;
+      const rankB = rankedByGroup.get(sortedGroupNames[1])!;
+      return buildTwoGroupKnockoutPairs(rankA, rankB, numMatches);
+    }
+    const need = numMatches * 2;
+    return buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
+  };
+
+  const applyKnockoutPairs = async (matches: typeof ko, pairs: Array<[Stats, Stats]>, label: string) => {
+    for (let i = 0; i < matches.length && i < pairs.length; i++) {
+      const m = matches[i];
       if (!isEmpty(m)) continue;
       const [a, b] = pairs[i];
+      if (!a || !b) continue;
       await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
-      console.log(`[POPULATE_TEAM_PLACEMENT] RO16 ${m.match_number}: ${a.name} vs ${b.name}`);
+      console.log(`[POPULATE_TEAM_PLACEMENT] ${label} ${m.match_number}: ${a.name} vs ${b.name}`);
     }
+  };
+
+  if (ro16.length > 0 && ro16.some(isEmpty) && overallRanking.length >= 2) {
+    const pairs = buildKnockoutPairs(ro16.length);
+    await applyKnockoutPairs(ro16, pairs, 'RO16');
     return;
   }
 
   if (qfs.length > 0 && qfs.some(isEmpty) && overallRanking.length >= 2) {
-    const need = qfs.length * 2;
-    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
-    for (let i = 0; i < qfs.length && i < pairs.length; i++) {
-      const m = qfs[i];
-      if (!isEmpty(m)) continue;
-      const [a, b] = pairs[i];
-      await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
-      console.log(`[POPULATE_TEAM_PLACEMENT] QF ${m.match_number}: ${a.name} vs ${b.name}`);
-    }
+    const pairs = buildKnockoutPairs(qfs.length);
+    await applyKnockoutPairs(qfs, pairs, 'QF');
     return;
   }
 
   if (semis.length > 0 && semis.some(isEmpty) && overallRanking.length >= 2) {
-    const need = semis.length * 2;
-    const pairs = buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
-    for (let i = 0; i < semis.length && i < pairs.length; i++) {
-      const m = semis[i];
-      if (!isEmpty(m)) continue;
-      const [a, b] = pairs[i];
-      await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
-      console.log(`[POPULATE_TEAM_PLACEMENT] SF ${m.match_number}: ${a.name} vs ${b.name}`);
-    }
+    const pairs = buildKnockoutPairs(semis.length);
+    await applyKnockoutPairs(semis, pairs, 'SF');
   }
 }
 
