@@ -9,9 +9,11 @@ import {
   parsePadel1Json,
   validateIsoDate,
 } from "../_shared/padel1.ts";
+import { assertClubModule, resolveClubIdFromCourt } from "../_shared/modules.ts";
 
 interface CheckAvailabilityRequest {
   court_id?: string;
+  club_id?: string;
   date_from?: string;
   date_to?: string;
 }
@@ -48,6 +50,16 @@ Deno.serve(async (req: Request) => {
     const validationError = validateAvailabilityRequest(body);
     if (validationError) {
       return jsonResponse({ success: false, error: validationError }, 400);
+    }
+
+    const clubId = body.club_id?.trim() ||
+      await resolveClubIdFromCourt(body.court_id!.trim());
+    if (!clubId) {
+      return jsonResponse({ success: false, error: "club_id no encontrado para court_id" }, 400);
+    }
+    for (const mod of ["manager", "ai_full"] as const) {
+      const modError = await assertClubModule(clubId, mod);
+      if (modError) return jsonResponse({ success: false, error: modError }, 403);
     }
 
     const params = new URLSearchParams({

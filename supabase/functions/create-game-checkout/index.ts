@@ -47,6 +47,15 @@ Deno.serve(async (req: Request) => {
       throw new Error('Game not found')
     }
 
+    const { assertClubModule } = await import('../_shared/modules.ts')
+    const modError = await assertClubModule(game.club_id, 'manager')
+    if (modError) {
+      return new Response(JSON.stringify({ error: modError }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     // 2. Get club details + Stripe keys
     const { data: club, error: clubErr } = await supabase
       .from('clubs')

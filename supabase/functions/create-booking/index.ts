@@ -10,9 +10,11 @@ import {
   parsePadel1Json,
   validateIsoDate,
 } from "../_shared/padel1.ts";
+import { assertClubModule, resolveClubIdFromCourt } from "../_shared/modules.ts";
 
 interface CreateBookingRequest {
   court_id?: string;
+  club_id?: string;
   start_time?: string;
   end_time?: string;
   player_name?: string;
@@ -71,6 +73,16 @@ Deno.serve(async (req: Request) => {
     const validationError = validateCreateBooking(body);
     if (validationError) {
       return jsonResponse({ success: false, error: validationError }, 400);
+    }
+
+    const clubId = body.club_id?.trim() ||
+      await resolveClubIdFromCourt(body.court_id!.trim());
+    if (!clubId) {
+      return jsonResponse({ success: false, error: "club_id no encontrado para court_id" }, 400);
+    }
+    for (const mod of ["manager", "ai_full"] as const) {
+      const modError = await assertClubModule(clubId, mod);
+      if (modError) return jsonResponse({ success: false, error: modError }, 403);
     }
 
     const payload = buildPadel1BookingPayload(body);

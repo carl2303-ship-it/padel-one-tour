@@ -21,6 +21,7 @@ import { useCustomLogo } from './lib/useCustomLogo';
 import OrganizerDashboard from './components/OrganizerDashboard';
 import OrganizerMembers from './components/OrganizerMembers';
 import OrganizerSponsors from './components/OrganizerSponsors';
+import { fetchClientModules } from './lib/useClientModules';
 import { LogOut, Settings, Menu, X, Trophy, CheckCircle, BarChart3, Users, Award } from 'lucide-react';
 
 type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors';
@@ -50,6 +51,8 @@ function App() {
   const [activatingLicense, setActivatingLicense] = useState(false);
   const [licenseError, setLicenseError] = useState('');
   const [licenseResult, setLicenseResult] = useState<{ plan?: string; contract_expires_at?: string } | null>(null);
+  const [needsModule, setNeedsModule] = useState(false);
+  const [moduleMessage, setModuleMessage] = useState('');
 
   const handleSelectTournament = (tournament: Tournament) => {
     setSelectedTournament(tournament);
@@ -156,6 +159,14 @@ function App() {
     }
   }, [user]);
 
+  const checkTournamentsModule = async (
+    entityType: 'club' | 'organizer',
+    entityId: string
+  ): Promise<boolean> => {
+    const mods = await fetchClientModules(entityType, entityId);
+    return mods.hasTournaments;
+  };
+
   const checkLicenseAndLoadRole = async () => {
     if (!user) {
       setUserRole(null);
@@ -211,6 +222,15 @@ function App() {
         return;
       }
 
+      const hasTournaments = await checkTournamentsModule('organizer', user.id);
+      if (!hasTournaments) {
+        setNeedsModule(true);
+        setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
+        setNeedsLicense(false);
+        return;
+      }
+
+      setNeedsModule(false);
       setNeedsLicense(false);
       setIsIndependentOrganizer(!ownedClub);
       setUserRole('organizer');
@@ -223,6 +243,14 @@ function App() {
       const hasValidContract = ownedClub.contract_expires_at &&
         new Date(ownedClub.contract_expires_at) > new Date();
       if (hasValidContract) {
+        const hasTournaments = await checkTournamentsModule('club', ownedClub.id);
+        if (!hasTournaments) {
+          setNeedsModule(true);
+          setModuleMessage('O módulo de Torneios não está ativo para o seu clube. Contacte o suporte Padel One.');
+          setNeedsLicense(false);
+          return;
+        }
+        setNeedsModule(false);
         setNeedsLicense(false);
         setIsIndependentOrganizer(false);
         setUserRole('organizer');
@@ -334,6 +362,26 @@ function App() {
 
   if (!user && view !== 'registration' && view !== 'live') {
     return <AuthForm />;
+  }
+
+  // Module not active screen
+  if (user && needsModule && view !== 'registration' && view !== 'live') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <img src={logoUrl} alt="Logo" className="h-16 w-auto mx-auto mb-4" />
+          <div className="text-3xl mb-3">🏆</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Módulo Torneios Inativo</h2>
+          <p className="text-sm text-gray-500 mb-6">{moduleMessage}</p>
+          <button
+            onClick={handleCancelLicenseTour}
+            className="w-full py-2 text-gray-500 text-sm hover:text-gray-700"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // License activation screen
