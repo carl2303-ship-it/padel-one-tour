@@ -208,37 +208,7 @@ function App() {
       return;
     }
 
-    // Paid organizer: check contract expiration
-    if (settings?.is_paid_organizer) {
-      const { data: orgRecord } = await supabase
-        .from('organizers')
-        .select('subscription_expires_at')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (orgRecord?.subscription_expires_at && new Date(orgRecord.subscription_expires_at) < new Date()) {
-        setLicenseMessage('A sua licença de organizador expirou. Introduza uma nova chave para renovar.');
-        setNeedsLicense(true);
-        return;
-      }
-
-      const hasTournaments = await checkTournamentsModule('organizer', user.id);
-      if (!hasTournaments) {
-        setNeedsModule(true);
-        setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
-        setNeedsLicense(false);
-        return;
-      }
-
-      setNeedsModule(false);
-      setNeedsLicense(false);
-      setIsIndependentOrganizer(!ownedClub);
-      setUserRole('organizer');
-      if (!ownedClub) setView('dashboard');
-      return;
-    }
-
-    // Club owner: check club contract
+    // Club owner takes priority over independent organizer flags
     if (ownedClub) {
       const hasValidContract = ownedClub.contract_expires_at &&
         new Date(ownedClub.contract_expires_at) > new Date();
@@ -262,6 +232,36 @@ function App() {
           : 'O seu clube ainda não foi ativado. Introduza a chave de licença que recebeu.'
       );
       setNeedsLicense(true);
+      return;
+    }
+
+    // Independent paid organizer (no club ownership)
+    if (settings?.is_paid_organizer) {
+      const { data: orgRecord } = await supabase
+        .from('organizers')
+        .select('subscription_expires_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (orgRecord?.subscription_expires_at && new Date(orgRecord.subscription_expires_at) < new Date()) {
+        setLicenseMessage('A sua licença de organizador expirou. Introduza uma nova chave para renovar.');
+        setNeedsLicense(true);
+        return;
+      }
+
+      const hasTournaments = await checkTournamentsModule('organizer', user.id);
+      if (!hasTournaments) {
+        setNeedsModule(true);
+        setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
+        setNeedsLicense(false);
+        return;
+      }
+
+      setNeedsModule(false);
+      setNeedsLicense(false);
+      setIsIndependentOrganizer(true);
+      setUserRole('organizer');
+      setView('dashboard');
       return;
     }
 
