@@ -108,7 +108,7 @@ BEGIN
 
   SELECT * INTO v_result
   FROM open_game_results
-  WHERE game_id = p_game_id AND status IN ('pending', 'confirmed');
+  WHERE game_id = p_game_id AND status = 'confirmed';
 
   IF v_result.id IS NULL THEN
     RETURN json_build_object('success', false, 'error', 'Nenhum resultado para disputar neste jogo');
