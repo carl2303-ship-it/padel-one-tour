@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { normalizePhone } from "../_shared/phoneUtils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -82,7 +83,7 @@ Deno.serve(async (req: Request) => {
     // Check membership for each player to calculate per-player fee
     const checkIsMember = async (phone: string): Promise<boolean> => {
       if (!phone || !tournament.club_id) return false;
-      const normalized = phone.replace(/\s+/g, "").replace(/^00/, "+");
+      const normalized = normalizePhone(phone);
       const { data: club } = await supabaseClient
         .from("clubs")
         .select("owner_id")

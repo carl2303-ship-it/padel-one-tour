@@ -1,5 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { normalizePhone } from '../_shared/phoneUtils.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -79,10 +80,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { data: normalizedResult } = await supabaseAdmin
-      .rpc('normalize_portuguese_phone', { phone: phoneNumber });
-
-    const normalizedPhone = normalizedResult || phoneNumber.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phoneNumber);
 
     console.log('Updating player_accounts with phone:', normalizedPhone, 'to email:', newEmail);
 

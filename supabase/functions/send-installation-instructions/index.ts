@@ -1,5 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { normalizePhone } from '../_shared/phoneUtils.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -36,7 +37,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const normalizedPhone = phoneNumber.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(phoneNumber);
     const standardPassword = `Player${normalizedPhone.slice(-4)}!`;
     const appUrl = Deno.env.get('APP_URL') || 'https://boostpadel.store';
     const displayName = playerName || 'Jogador';

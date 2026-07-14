@@ -3,6 +3,7 @@ import { supabase, Tournament, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
+import { normalizePhone } from '../lib/phoneUtils';
 import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
 
 const sendWelcomeEmail = async (
@@ -128,23 +129,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
   const [player2IsMember, setPlayer2IsMember] = useState<boolean | null>(null);
   const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
-
-  // Normalizar telefone: se não tem indicativo, adicionar +351
-  const normalizePhone = (phone: string): string => {
-    let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
-    // Já tem +351 → ok
-    if (cleaned.startsWith('+351')) return cleaned;
-    // Tem 351 sem + → adicionar +
-    if (cleaned.startsWith('351') && cleaned.length >= 12) return '+' + cleaned;
-    // Começa com + mas não é +351 → outro país, manter
-    if (cleaned.startsWith('+')) return cleaned;
-    // Remove 0 inicial (ex: 0912...)
-    if (cleaned.startsWith('0')) cleaned = cleaned.substring(1);
-    // 9 dígitos → assumir PT, adicionar +351
-    if (cleaned.length === 9) return '+351' + cleaned;
-    // Fallback: adicionar +351
-    return '+351' + cleaned;
-  };
 
   const levelFromCategory = (cat: string): number | null => {
     const m = cat.toUpperCase().trim().match(/^[MF](\d+)$/);

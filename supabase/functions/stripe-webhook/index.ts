@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
+import { normalizePhone as normalizePhoneDigits } from "../_shared/phoneUtils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,7 +10,7 @@ const corsHeaders = {
 
 function normalizePhone(phone: string | null | undefined): string {
   if (!phone) return "";
-  return String(phone).replace(/\s+/g, "").trim();
+  return normalizePhoneDigits(phone);
 }
 
 /** Liga `players` ao `player_accounts` por telefone (user_id + player_account_id). */

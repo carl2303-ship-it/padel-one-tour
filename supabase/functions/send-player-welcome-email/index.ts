@@ -1,5 +1,6 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { normalizePhone } from '../_shared/phoneUtils.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -54,11 +55,10 @@ Deno.serve(async (req: Request) => {
     // Se não encontrar pelo email, tentar pelo telefone se fornecido
     let finalAccount = playerAccount;
     if (!finalAccount && phoneNumber) {
-      const normalizedPhone = phoneNumber.replace(/\s+/g, '');
       const { data: accountByPhone } = await supabase
         .from('player_accounts')
         .select('email, name, phone_number, user_id')
-        .eq('phone_number', normalizedPhone)
+        .eq('phone_number', normalizePhone(phoneNumber))
         .maybeSingle();
       finalAccount = accountByPhone;
     }
@@ -75,7 +75,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const normalizedPhone = finalPhone.replace(/\s+/g, '');
+    const normalizedPhone = normalizePhone(finalPhone);
     const standardPassword = `Player${normalizedPhone.slice(-4)}!`;
 
     const appUrl = Deno.env.get('PLAYER_APP_URL') || 'https://padel1.app';

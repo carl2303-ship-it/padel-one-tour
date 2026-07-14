@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { normalizePhone } from '../_shared/phoneUtils.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,24 +42,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let normalizedPhone = phone_number.replace(/[\s\-\(\)\.]/g, '');
-
-    if (!normalizedPhone.startsWith('+')) {
-      if (normalizedPhone.startsWith('00')) {
-        normalizedPhone = '+' + normalizedPhone.substring(2);
-      } else if (normalizedPhone.startsWith('9') && normalizedPhone.length === 9) {
-        normalizedPhone = '+351' + normalizedPhone;
-      } else if (normalizedPhone.startsWith('351')) {
-        normalizedPhone = '+' + normalizedPhone;
-      } else {
-        normalizedPhone = '+' + normalizedPhone;
-      }
-    }
+    const normalizedPhone = normalizePhone(phone_number);
 
     console.log('[DEBUG] Input phone:', phone_number);
     console.log('[DEBUG] Normalized phone:', normalizedPhone);
 
-    // Try exact match first - INCLUDE id in select!
     let { data: playerAccount, error: accountError } = await supabaseAdmin
       .from('player_accounts')
       .select('id, user_id, phone_number, email, name')
@@ -67,33 +55,15 @@ Deno.serve(async (req: Request) => {
 
     console.log('[DEBUG] Exact match result:', JSON.stringify(playerAccount));
 
-    // If not found, try without the + sign
-    if (!playerAccount) {
-      const phoneWithoutPlus = normalizedPhone.replace('+', '');
-      console.log('[DEBUG] Trying without +:', phoneWithoutPlus);
-      const { data: accountWithoutPlus } = await supabaseAdmin
-        .from('player_accounts')
-        .select('id, user_id, phone_number, email, name')
-        .eq('phone_number', phoneWithoutPlus)
-        .maybeSingle();
-      
-      if (accountWithoutPlus) {
-        playerAccount = accountWithoutPlus;
-        accountError = null;
-        console.log('[DEBUG] Found account without +:', JSON.stringify(accountWithoutPlus));
-      }
-    }
-
-    // If still not found, try with just the last 9 digits (Portuguese mobile format)
     if (!playerAccount) {
       const last9Digits = normalizedPhone.slice(-9);
-      console.log('[DEBUG] Trying last 9 digits:', last9Digits);
+      console.log('[DEBUG] Trying last 9 digits fallback:', last9Digits);
       const { data: accountLast9 } = await supabaseAdmin
         .from('player_accounts')
         .select('id, user_id, phone_number, email, name')
-        .or(`phone_number.eq.+351${last9Digits},phone_number.eq.${last9Digits},phone_number.ilike.%${last9Digits}`)
+        .ilike('phone_number', `%${last9Digits}`)
         .maybeSingle();
-      
+
       if (accountLast9) {
         playerAccount = accountLast9;
         accountError = null;
@@ -102,19 +72,10 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!playerAccount) {
-      const { data: allAccounts } = await supabaseAdmin
-        .from('player_accounts')
-        .select('phone_number')
-        .ilike('phone_number', '%' + normalizedPhone.slice(-9) + '%');
-      console.log('[DEBUG] Similar accounts found:', JSON.stringify(allAccounts));
-
       return new Response(
         JSON.stringify({ 
           error: 'Player account not found', 
-          debug: { 
-            normalizedPhone, 
-            searchedVariations: [normalizedPhone, normalizedPhone.replace('+', ''), normalizedPhone.slice(-9)] 
-          } 
+          debug: { normalizedPhone } 
         }),
         {
           status: 404,
