@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase, Team, TournamentCategory } from '../lib/supabase';
-import { X, Trash2 } from 'lucide-react';
+import {
+  fetchAllOrganizerPlayers,
+  getOrganizerTournamentIds,
+  searchOrganizerPlayers,
+} from '../lib/organizerPlayerSearch';
+import { X, Trash2, Search } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 
 type Player = {
@@ -28,10 +33,13 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
   const [player2Id, setPlayer2Id] = useState(team.player2_id);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [tournamentIds, setTournamentIds] = useState<string[]>([]);
+  const [searchResults, setSearchResults] = useState<Player[] | null>(null);
 
   useEffect(() => {
     fetchCategories();
-    fetchPlayers();
+    void fetchPlayers();
   }, []);
 
   const fetchCategories = async () => {
@@ -50,45 +58,41 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: userTournaments } = await supabase
-      .from('tournaments')
-      .select('id')
-      .eq('user_id', user.id);
+    const ids = await getOrganizerTournamentIds(user.id);
+    setTournamentIds(ids);
+    if (!ids.length) return;
 
-    if (!userTournaments || userTournaments.length === 0) {
+    const all = await fetchAllOrganizerPlayers(ids);
+    const sorted = [...all].sort((a, b) => {
+      const aInTournament = a.tournament_id === tournamentId ? 0 : 1;
+      const bInTournament = b.tournament_id === tournamentId ? 0 : 1;
+      if (aInTournament !== bInTournament) return aInTournament - bInTournament;
+      return a.name.localeCompare(b.name, 'pt');
+    });
+    setAvailablePlayers(sorted);
+  };
+
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
       return;
     }
+    const timer = setTimeout(async () => {
+      if (!tournamentIds.length) return;
+      const results = await searchOrganizerPlayers(tournamentIds, term);
+      setSearchResults(results);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm, tournamentIds]);
 
-    const tournamentIds = userTournaments.map(t => t.id);
-
-    const { data } = await supabase
-      .from('players')
-      .select('id, name, email, phone_number, tournament_id')
-      .in('tournament_id', tournamentIds)
-      .order('name');
-
-    if (data) {
-      // Prioritize players from the current tournament when deduplicating
-      const sorted = [...data].sort((a, b) => {
-        const aInTournament = (a as any).tournament_id === tournamentId ? 0 : 1;
-        const bInTournament = (b as any).tournament_id === tournamentId ? 0 : 1;
-        return aInTournament - bInTournament;
-      });
-      const uniquePlayers = sorted.reduce((acc: typeof data, player) => {
-        const key = player.phone_number?.replace(/\s+/g, '') || player.name;
-        const existing = acc.find(p =>
-          (p.phone_number?.replace(/\s+/g, '') === key) ||
-          (!p.phone_number && !player.phone_number && p.name === player.name)
-        );
-        if (!existing) {
-          acc.push(player);
-        }
-        return acc;
-      }, []);
-
-      setAvailablePlayers(uniquePlayers);
-    }
-  };
+  const displayPlayers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const base = searchResults ?? availablePlayers;
+    if (!term || term.length < 2) return base;
+    if (searchResults) return searchResults;
+    return base.filter(p => p.name.toLowerCase().includes(term));
+  }, [availablePlayers, searchResults, searchTerm]);
 
   // Garantir que o jogador existe no torneio atual (copiar se necessário)
   const ensurePlayerInTournament = async (playerId: string): Promise<string> => {
@@ -492,6 +496,20 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Pesquisar jogador</label>
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Mín. 2 letras..."
+              />
+            </div>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">{t.team.player1} *</label>
             <select
               required
@@ -500,7 +518,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="">{t.team.selectPlayer1}</option>
-              {availablePlayers.map((player) => (
+              {displayPlayers.map((player) => (
                 <option key={player.id} value={player.id}>
                   {player.name} {player.email ? `(${player.email})` : ''}
                 </option>
@@ -517,7 +535,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="">{t.team.selectPlayer2}</option>
-              {availablePlayers.map((player) => (
+              {displayPlayers.map((player) => (
                 <option key={player.id} value={player.id}>
                   {player.name} {player.email ? `(${player.email})` : ''}
                 </option>

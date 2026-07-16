@@ -39,6 +39,7 @@ function App() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isLoadingDeepLink, setIsLoadingDeepLink] = useState(true);
+  const [registrationLinkError, setRegistrationLinkError] = useState<string | null>(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [userRole, setUserRole] = useState<'organizer' | 'player' | null>(null);
   const [isIndependentOrganizer, setIsIndependentOrganizer] = useState(false);
@@ -135,6 +136,18 @@ function App() {
         if (tournament) {
           setSelectedTournament(tournament);
           setView('registration');
+          setRegistrationLinkError(null);
+        } else {
+          const { data: rpcTournament } = await supabase.rpc('get_public_tournament', {
+            p_tournament_id: tournamentId,
+          });
+          if (rpcTournament && typeof rpcTournament === 'object' && (rpcTournament as { id?: string }).id) {
+            setSelectedTournament(rpcTournament as Tournament);
+            setView('registration');
+            setRegistrationLinkError(null);
+          } else {
+            setRegistrationLinkError('Torneio não encontrado ou inscrições não estão abertas.');
+          }
         }
       }
       setIsLoadingDeepLink(false);
@@ -361,6 +374,17 @@ function App() {
   }
 
   if (!user && view !== 'registration' && view !== 'live') {
+    if (registrationLinkError) {
+      return (
+        <div className="min-h-screen bg-[#f7f7f7] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
+            <Trophy className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Link indisponível</h2>
+            <p className="text-sm text-gray-600">{registrationLinkError}</p>
+          </div>
+        </div>
+      );
+    }
     return <AuthForm />;
   }
 

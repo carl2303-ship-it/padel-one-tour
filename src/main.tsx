@@ -39,20 +39,28 @@ async function init() {
     const isLivePage = path.match(/^\/tournament\/[^/]+\/live$/);
 
     const { I18nProvider } = await import('./lib/i18nContext');
+
+    if (isLivePage) {
+      const { default: LiveTournamentView } = await import('./components/LiveTournamentView');
+      rootInstance.render(
+        <StrictMode>
+          <I18nProvider>
+            <LiveTournamentView />
+          </I18nProvider>
+        </StrictMode>
+      );
+      return;
+    }
+
     const { AuthProvider } = await import('./lib/authContext');
     const { default: App } = await import('./App.tsx');
-    const { default: LiveTournamentView } = await import('./components/LiveTournamentView');
 
     rootInstance.render(
       <StrictMode>
         <I18nProvider>
-          {isLivePage ? (
-            <LiveTournamentView />
-          ) : (
-            <AuthProvider>
-              <App />
-            </AuthProvider>
-          )}
+          <AuthProvider>
+            <App />
+          </AuthProvider>
         </I18nProvider>
       </StrictMode>
     );

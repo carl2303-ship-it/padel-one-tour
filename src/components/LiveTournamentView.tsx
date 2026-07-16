@@ -273,8 +273,24 @@ export default function LiveTournamentView() {
         .select('id, name, start_date, end_date, format, round_robin_type, number_of_courts, image_url, user_id, court_names')
         .eq('id', tournamentId)
         .single();
-      if (tErr) throw tErr;
-      setTournament(tournamentData);
+
+      let resolvedTournament = tournamentData;
+      if (tErr || !tournamentData) {
+        const { data: rpcData } = await supabase.rpc('get_public_tournament', {
+          p_tournament_id: tournamentId,
+        });
+        if (rpcData && typeof rpcData === 'object' && (rpcData as { id?: string }).id) {
+          resolvedTournament = rpcData as typeof tournamentData;
+        } else if (tErr) {
+          throw tErr;
+        }
+      }
+      if (!resolvedTournament) {
+        setError('Torneio não encontrado');
+        setLoading(false);
+        return;
+      }
+      setTournament(resolvedTournament);
 
       const { data: catData } = await supabase
         .from('tournament_categories')

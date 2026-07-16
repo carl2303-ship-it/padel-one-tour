@@ -1,5 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase, Player, TournamentCategory } from '../lib/supabase';
+import {
+  fetchAllOrganizerPlayers,
+  getOrganizerTournamentIds,
+  searchOrganizerPlayers,
+} from '../lib/organizerPlayerSearch';
 import { X, Plus, Search } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 
@@ -63,9 +68,13 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [tournamentIds, setTournamentIds] = useState<string[]>([]);
+  const [playersLoading, setPlayersLoading] = useState(true);
+  const [searchResults, setSearchResults] = useState<Player[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    fetchPlayers();
+    void fetchPlayers();
     fetchCategories();
     fetchTournament();
   }, []);
@@ -78,39 +87,46 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: userTournaments } = await supabase
-      .from('tournaments')
-      .select('id')
-      .eq('user_id', user.id);
+    setPlayersLoading(true);
+    try {
+      const ids = await getOrganizerTournamentIds(user.id);
+      setTournamentIds(ids);
+      if (!ids.length) {
+        setPlayers([]);
+        return;
+      }
+      const all = await fetchAllOrganizerPlayers(ids);
+      setPlayers(all as Player[]);
+    } catch (err) {
+      console.error('[AddTeam] fetch players:', err);
+    } finally {
+      setPlayersLoading(false);
+    }
+  };
 
-    if (!userTournaments || userTournaments.length === 0) {
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
       return;
     }
 
-    const tournamentIds = userTournaments.map(t => t.id);
+    const timer = setTimeout(async () => {
+      if (!tournamentIds.length) return;
+      setSearching(true);
+      try {
+        const results = await searchOrganizerPlayers(tournamentIds, term);
+        setSearchResults(results as Player[]);
+      } catch (err) {
+        console.error('[AddTeam] search players:', err);
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
 
-    const { data } = await supabase
-      .from('players')
-      .select('*')
-      .in('tournament_id', tournamentIds)
-      .order('name', { ascending: true });
-
-    if (data) {
-      const uniquePlayers = data.reduce((acc: typeof data, player) => {
-        const key = player.phone_number?.replace(/\s+/g, '') || player.name;
-        const existing = acc.find(p =>
-          (p.phone_number?.replace(/\s+/g, '') === key) ||
-          (!p.phone_number && !player.phone_number && p.name === player.name)
-        );
-        if (!existing) {
-          acc.push(player);
-        }
-        return acc;
-      }, []);
-
-      setPlayers(uniquePlayers);
-    }
-  };
+    return () => clearTimeout(timer);
+  }, [searchTerm, tournamentIds]);
 
   const fetchCategories = async () => {
     const { data } = await supabase
@@ -320,9 +336,17 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     }
   };
 
-  const filteredPlayers = players.filter(p =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredPlayers = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const base = searchResults ?? players;
+    if (!term || term.length < 2) {
+      return base;
+    }
+    if (searchResults) {
+      return searchResults;
+    }
+    return base.filter(p => p.name.toLowerCase().includes(term));
+  }, [players, searchResults, searchTerm]);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -424,9 +448,18 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Search players..."
+                    placeholder="Pesquisar jogador (mín. 2 letras)..."
                   />
                 </div>
+                {playersLoading && (
+                  <p className="text-xs text-gray-500">A carregar lista de jogadores...</p>
+                )}
+                {searching && (
+                  <p className="text-xs text-gray-500">A pesquisar...</p>
+                )}
+                {!playersLoading && players.length > 0 && searchTerm.trim().length < 2 && (
+                  <p className="text-xs text-gray-500">{players.length} jogadores carregados</p>
+                )}
                 <select
                   value={player1Id}
                   onChange={(e) => setPlayer1Id(e.target.value)}
