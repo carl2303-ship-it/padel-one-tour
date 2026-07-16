@@ -70,52 +70,24 @@ function normalizeName(name: string): string {
 
 function normalizePhoneForRPC(phone: string | null): string | null {
   if (!phone) return null;
-  
-  // Remove espaços e caracteres especiais
   let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  let hadPrefix = false;
+  if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true; }
+  else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true; }
+  else if (cleaned.startsWith('00')) { cleaned = cleaned.slice(2); hadPrefix = true; }
   
-  // Se já começa com +351, retorna como está
-  if (cleaned.startsWith('+351')) {
-    return cleaned;
+  if (hadPrefix) {
+    cleaned = cleaned.replace(/^(351|352|353|354|355|356|357|358|359|370|371|372|373|374|375|376|377|378|380|381|382|383|385|386|387|389|420|421|423|212|213|216|244|245|258|297|298|299|852|853|855|856|880|886|960|961|962|963|964|965|966|967|968|971|972|973|974|975|976|977|992|993|994|995|996|997|998)(?=\d{7,})/, '');
+    cleaned = cleaned.replace(/^(20|27|30|31|32|33|34|36|39|40|41|43|44|45|46|47|48|49|51|52|53|54|55|56|57|58|60|61|62|63|64|65|66|81|82|84|86|90|91|92|93|94|95|98)(?=\d{7,})/, '');
+    cleaned = cleaned.replace(/^[17](?=\d{9,})/, '');
+  } else {
+    cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '');
   }
   
-  // Se começa com 351 (sem +), adiciona o +
-  if (cleaned.startsWith('351')) {
-    return '+' + cleaned;
+  if (cleaned.startsWith('0') && cleaned.length >= 9) {
+    cleaned = cleaned.slice(1);
   }
   
-  // Se começa com +9 mas não tem +351, assume que é português e adiciona +351
-  // Exemplo: +961077447 -> +351961077447
-  if (cleaned.startsWith('+9') && cleaned.length === 10) {
-    return '+351' + cleaned.substring(1);
-  }
-  
-  // Se começa com + mas não é +351 e não é +9, pode ser outro país - retorna como está
-  if (cleaned.startsWith('+')) {
-    return cleaned;
-  }
-  
-  // Se começa com 0, remove o 0 e adiciona +351
-  if (cleaned.startsWith('0')) {
-    cleaned = cleaned.substring(1);
-  }
-  
-  // Se tem 9 dígitos e começa com 9, assume que é português e adiciona +351
-  if (cleaned.length === 9 && cleaned.startsWith('9')) {
-    return '+351' + cleaned;
-  }
-  
-  // Se tem 9 dígitos mas não começa com 9, também pode ser português (fixo)
-  if (cleaned.length === 9) {
-    return '+351' + cleaned;
-  }
-  
-  // Se tem 11 dígitos e começa com 351, adiciona o +
-  if (cleaned.length === 11 && cleaned.startsWith('351')) {
-    return '+' + cleaned;
-  }
-  
-  // Caso contrário, retorna como está (pode ser formato internacional diferente)
   return cleaned;
 }
 
