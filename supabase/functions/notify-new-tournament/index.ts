@@ -10,13 +10,13 @@ const corsHeaders = {
 };
 
 /**
- * Notify players when a new tournament becomes visible (status changes to active/draft with public visibility).
- * 
+ * Notify players when a new tournament becomes visible.
+ *
  * Can be called:
  * 1. Directly when a tournament is created/published (from Tour app)
  * 2. Via cron to catch any tournaments that became active recently
  *
- * Uses open_game_notifications_sent table with notification_type = 'new_tournament' to avoid duplicates.
+ * Uses open_game_notifications_sent with notification_type = 'new_tournament' to avoid duplicates.
  */
 
 interface RequestBody {
@@ -33,6 +33,38 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+/** Normalize phone for matching organizer_players ↔ player_accounts */
+function normalizePhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, "");
+  if (cleaned.startsWith("+00")) cleaned = cleaned.slice(3);
+  else if (cleaned.startsWith("+")) cleaned = cleaned.slice(1);
+  else if (cleaned.startsWith("00")) cleaned = cleaned.slice(2);
+  cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, "");
+  if (cleaned.startsWith("0") && cleaned.length >= 9) cleaned = cleaned.slice(1);
+  return cleaned;
+}
+
+function parseClubIds(tournament: Record<string, unknown>): string[] {
+  const clubIds: string[] = [];
+  const raw = tournament.club_ids;
+  if (raw) {
+    if (Array.isArray(raw)) {
+      clubIds.push(...raw.filter(Boolean).map(String));
+    } else if (typeof raw === "string") {
+      if (raw.startsWith("{") && raw.endsWith("}")) {
+        clubIds.push(...raw.slice(1, -1).split(",").map((s) => s.trim()).filter(Boolean));
+      } else if (raw.length > 0) {
+        clubIds.push(raw);
+      }
+    }
+  }
+  if (clubIds.length === 0 && tournament.club_id) {
+    clubIds.push(String(tournament.club_id));
+  }
+  return clubIds;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -45,8 +77,9 @@ Deno.serve(async (req: Request) => {
     const vapidPrivateKey = Deno.env.get("VAPID_PRIVATE_KEY");
 
     if (!vapidPublicKey || !vapidPrivateKey) {
+      console.error("[notify-new-tournament] VAPID keys missing");
       return new Response(
-        JSON.stringify({ ok: true, message: "VAPID not configured" }),
+        JSON.stringify({ ok: false, message: "VAPID not configured" }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -63,7 +96,6 @@ Deno.serve(async (req: Request) => {
     let tournamentsToNotify: any[] = [];
 
     if (body.tournamentId) {
-      // Direct call: notify about a specific tournament
       const { data: tournament } = await admin
         .from("tournaments")
         .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, user_id, venue_lat, venue_lng, visibility_radius_km")
@@ -74,7 +106,6 @@ Deno.serve(async (req: Request) => {
         tournamentsToNotify = [tournament];
       }
     } else {
-      // Cron mode: find tournaments created/activated in the last 30 minutes that haven't been notified yet
       const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split("T")[0];
 
@@ -97,12 +128,20 @@ Deno.serve(async (req: Request) => {
     }
 
     let totalNotified = 0;
+    const details: Array<Record<string, unknown>> = [];
 
     for (const tournament of tournamentsToNotify) {
-      // Skip invite-only tournaments
-      if (tournament.visibility === "invite_only") continue;
+      if (tournament.visibility === "invite_only") {
+        details.push({ id: tournament.id, skipped: "invite_only" });
+        continue;
+      }
 
-      // Check if we already sent notification for this tournament
+      // Club/public tournaments must be open for registration to be useful
+      if (tournament.allow_public_registration === false && tournament.visibility !== "invite_only") {
+        details.push({ id: tournament.id, skipped: "registration_closed" });
+        continue;
+      }
+
       const { data: alreadySent } = await admin
         .from("open_game_notifications_sent")
         .select("id")
@@ -110,22 +149,13 @@ Deno.serve(async (req: Request) => {
         .eq("notification_type", "new_tournament")
         .limit(1);
 
-      if (alreadySent && alreadySent.length > 0) continue;
+      if (alreadySent && alreadySent.length > 0) {
+        details.push({ id: tournament.id, skipped: "already_sent" });
+        continue;
+      }
 
-      // Get club name(s) for the notification
       let clubName = "";
-      const clubIds: string[] = [];
-      if (tournament.club_ids) {
-        const ids = Array.isArray(tournament.club_ids)
-          ? tournament.club_ids
-          : typeof tournament.club_ids === "string" && tournament.club_ids.startsWith("{")
-            ? tournament.club_ids.slice(1, -1).split(",").map((s: string) => s.trim())
-            : [];
-        clubIds.push(...ids);
-      }
-      if (clubIds.length === 0 && tournament.club_id) {
-        clubIds.push(tournament.club_id);
-      }
+      const clubIds = parseClubIds(tournament);
 
       if (clubIds.length > 0) {
         const { data: clubs } = await admin
@@ -137,20 +167,17 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Format dates
       const startDate = new Date(tournament.start_date);
       let dateStr: string;
       try {
-        const dateFmt = new Intl.DateTimeFormat("pt-PT", {
+        dateStr = new Intl.DateTimeFormat("pt-PT", {
           day: "2-digit",
           month: "short",
-        });
-        dateStr = dateFmt.format(startDate);
+        }).format(startDate);
       } catch {
         dateStr = `${startDate.getDate()}/${startDate.getMonth() + 1}`;
       }
 
-      // Build notification payload
       const formatLabels: Record<string, string> = {
         round_robin: "Round Robin",
         groups_knockout: "Grupos + Eliminatórias",
@@ -167,20 +194,16 @@ Deno.serve(async (req: Request) => {
       const payload = {
         title: `Novo torneio: ${tournament.name}`,
         body: `${dateStr}${locationPart}${formatPart}. Inscreve-te já!`,
-        url: "/?screen=tournaments",
+        url: `/?screen=tournaments&tournament=${tournament.id}`,
         tag: `new-tournament-${tournament.id}`,
       };
 
-      // Determine target players based on tournament type
       let targetPlayerIds: string[] = [];
-
-      const isIndependentTournament = !tournament.club_id && !tournament.club_ids;
+      const isIndependentTournament = clubIds.length === 0;
 
       if (isIndependentTournament) {
-        // For independent organizer tournaments: target by organizer contacts + geolocation
         const targetSet = new Set<string>();
 
-        // 1. Players in organizer's contact list (organizer_players)
         const { data: contacts } = await admin
           .from("organizer_players")
           .select("phone_number")
@@ -188,19 +211,25 @@ Deno.serve(async (req: Request) => {
           .not("phone_number", "is", null);
 
         if (contacts && contacts.length > 0) {
-          const phones = contacts.map((c: any) => c.phone_number).filter(Boolean);
-          if (phones.length > 0) {
-            const { data: matchedAccounts } = await admin
+          const phoneKeys = new Set(
+            contacts.map((c: any) => normalizePhone(c.phone_number)).filter(Boolean),
+          );
+          if (phoneKeys.size > 0) {
+            // Fetch candidate accounts and match normalized phones (exact IN fails across formats)
+            const { data: accounts } = await admin
               .from("player_accounts")
-              .select("id")
-              .in("phone_number", phones);
-            if (matchedAccounts) {
-              matchedAccounts.forEach((a: any) => targetSet.add(a.id));
+              .select("id, phone_number")
+              .not("phone_number", "is", null)
+              .limit(5000);
+
+            for (const a of accounts || []) {
+              if (phoneKeys.has(normalizePhone(a.phone_number))) {
+                targetSet.add(a.id);
+              }
             }
           }
         }
 
-        // 2. Nearby players (if tournament has venue coordinates)
         if (tournament.venue_lat && tournament.venue_lng) {
           const radius = tournament.visibility_radius_km || 25;
           const { data: nearbyPlayers } = await admin
@@ -212,29 +241,55 @@ Deno.serve(async (req: Request) => {
           if (nearbyPlayers) {
             for (const p of nearbyPlayers) {
               const dist = haversineKm(tournament.venue_lat, tournament.venue_lng, p.lat, p.lng);
-              if (dist <= radius) {
-                targetSet.add(p.id);
-              }
+              if (dist <= radius) targetSet.add(p.id);
             }
           }
         }
 
         targetPlayerIds = [...targetSet];
       } else {
-        // Club tournaments: notify all subscribed players
-        const { data: subscriptions } = await admin
-          .from("push_subscriptions")
+        // Club tournaments: notify players linked to the club(s)
+        const { data: clubPlayers } = await admin
+          .from("player_clubs")
           .select("player_account_id")
-          .eq("app_source", "player")
-          .not("player_account_id", "is", null);
+          .in("club_id", clubIds);
 
-        if (!subscriptions || subscriptions.length === 0) continue;
-        targetPlayerIds = [...new Set(subscriptions.map((s: any) => s.player_account_id).filter(Boolean))];
+        const clubPlayerIds = [...new Set(
+          (clubPlayers || []).map((r: any) => r.player_account_id).filter(Boolean),
+        )];
+
+        if (clubPlayerIds.length > 0) {
+          targetPlayerIds = clubPlayerIds;
+        } else {
+          // Fallback: players with push who previously played at this club
+          const { data: pastPlayers } = await admin
+            .from("players")
+            .select("player_account_id, tournament_id")
+            .not("player_account_id", "is", null)
+            .limit(2000);
+
+          // Prefer push subscribers as last resort only for small clubs with no player_clubs
+          const { data: subscriptions } = await admin
+            .from("push_subscriptions")
+            .select("player_account_id")
+            .eq("app_source", "player")
+            .not("player_account_id", "is", null);
+
+          targetPlayerIds = [...new Set(
+            (subscriptions || []).map((s: any) => s.player_account_id).filter(Boolean),
+          )];
+          console.log(
+            `[notify-new-tournament] Club ${clubIds.join(",")} has no player_clubs; fallback to ${targetPlayerIds.length} push subscribers`,
+          );
+          void pastPlayers;
+        }
       }
 
-      if (targetPlayerIds.length === 0) continue;
+      if (targetPlayerIds.length === 0) {
+        details.push({ id: tournament.id, skipped: "no_targets" });
+        continue;
+      }
 
-      // Gender filter
       if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
         const { data: players } = await admin
           .from("player_accounts")
@@ -255,9 +310,8 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Cap at 500 to avoid timeout
       const targets = targetPlayerIds.slice(0, 500);
-      console.log(`[notify-new-tournament] Sending notification for "${tournament.name}" to ${targets.length} players`);
+      console.log(`[notify-new-tournament] Sending for "${tournament.name}" to ${targets.length} players`);
 
       const results = await Promise.allSettled(
         targets.map(async (playerAccountId: string) => {
@@ -278,8 +332,8 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Mark as sent to prevent duplicates (use first target as player_account_id reference)
-      if (targets.length > 0) {
+      // Only dedupe when at least one push was delivered (allows retry if VAPID/subs fail)
+      if (sentCount > 0) {
         await admin
           .from("open_game_notifications_sent")
           .insert({
@@ -290,11 +344,22 @@ Deno.serve(async (req: Request) => {
       }
 
       totalNotified += sentCount;
-      console.log(`[notify-new-tournament] Tournament "${tournament.name}": ${sentCount} push delivered to ${targets.length} targets`);
+      details.push({
+        id: tournament.id,
+        name: tournament.name,
+        targets: targets.length,
+        sent: sentCount,
+      });
+      console.log(`[notify-new-tournament] "${tournament.name}": ${sentCount} push to ${targets.length} targets`);
     }
 
     return new Response(
-      JSON.stringify({ ok: true, tournaments: tournamentsToNotify.length, notified: totalNotified }),
+      JSON.stringify({
+        ok: true,
+        tournaments: tournamentsToNotify.length,
+        notified: totalNotified,
+        details,
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

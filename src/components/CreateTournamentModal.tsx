@@ -327,7 +327,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         club_id: primaryClubId,
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames,
-        allow_public_registration: isIndependentOrganizer ? true : false,
+        allow_public_registration: true,
         visibility: 'public',
         venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : null,
         venue_lat: venueLat,
@@ -400,19 +400,25 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
       }
     }
 
-    // Notify players about the new tournament (fire-and-forget)
+    // Notify players about the new tournament (fire-and-forget, but log result)
     try {
-      const supabaseUrl = 'https://rqiwnxcexsccguruiteq.supabase.co';
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co';
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
       const { data: { session } } = await supabase.auth.getSession();
       fetch(`${supabaseUrl}/functions/v1/notify-new-tournament`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || ''}`,
-          'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxaXdueGNleHNjY2d1cnVpdGVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk3Njc5MzcsImV4cCI6MjA3NTM0MzkzN30.Dl05zPQDtPVpmvn_Y-JokT3wDq0Oh9uF3op5xcHZpkY',
+          'Authorization': `Bearer ${session?.access_token || anonKey}`,
+          'apikey': anonKey,
         },
         body: JSON.stringify({ tournamentId: newTournamentId }),
-      }).catch(err => console.error('[Push] notify-new-tournament error:', err));
+      })
+        .then(async (res) => {
+          const body = await res.json().catch(() => ({}));
+          console.log('[Push] notify-new-tournament:', res.status, body);
+        })
+        .catch(err => console.error('[Push] notify-new-tournament error:', err));
     } catch (err) {
       console.error('[Push] Error triggering new tournament notification:', err);
     }

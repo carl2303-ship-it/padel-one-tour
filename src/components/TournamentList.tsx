@@ -200,12 +200,12 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         daily_schedules: tournament.daily_schedules,
         qualified_teams_per_group: tournament.qualified_teams_per_group,
         knockout_stage: tournament.knockout_stage,
-        allow_public_registration: false,
+        allow_public_registration: (tournament as any).visibility === 'invite_only' ? false : true,
         gender: (tournament as any).gender || null,
         club_id: (tournament as any).club_id || null,
         club_ids: (tournament as any).club_ids || null,
         image_url: (tournament as any).image_url || null,
-        visibility: (tournament as any).visibility || null,
+        visibility: (tournament as any).visibility || 'public',
       })
       .select()
       .single();
@@ -238,6 +238,23 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     // NÃO copiar jogadores, equipas ou jogos - torneio fica limpo e pronto a usar
     
     if (newTournament) {
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co';
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+        const { data: { session } } = await supabase.auth.getSession();
+        fetch(`${supabaseUrl}/functions/v1/notify-new-tournament`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token || anonKey}`,
+            'apikey': anonKey,
+          },
+          body: JSON.stringify({ tournamentId: newTournament.id }),
+        }).catch(() => {});
+      } catch {
+        /* ignore */
+      }
+
       alert(`Torneio "${newName}" criado com sucesso!\n\nConfigurações copiadas:\n- Formato: ${tournament.format}\n- Categorias: ${categories?.length || 0}\n- Campos: ${tournament.number_of_courts}\n\nAgora pode adicionar os jogadores.`);
       fetchTournaments();
     }
