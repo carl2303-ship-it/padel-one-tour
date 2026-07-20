@@ -3,17 +3,17 @@ import { supabase, Tournament } from '../lib/supabase';
 import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Contact, Filter, Calculator } from 'lucide-react';
-import OrganizerPlayersModal from './OrganizerPlayersModal';
+import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Filter, Calculator } from 'lucide-react';
 
 type TournamentListProps = {
   onSelectTournament: (tournament: Tournament) => void;
   onCreateTournament: () => void;
   onShowRegistration: (tournament: Tournament) => void;
   onOpenSimulator?: () => void;
+  onOpenLeagues?: () => void;
 };
 
-export default function TournamentList({ onSelectTournament, onCreateTournament, onShowRegistration, onOpenSimulator }: TournamentListProps) {
+export default function TournamentList({ onSelectTournament, onCreateTournament, onShowRegistration, onOpenSimulator, onOpenLeagues }: TournamentListProps) {
   const { t } = useI18n();
   const { user } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -25,7 +25,6 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   const [registrationCounts, setRegistrationCounts] = useState<Record<string, number>>({});
   const [categoryMaxTeams, setCategoryMaxTeams] = useState<Record<string, number>>({});
   const [tournamentCategories, setTournamentCategories] = useState<Record<string, string[]>>({});
-  const [showPlayersModal, setShowPlayersModal] = useState(false);
 
   useEffect(() => {
     fetchTournaments();
@@ -304,14 +303,16 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
           )}
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowPlayersModal(true)}
-            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm sm:text-base font-medium shadow-sm"
-            title="Ver todos os jogadores"
-          >
-            <Contact className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span className="hidden lg:inline">Jogadores</span>
-          </button>
+          {onOpenLeagues && (
+            <button
+              onClick={onOpenLeagues}
+              className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors text-sm sm:text-base font-bold shadow-md"
+              title={t.nav.leagues}
+            >
+              <Trophy className="w-4 h-4 sm:w-5 sm:h-5" />
+              <span className="hidden sm:inline">{t.nav.leagues}</span>
+            </button>
+          )}
           {onOpenSimulator && (
             <button
               onClick={onOpenSimulator}
@@ -427,11 +428,6 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
           ))}
         </div>
       )}
-
-      <OrganizerPlayersModal
-        isOpen={showPlayersModal}
-        onClose={() => setShowPlayersModal(false)}
-      />
     </div>
   );
 }

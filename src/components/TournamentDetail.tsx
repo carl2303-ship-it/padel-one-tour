@@ -1,6 +1,13 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, Tournament, Team, Player, Match, TournamentCategory } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
+import { useAuth } from '../lib/authContext';
+import {
+  computeTournamentPlayerPrice,
+  normalizeNameKey,
+  normalizePhoneKey,
+  type MemberPriceInfo,
+} from '../lib/playerTournamentPrice';
 import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw } from 'lucide-react';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
@@ -108,6 +115,7 @@ type SuperTeamStandingRow = {
 
 export default function TournamentDetail({ tournament, onBack }: TournamentDetailProps) {
   const { t, language } = useI18n();
+  const { user } = useAuth();
   const [teams, setTeams] = useState<TeamWithPlayers[]>([]);
   const [individualPlayers, setIndividualPlayers] = useState<Player[]>([]);
   const [matches, setMatches] = useState<MatchWithTeams[]>([]);
@@ -116,6 +124,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedCourtFilter, setSelectedCourtFilter] = useState<string | null>(null);
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [paymentSavingId, setPaymentSavingId] = useState<string | null>(null);
+  const [memberPriceLookup, setMemberPriceLookup] = useState<Map<string, MemberPriceInfo>>(new Map());
   const [activeTab, setActiveTab] = useState<'teams' | 'matches' | 'standings' | 'knockout'>('teams');
   const [isMatchGridView, setIsMatchGridView] = useState(false);
   const [showAddTeam, setShowAddTeam] = useState(false);
@@ -286,6 +296,38 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       supabase.removeChannel(playersChannel);
     };
   }, [tournament.id]);
+
+  useEffect(() => {
+    const ownerId = (currentTournament as any).user_id || user?.id;
+    if (!ownerId) return;
+
+    const loadMembers = async () => {
+      const { data } = await supabase
+        .from('member_subscriptions')
+        .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
+        .eq('club_owner_id', ownerId)
+        .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0]);
+
+      const map = new Map<string, MemberPriceInfo>();
+      (data || []).forEach((m: any) => {
+        const planName = m.plan?.name || null;
+        const info: MemberPriceInfo = {
+          isMember: true,
+          isStaff: !!(planName && String(planName).toLowerCase().includes('staff')),
+          planName,
+          discountPercent: Number(m.plan?.tournament_discount_percent) || 0,
+        };
+        const phone = normalizePhoneKey(m.member_phone);
+        const name = normalizeNameKey(m.member_name);
+        if (phone) map.set(phone, info);
+        if (name) map.set(name, info);
+      });
+      setMemberPriceLookup(map);
+    };
+
+    void loadMembers();
+  }, [currentTournament, user?.id]);
 
   useEffect(() => {
     const handleClickOutside = () => setShowGroupDropdown(false);
@@ -476,6 +518,169 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     : selectedCategory
     ? individualPlayers.filter(p => p.category_id === selectedCategory)
     : individualPlayers;
+
+  const getMemberInfoForPlayer = (player: Player): MemberPriceInfo => {
+    const phoneKey = normalizePhoneKey(player.phone_number || (player as any).phone);
+    const nameKey = normalizeNameKey(player.name);
+    return (
+      (phoneKey && memberPriceLookup.get(phoneKey)) ||
+      (nameKey && memberPriceLookup.get(nameKey)) || {
+        isMember: false,
+        isStaff: false,
+        planName: null,
+        discountPercent: 0,
+      }
+    );
+  };
+
+  const getPlayerPriceInfo = (player: Player) => {
+    const cat = categories.find(c => c.id === player.category_id);
+    return computeTournamentPlayerPrice(
+      {
+        registrationFee: Number((currentTournament as any).registration_fee) || 0,
+        memberPrice: Number((currentTournament as any).member_price) || 0,
+        nonMemberPrice: Number((currentTournament as any).non_member_price) || 0,
+        categoryRegistrationFee: Number(cat?.registration_fee) || 0,
+        categoryMemberPrice: Number(cat?.member_price) || 0,
+        categoryNonMemberPrice: Number(cat?.non_member_price) || 0,
+      },
+      getMemberInfoForPlayer(player),
+    );
+  };
+
+  const normalizePaymentPhone = (phone: string | null | undefined): string | null => {
+    const key = normalizePhoneKey(phone);
+    return key || null;
+  };
+
+  const handleTogglePlayerPayment = async (player: Player) => {
+    if (!user || !player.id) return;
+    const memberInfo = getMemberInfoForPlayer(player);
+    const priceInfo = getPlayerPriceInfo(player);
+    const currentStatus = memberInfo.isStaff ? 'exempt' : (player.payment_status || 'pending');
+    if (currentStatus === 'exempt' || memberInfo.isStaff) return;
+    const newStatus = currentStatus === 'paid' ? 'pending' : 'paid';
+    setPaymentSavingId(player.id);
+    try {
+      const { error } = await supabase
+        .from('players')
+        .update({ payment_status: newStatus })
+        .eq('id', player.id);
+      if (error) throw error;
+
+      const normalizedPhone = normalizePaymentPhone(player.phone_number || (player as any).phone);
+      let playerAccountId: string | null = null;
+      if (normalizedPhone) {
+        const { data: existingAccount } = await supabase
+          .from('player_accounts')
+          .select('id')
+          .eq('phone_number', normalizedPhone)
+          .maybeSingle();
+        playerAccountId = existingAccount?.id || null;
+        if (!existingAccount) {
+          const { data: newAccount } = await supabase
+            .from('player_accounts')
+            .insert({ phone_number: normalizedPhone, name: player.name })
+            .select('id')
+            .single();
+          playerAccountId = newAccount?.id || null;
+        }
+      }
+
+      const ownerId = (currentTournament as any).user_id || user.id;
+      if (newStatus === 'paid') {
+        const rpcParams: Record<string, unknown> = {
+          p_club_owner_id: ownerId,
+          p_player_name: player.name,
+          p_player_phone: normalizedPhone || 'unknown',
+          p_transaction_type: 'tournament',
+          p_amount: priceInfo.amount,
+          p_reference_id: currentTournament.id,
+          p_reference_type: 'tournament',
+          p_notes: `Torneio: ${currentTournament.name} (${priceInfo.label}, pagamento no local)`,
+        };
+        if (playerAccountId) rpcParams.p_player_account_id = playerAccountId;
+        await supabase.rpc('insert_player_transaction', rpcParams);
+      } else {
+        await supabase.rpc('delete_player_transaction', {
+          p_club_owner_id: ownerId,
+          p_reference_id: currentTournament.id,
+          p_reference_type: 'tournament',
+          p_player_name: player.name,
+        });
+      }
+
+      setIndividualPlayers(prev =>
+        prev.map(p => (p.id === player.id ? { ...p, payment_status: newStatus } : p))
+      );
+      setTeams(prev =>
+        prev.map(team => ({
+          ...team,
+          player1: team.player1?.id === player.id ? { ...team.player1, payment_status: newStatus } : team.player1,
+          player2: team.player2?.id === player.id ? { ...team.player2, payment_status: newStatus } : team.player2,
+        }))
+      );
+    } catch (err) {
+      console.error('[PAYMENT] toggle error:', err);
+      alert('Erro ao atualizar pagamento.');
+    } finally {
+      setPaymentSavingId(null);
+    }
+  };
+
+  const PlayerPriceBadge = ({ player }: { player: Player | null | undefined }) => {
+    if (!player) return null;
+    const info = getPlayerPriceInfo(player);
+    const colors =
+      info.kind === 'exempt'
+        ? 'text-blue-700'
+        : info.kind === 'member'
+        ? 'text-green-700'
+        : 'text-gray-900';
+    return (
+      <div className="text-right min-w-[4.5rem]">
+        <p className={`text-sm font-bold ${colors}`}>
+          {info.kind === 'exempt' ? 'Isento' : `${info.amount}€`}
+        </p>
+        <p className="text-[10px] text-gray-500 leading-tight">{info.label}</p>
+      </div>
+    );
+  };
+
+  const PaymentToggleButton = ({ player }: { player: Player | null | undefined }) => {
+    if (!player) return null;
+    const memberInfo = getMemberInfoForPlayer(player);
+    if (memberInfo.isStaff || player.payment_status === 'exempt') {
+      return (
+        <span className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+          Isento
+        </span>
+      );
+    }
+    const isPaid = player.payment_status === 'paid';
+    return (
+      <button
+        type="button"
+        disabled={paymentSavingId === player.id}
+        onClick={(e) => {
+          e.stopPropagation();
+          void handleTogglePlayerPayment(player);
+        }}
+        className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition disabled:opacity-50 ${
+          isPaid
+            ? 'bg-green-100 text-green-700 hover:bg-green-200'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+        }`}
+        title={isPaid ? 'Marcado como pago — clicar para reverter' : 'Marcar como pago (pagamento no local)'}
+      >
+        {isPaid ? (
+          <><Check className="w-3.5 h-3.5" /> Pago</>
+        ) : (
+          <><Clock className="w-3.5 h-3.5" /> Pendente</>
+        )}
+      </button>
+    );
+  };
 
   const groupedTeams = getTeamsByGroup(filteredTeams);
   const groupedPlayers = getPlayersByGroup(filteredIndividualPlayers);
@@ -1141,12 +1346,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner)')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price')
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);
@@ -1164,7 +1369,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1174,7 +1379,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -1491,12 +1696,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner)')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner')
+          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1511,7 +1716,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -7158,15 +7363,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             )}
                           </div>
                         </div>
-                        <button
-                          onClick={() => {
-                            setSelectedPlayer(player);
-                            setShowEditPlayer(true);
-                          }}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition"
-                        >
-                          <Pencil className="w-4 h-4 text-gray-500" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <PlayerPriceBadge player={player} />
+                          <PaymentToggleButton player={player} />
+                          <button
+                            onClick={() => {
+                              setSelectedPlayer(player);
+                              setShowEditPlayer(true);
+                            }}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition"
+                          >
+                            <Pencil className="w-4 h-4 text-gray-500" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -7216,8 +7425,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           </div>
                           <div className="p-4 space-y-2">
                             {groupTeams.map(team => (
-                              <div key={team.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                                <div>
+                              <div key={team.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg gap-2">
+                                <div className="min-w-0">
                                   <p className="font-semibold text-gray-900">{team.name}</p>
                                   <p className="text-sm text-gray-600">
                                     {team.player1?.name}
@@ -7226,13 +7435,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                     {team.player2?.name}
                                     {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                   </p>
+                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                    <div className="flex items-center gap-1">
+                                      <PlayerPriceBadge player={team.player1} />
+                                      <PaymentToggleButton player={team.player1} />
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <PlayerPriceBadge player={team.player2} />
+                                      <PaymentToggleButton player={team.player2} />
+                                    </div>
+                                  </div>
                                 </div>
                                 <button
                                   onClick={() => {
                                     setSelectedTeam(team);
                                     setShowEditTeam(true);
                                   }}
-                                  className="p-1 hover:bg-gray-100 rounded transition"
+                                  className="p-1 hover:bg-gray-100 rounded transition flex-shrink-0"
                                 >
                                   <Pencil className="w-4 h-4 text-gray-500" />
                                 </button>
@@ -7269,6 +7488,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                   🍽️ {[(team.player1 as any)?.wants_dinner && team.player1?.name, (team.player2 as any)?.wants_dinner && team.player2?.name].filter(Boolean).join(', ')}
                                 </span>
                               )}
+                              <div className="flex items-center gap-1">
+                                <PlayerPriceBadge player={team.player1} />
+                                <PaymentToggleButton player={team.player1} />
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <PlayerPriceBadge player={team.player2} />
+                                <PaymentToggleButton player={team.player2} />
+                              </div>
                             </div>
                           </div>
                           <button

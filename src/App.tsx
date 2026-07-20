@@ -23,7 +23,7 @@ import OrganizerMembers from './components/OrganizerMembers';
 import OrganizerMetrics from './components/OrganizerMetrics';
 import OrganizerSponsors from './components/OrganizerSponsors';
 import { fetchClientModules } from './lib/useClientModules';
-import { LogOut, Settings, Menu, X, Trophy, CheckCircle, BarChart3, Users, Award } from 'lucide-react';
+import { LogOut, Settings, Menu, X, Trophy, CheckCircle } from 'lucide-react';
 
 type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors' | 'metrics';
 
@@ -44,6 +44,8 @@ function App() {
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [userRole, setUserRole] = useState<'organizer' | 'player' | null>(null);
   const [isIndependentOrganizer, setIsIndependentOrganizer] = useState(false);
+  /** Hub Tour (Dashboard, Membros, Métricas, Sponsors) — organizadores independentes ou clubes lite (torneios sem manager). */
+  const [showOrganizerHub, setShowOrganizerHub] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
 
   // License / contract validation
@@ -67,7 +69,7 @@ function App() {
   };
 
   const handleBack = () => {
-    setView(isIndependentOrganizer ? 'dashboard' : 'list');
+    setView(showOrganizerHub ? 'dashboard' : 'list');
     setSelectedTournament(null);
     setRefreshKey((k) => k + 1);
   };
@@ -168,18 +170,12 @@ function App() {
       setShowMatchModal(false);
       setShowSettings(false);
       setNeedsLicense(false);
+      setShowOrganizerHub(false);
+      setIsIndependentOrganizer(false);
     } else {
       checkLicenseAndLoadRole();
     }
   }, [user]);
-
-  const checkTournamentsModule = async (
-    entityType: 'club' | 'organizer',
-    entityId: string
-  ): Promise<boolean> => {
-    const mods = await fetchClientModules(entityType, entityId);
-    return mods.hasTournaments;
-  };
 
   const checkLicenseAndLoadRole = async () => {
     if (!user) {
@@ -202,9 +198,18 @@ function App() {
       .maybeSingle();
     if (saRecord) {
       setNeedsLicense(false);
-      setIsIndependentOrganizer(!ownedClub);
+      if (ownedClub) {
+        const mods = await fetchClientModules('club', ownedClub.id);
+        const liteClubMode = mods.hasTournaments && !mods.hasManager;
+        setShowOrganizerHub(liteClubMode);
+        setIsIndependentOrganizer(false);
+        if (liteClubMode) setView('dashboard');
+      } else {
+        setShowOrganizerHub(true);
+        setIsIndependentOrganizer(true);
+        setView('dashboard');
+      }
       await loadUserRole();
-      if (!ownedClub) setView('dashboard');
       return;
     }
 
@@ -227,17 +232,20 @@ function App() {
       const hasValidContract = ownedClub.contract_expires_at &&
         new Date(ownedClub.contract_expires_at) > new Date();
       if (hasValidContract) {
-        const hasTournaments = await checkTournamentsModule('club', ownedClub.id);
-        if (!hasTournaments) {
+        const mods = await fetchClientModules('club', ownedClub.id);
+        if (!mods.hasTournaments) {
           setNeedsModule(true);
           setModuleMessage('O módulo de Torneios não está ativo para o seu clube. Contacte o suporte Padel One.');
           setNeedsLicense(false);
           return;
         }
+        const liteClubMode = mods.hasTournaments && !mods.hasManager;
         setNeedsModule(false);
         setNeedsLicense(false);
+        setShowOrganizerHub(liteClubMode);
         setIsIndependentOrganizer(false);
         setUserRole('organizer');
+        if (liteClubMode) setView('dashboard');
         return;
       }
       setLicenseMessage(
@@ -263,8 +271,8 @@ function App() {
         return;
       }
 
-      const hasTournaments = await checkTournamentsModule('organizer', user.id);
-      if (!hasTournaments) {
+      const mods = await fetchClientModules('organizer', user.id);
+      if (!mods.hasTournaments) {
         setNeedsModule(true);
         setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
         setNeedsLicense(false);
@@ -273,6 +281,7 @@ function App() {
 
       setNeedsModule(false);
       setNeedsLicense(false);
+      setShowOrganizerHub(true);
       setIsIndependentOrganizer(true);
       setUserRole('organizer');
       setView('dashboard');
@@ -484,92 +493,69 @@ function App() {
     <div className="min-h-screen bg-[#f7f7f7]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <header className="mb-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4 min-w-0">
               <img
                 src={logoUrl}
                 alt="Logo"
-                className="h-12 w-auto"
+                className="h-16 sm:h-20 w-auto object-contain flex-shrink-0"
               />
-              <div>
-                <h1 className="text-4xl font-black text-[#111111]">{t.app.title}</h1>
-                <p className="text-gray-600 mt-1 font-normal">{t.app.subtitle}</p>
-              </div>
+              <h1 className="text-2xl sm:text-3xl font-black text-[#111111] whitespace-nowrap truncate">
+                {t.app.title}
+              </h1>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 flex-shrink-0">
               {user && (
                 <>
-                  {/* Desktop Menu */}
-                  <div className="hidden md:flex items-center gap-3">
-                    <span className="text-sm text-gray-600">{user.email}</span>
-                    {isIndependentOrganizer && (
-                      <>
-                        <button
-                          onClick={() => setView('dashboard')}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'dashboard' ? 'bg-blue-700 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-                        >
-                          <BarChart3 className="w-4 h-4" />
-                          Dashboard
-                        </button>
-                        <button
-                          onClick={() => { setView('list'); setSelectedTournament(null); }}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'list' || view === 'detail' ? 'bg-emerald-700 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
-                        >
-                          <Trophy className="w-4 h-4" />
-                          {t.nav.tournaments}
-                        </button>
-                        <button
-                          onClick={() => setView('members')}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'members' ? 'bg-purple-700 text-white' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
-                        >
-                          <Users className="w-4 h-4" />
-                          {(t as any).organizerNav?.members || 'Membros'}
-                        </button>
-                        <button
-                          onClick={() => setView('metrics')}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'metrics' ? 'bg-indigo-700 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
-                        >
-                          <BarChart3 className="w-4 h-4" />
-                          Métricas
-                        </button>
-                        <button
-                          onClick={() => setView('sponsors')}
-                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'sponsors' ? 'bg-amber-700 text-white' : 'bg-amber-600 text-white hover:bg-amber-700'}`}
-                        >
-                          <Award className="w-4 h-4" />
-                          Sponsors
-                        </button>
-                      </>
-                    )}
-                    {userRole === 'organizer' && (
-                      <button
-                        onClick={() => setView('leagues')}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 transition shadow-md"
-                      >
-                        <Trophy className="w-4 h-4" />
-                        {t.nav.leagues}
-                      </button>
+                  <div className="hidden md:flex items-center gap-1">
+                    {showOrganizerHub && (
+                      <nav className="flex items-center gap-1 mr-2">
+                        {([
+                          { id: 'dashboard' as View, label: 'Dashboard' },
+                          { id: 'list' as View, label: t.nav.tournaments },
+                          { id: 'members' as View, label: 'Jogadores' },
+                          { id: 'sponsors' as View, label: 'Sponsors' },
+                        ]).map((item) => {
+                          const active =
+                            view === item.id ||
+                            (item.id === 'list' && (view === 'detail' || view === 'leagues'));
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={() => {
+                                if (item.id === 'list') setSelectedTournament(null);
+                                setView(item.id);
+                              }}
+                              className={`px-3 py-2 text-sm font-semibold rounded-lg transition ${
+                                active
+                                  ? 'text-[#007BFF] bg-blue-50'
+                                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </nav>
                     )}
                     <button
                       onClick={() => setShowSettings(true)}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[#007BFF] rounded-lg hover:bg-[#0069d9] transition shadow-md"
+                      className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+                      title={t.settings.button}
                     >
-                      <Settings className="w-4 h-4" />
-                      {t.settings.button}
+                      <Settings className="w-5 h-5" />
                     </button>
                     <button
                       onClick={handleSignOut}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-bold text-[#111111] bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                      className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+                      title={t.auth.signOut}
                     >
-                      <LogOut className="w-4 h-4" />
-                      {t.auth.signOut}
+                      <LogOut className="w-5 h-5" />
                     </button>
                   </div>
-
-                  {/* Mobile Menu Button */}
                   <button
                     onClick={() => setShowMobileMenu(!showMobileMenu)}
-                    className="md:hidden p-2 text-white bg-[#007BFF] rounded-lg hover:bg-[#0069d9] transition shadow-md"
+                    className="md:hidden p-2 text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
                   >
                     {showMobileMenu ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
                   </button>
@@ -581,85 +567,57 @@ function App() {
             </div>
           </div>
 
-          {/* Mobile Dropdown Menu */}
           {user && showMobileMenu && (
-            <div className="md:hidden mt-4 p-4 bg-white rounded-lg shadow-xl border border-gray-200">
-              <div className="space-y-3">
-                <div className="text-sm text-gray-600 pb-3 border-b border-gray-200">
+            <div className="md:hidden mt-4 p-4 bg-white rounded-xl shadow-lg border border-gray-200">
+              <div className="space-y-1">
+                <div className="text-sm text-gray-500 pb-3 mb-2 border-b border-gray-100">
                   {user.email}
                 </div>
                 <LanguageSelector />
-                {isIndependentOrganizer && (
+                {showOrganizerHub && (
                   <>
                     <button
                       onClick={() => { setView('dashboard'); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition shadow-md"
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'dashboard' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
-                      <BarChart3 className="w-4 h-4" />
                       Dashboard
                     </button>
                     <button
                       onClick={() => { setView('list'); setSelectedTournament(null); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition shadow-md"
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'list' || view === 'detail' || view === 'leagues' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
-                      <Trophy className="w-4 h-4" />
                       {t.nav.tournaments}
                     </button>
                     <button
                       onClick={() => { setView('members'); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition shadow-md"
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'members' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
-                      <Users className="w-4 h-4" />
-                      {(t as any).organizerNav?.members || 'Membros'}
-                    </button>
-                    <button
-                      onClick={() => { setView('metrics'); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition shadow-md"
-                    >
-                      <BarChart3 className="w-4 h-4" />
-                      Métricas
+                      Jogadores
                     </button>
                     <button
                       onClick={() => { setView('sponsors'); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition shadow-md"
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'sponsors' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
-                      <Award className="w-4 h-4" />
                       Sponsors
                     </button>
                   </>
                 )}
-                {userRole === 'organizer' && (
+                <div className="border-t border-gray-100 pt-2 mt-2 space-y-1">
                   <button
-                    onClick={() => {
-                      setView('leagues');
-                      setShowMobileMenu(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 transition shadow-md"
+                    onClick={() => { setShowSettings(true); setShowMobileMenu(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 rounded-lg"
                   >
-                    <Trophy className="w-4 h-4" />
-                    {t.nav.leagues}
+                    <Settings className="w-4 h-4" />
+                    {t.settings.button}
                   </button>
-                )}
-                <button
-                  onClick={() => {
-                    setShowSettings(true);
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-[#007BFF] rounded-lg hover:bg-[#0069d9] transition shadow-md"
-                >
-                  <Settings className="w-4 h-4" />
-                  {t.settings.button}
-                </button>
-                <button
-                  onClick={() => {
-                    handleSignOut();
-                    setShowMobileMenu(false);
-                  }}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-[#111111] bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-                >
-                  <LogOut className="w-4 h-4" />
-                  {t.auth.signOut}
-                </button>
+                  <button
+                    onClick={() => { handleSignOut(); setShowMobileMenu(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 rounded-lg"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    {t.auth.signOut}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -701,6 +659,7 @@ function App() {
               onCreateTournament={() => setShowCreateTournament(true)}
               onShowRegistration={handleShowRegistration}
               onOpenSimulator={() => setShowSimulator(true)}
+              onOpenLeagues={showOrganizerHub || userRole === 'organizer' ? () => setView('leagues') : undefined}
             />
           )}
 
@@ -714,17 +673,31 @@ function App() {
               : <RegistrationLanding tournament={selectedTournament} onClose={handleBack} />
           )}
 
-          {view === 'leagues' && <LeagueManagement onBack={() => setView(isIndependentOrganizer ? 'dashboard' : 'list')} />}
+          {view === 'leagues' && <LeagueManagement onBack={() => setView(showOrganizerHub ? 'dashboard' : 'list')} />}
 
-          {view === 'dashboard' && isIndependentOrganizer && (
+          {view === 'dashboard' && showOrganizerHub && (
             <OrganizerDashboard onNavigate={(v) => setView(v as View)} />
           )}
 
-          {view === 'members' && isIndependentOrganizer && <OrganizerMembers />}
+          {view === 'members' && showOrganizerHub && <OrganizerMembers />}
 
-          {view === 'metrics' && isIndependentOrganizer && <OrganizerMetrics />}
+          {view === 'metrics' && showOrganizerHub && (
+            <OrganizerMetrics
+              onOpenTournament={async (tournamentId) => {
+                const { data } = await supabase
+                  .from('tournaments')
+                  .select('*')
+                  .eq('id', tournamentId)
+                  .maybeSingle();
+                if (data) {
+                  setSelectedTournament(data);
+                  setView('detail');
+                }
+              }}
+            />
+          )}
 
-          {view === 'sponsors' && isIndependentOrganizer && <OrganizerSponsors />}
+          {view === 'sponsors' && showOrganizerHub && <OrganizerSponsors />}
         </main>
       </div>
 

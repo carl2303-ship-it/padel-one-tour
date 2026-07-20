@@ -60,8 +60,9 @@ interface OrganizerPlayer {
 }
 
 interface OrganizerPlayersModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  embedded?: boolean;
 }
 
 function normalizeName(name: string): string {
@@ -91,7 +92,7 @@ function normalizePhoneForRPC(phone: string | null): string | null {
   return cleaned;
 }
 
-export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlayersModalProps) {
+export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded = false }: OrganizerPlayersModalProps) {
   const { user } = useAuth();
   const [players, setPlayers] = useState<PlayerRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -266,10 +267,10 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
   }, [user]);
 
   useEffect(() => {
-    if (isOpen && user) {
+    if ((isOpen || embedded) && user) {
       fetchAllPlayers();
     }
-  }, [isOpen, user, fetchAllPlayers]);
+  }, [isOpen, embedded, user, fetchAllPlayers]);
 
   const updatePlayerCategory = async (player: PlayerRecord, category: PlayerCategory) => {
     if (!user) return;
@@ -521,7 +522,7 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
 
   // Sincronizar scroll horizontal entre tabela e barra fixa
   useEffect(() => {
-    if (!isOpen || filteredPlayers.length === 0) return;
+    if ((!isOpen && !embedded) || filteredPlayers.length === 0) return;
 
     const tableContainer = document.getElementById('table-scroll-container');
     const horizontalScrollbar = document.getElementById('horizontal-scrollbar');
@@ -555,13 +556,12 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
       tableContainer.removeEventListener('scroll', handleTableScroll);
       horizontalScrollbar.removeEventListener('scroll', handleScrollbarScroll);
     };
-  }, [isOpen, filteredPlayers.length]);
+  }, [isOpen, embedded, filteredPlayers.length]);
 
-  if (!isOpen) return null;
+  if (!embedded && !isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+  const content = (
+      <div className={embedded ? 'bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col max-h-[75vh]' : 'bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col'}>
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -575,12 +575,14 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                 </p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!embedded && onClose && (
+              <button
+                onClick={onClose}
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row gap-2">
@@ -1063,15 +1065,24 @@ export default function OrganizerPlayersModal({ isOpen, onClose }: OrganizerPlay
                 <strong>{filteredPlayers.filter(p => p.player_category).length}</strong> categoria
               </span>
             </div>
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
-            >
-              Fechar
-            </button>
+            {!embedded && onClose && (
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Fechar
+              </button>
+            )}
           </div>
         </div>
       </div>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      {content}
     </div>
   );
 }

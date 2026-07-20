@@ -1,4 +1,11 @@
 import { supabase } from './supabase';
+import {
+  computeTournamentPlayerPrice,
+  normalizeNameKey,
+  normalizePhoneKey,
+  type MemberPriceInfo,
+} from './playerTournamentPrice';
+import { isIndividualTournament } from './tournamentRegistrationCounts';
 
 export type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 
@@ -73,7 +80,112 @@ export function getDateRange(filter: DateFilter, customStart?: string, customEnd
 }
 
 function normalizeName(name: string): string {
-  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return normalizeNameKey(name);
+}
+
+const PAGE_SIZE = 1000;
+
+async function fetchPlayersForTournaments(tournamentIds: string[]) {
+  if (!tournamentIds.length) return [];
+  const all: Array<{
+    tournament_id: string;
+    name: string | null;
+    phone_number: string | null;
+    category_id: string | null;
+    payment_status: string | null;
+  }> = [];
+
+  // Batch by tournament id to avoid PostgREST IN + 1000-row truncation
+  for (let i = 0; i < tournamentIds.length; i += 50) {
+    const batchIds = tournamentIds.slice(i, i + 50);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('players')
+        .select('tournament_id, name, phone_number, category_id, payment_status')
+        .in('tournament_id', batchIds)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        console.error('[organizerMetrics] players fetch:', error);
+        break;
+      }
+      if (!data?.length) break;
+      all.push(...data);
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+
+  return all;
+}
+
+async function fetchRegistrationCounts(
+  tournaments: Array<{ id: string; format: string; round_robin_type?: string | null }>,
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  await Promise.all(
+    tournaments.map(async (t) => {
+      if (t.format === 'super_teams') {
+        const { count } = await supabase
+          .from('super_teams')
+          .select('id', { count: 'exact', head: true })
+          .eq('tournament_id', t.id);
+        counts.set(t.id, count ?? 0);
+        return;
+      }
+
+      if (isIndividualTournament(t as any)) {
+        const { count } = await supabase
+          .from('players')
+          .select('id', { count: 'exact', head: true })
+          .eq('tournament_id', t.id);
+        counts.set(t.id, count ?? 0);
+        return;
+      }
+
+      const { count: teamCount } = await supabase
+        .from('teams')
+        .select('id', { count: 'exact', head: true })
+        .eq('tournament_id', t.id);
+
+      if ((teamCount ?? 0) > 0) {
+        counts.set(t.id, teamCount ?? 0);
+        return;
+      }
+
+      const { count: playerCount } = await supabase
+        .from('players')
+        .select('id', { count: 'exact', head: true })
+        .eq('tournament_id', t.id);
+      counts.set(t.id, playerCount ?? 0);
+    }),
+  );
+  return counts;
+}
+
+function buildMemberLookup(
+  members: Array<{
+    member_phone: string | null;
+    member_name?: string | null;
+    plan?: { name?: string; tournament_discount_percent?: number } | null;
+  }>,
+): Map<string, MemberPriceInfo> {
+  const map = new Map<string, MemberPriceInfo>();
+  members.forEach(m => {
+    const planName = m.plan?.name || null;
+    const isStaff = !!(planName && planName.toLowerCase().includes('staff'));
+    const info: MemberPriceInfo = {
+      isMember: true,
+      isStaff,
+      planName,
+      discountPercent: Number(m.plan?.tournament_discount_percent) || 0,
+    };
+    const phone = normalizePhoneKey(m.member_phone);
+    const name = normalizeNameKey(m.member_name);
+    if (phone) map.set(phone, info);
+    if (name) map.set(name, info);
+  });
+  return map;
 }
 
 export async function loadOrganizerTournamentMetrics(
@@ -82,7 +194,7 @@ export async function loadOrganizerTournamentMetrics(
 ): Promise<TournamentMetric[]> {
   let query = supabase
     .from('tournaments')
-    .select('id, name, start_date, registration_fee, member_price, non_member_price')
+    .select('id, name, start_date, registration_fee, member_price, non_member_price, format, round_robin_type')
     .eq('user_id', organizerId)
     .order('start_date', { ascending: false });
 
@@ -95,15 +207,23 @@ export async function loadOrganizerTournamentMetrics(
 
   const tournamentIds = tournaments.map(t => t.id);
 
-  const [playersResult, categoriesResult, membersResult] = await Promise.all([
-    supabase.from('players').select('tournament_id, name, phone_number, category_id, payment_status').in('tournament_id', tournamentIds),
-    supabase.from('tournament_categories').select('id, tournament_id, registration_fee, member_price, non_member_price').in('tournament_id', tournamentIds),
-    supabase.from('member_subscriptions').select('member_phone').eq('club_owner_id', organizerId).eq('status', 'active').gte('end_date', new Date().toISOString().split('T')[0]),
+  const [allPlayers, categoriesResult, membersResult, registrationCounts] = await Promise.all([
+    fetchPlayersForTournaments(tournamentIds),
+    supabase
+      .from('tournament_categories')
+      .select('id, tournament_id, registration_fee, member_price, non_member_price')
+      .in('tournament_id', tournamentIds),
+    supabase
+      .from('member_subscriptions')
+      .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
+      .eq('club_owner_id', organizerId)
+      .eq('status', 'active')
+      .gte('end_date', new Date().toISOString().split('T')[0]),
+    fetchRegistrationCounts(tournaments),
   ]);
 
-  const allPlayers = playersResult.data || [];
   const allCategories = categoriesResult.data || [];
-  const memberPhones = new Set((membersResult.data || []).map(m => m.member_phone).filter(Boolean));
+  const memberLookup = buildMemberLookup((membersResult.data || []) as any[]);
 
   const sortedTournaments = [...tournaments].sort(
     (a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime(),
@@ -115,16 +235,19 @@ export async function loadOrganizerTournamentMetrics(
     const tournamentPlayers = allPlayers.filter(p => p.tournament_id === t.id);
     let newPlayers = 0;
     let memberRegistrations = 0;
-    const countedPhones = new Set<string>();
+    const countedKeys = new Set<string>();
 
     for (const p of tournamentPlayers) {
       const normalName = p.name ? normalizeName(p.name) : '';
       if (normalName && !seenPlayerNames.has(normalName)) newPlayers++;
 
-      const phone = p.phone_number;
-      if (phone && !countedPhones.has(phone)) {
-        countedPhones.add(phone);
-        if (memberPhones.has(phone)) memberRegistrations++;
+      const phoneKey = normalizePhoneKey(p.phone_number);
+      const nameKey = normalizeNameKey(p.name);
+      const member = (phoneKey && memberLookup.get(phoneKey)) || (nameKey && memberLookup.get(nameKey));
+      const dedupeKey = phoneKey || nameKey;
+      if (dedupeKey && !countedKeys.has(dedupeKey)) {
+        countedKeys.add(dedupeKey);
+        if (member?.isMember && !member.isStaff) memberRegistrations++;
       }
     }
 
@@ -135,28 +258,37 @@ export async function loadOrganizerTournamentMetrics(
 
     const tournamentCategories = allCategories.filter(c => c.tournament_id === t.id);
     const paidPlayers = tournamentPlayers.filter(p => p.payment_status === 'paid');
-    const tournRegFee = Number(t.registration_fee) || 0;
-    const tournMemberPrice = Number(t.member_price) || 0;
-    const tournNonMemberPrice = Number(t.non_member_price) || 0;
 
     let revenue = 0;
     for (const p of paidPlayers) {
       const cat = tournamentCategories.find(c => c.id === p.category_id);
-      const catRegFee = Number(cat?.registration_fee) || 0;
-      const catMemberPrice = Number(cat?.member_price) || 0;
-      const catNonMemberPrice = Number(cat?.non_member_price) || 0;
-      const isMember = p.phone_number ? memberPhones.has(p.phone_number) : false;
-
-      revenue += isMember
-        ? catMemberPrice || tournMemberPrice || catRegFee || tournRegFee
-        : catNonMemberPrice || tournNonMemberPrice || catRegFee || tournRegFee;
+      const phoneKey = normalizePhoneKey(p.phone_number);
+      const nameKey = normalizeNameKey(p.name);
+      const member = (phoneKey && memberLookup.get(phoneKey)) || (nameKey && memberLookup.get(nameKey)) || {
+        isMember: false,
+        isStaff: false,
+        planName: null,
+        discountPercent: 0,
+      };
+      const { amount } = computeTournamentPlayerPrice(
+        {
+          registrationFee: Number(t.registration_fee) || 0,
+          memberPrice: Number(t.member_price) || 0,
+          nonMemberPrice: Number(t.non_member_price) || 0,
+          categoryRegistrationFee: Number(cat?.registration_fee) || 0,
+          categoryMemberPrice: Number(cat?.member_price) || 0,
+          categoryNonMemberPrice: Number(cat?.non_member_price) || 0,
+        },
+        member,
+      );
+      revenue += amount;
     }
 
     metricsMap.set(t.id, {
       tournamentId: t.id,
       tournamentName: t.name,
       startDate: t.start_date,
-      registrations: tournamentPlayers.length,
+      registrations: registrationCounts.get(t.id) ?? tournamentPlayers.length,
       newPlayers,
       memberRegistrations,
       revenue,
@@ -209,9 +341,11 @@ export async function loadOrganizerPlayerSpending(
     .select('member_name, member_phone, amount_paid')
     .eq('club_owner_id', organizerId);
 
-  const memberPhoneSet = new Set((memberSubs || []).map(m => m.member_phone).filter(Boolean));
+  const memberPhoneSet = new Set(
+    (memberSubs || []).map(m => normalizePhoneKey(m.member_phone)).filter(Boolean),
+  );
   const memberNameKeys = new Set(
-    (memberSubs || []).map(m => (m.member_name ? normalizeName(m.member_name) : '')).filter(Boolean),
+    (memberSubs || []).map(m => normalizeNameKey(m.member_name)).filter(Boolean),
   );
 
   const playerMap = new Map<string, PlayerSpending>();
@@ -222,9 +356,10 @@ export async function loadOrganizerPlayerSpending(
     tournamentAmount: number,
     membershipAmount: number,
   ) => {
-    const key = phone || normalizeName(name);
+    const phoneKey = normalizePhoneKey(phone);
+    const key = phoneKey || normalizeName(name);
     if (!key) return;
-    const isMember = (phone && memberPhoneSet.has(phone)) || memberNameKeys.has(normalizeName(name));
+    const isMember = (phoneKey && memberPhoneSet.has(phoneKey)) || memberNameKeys.has(normalizeName(name));
     const existing = playerMap.get(key);
     if (existing) {
       existing.tournamentSpent += tournamentAmount;
@@ -274,11 +409,9 @@ export async function loadOrganizerPlayerSpending(
     const metrics = await loadOrganizerTournamentMetrics(organizerId, range);
     if (metrics.some(m => m.revenue > 0)) {
       const tournamentIds = metrics.map(m => m.tournamentId);
-      const { data: paidPlayers } = await supabase
-        .from('players')
-        .select('name, phone_number, tournament_id, category_id, payment_status')
-        .in('tournament_id', tournamentIds)
-        .eq('payment_status', 'paid');
+      const paidPlayers = (await fetchPlayersForTournaments(tournamentIds)).filter(
+        p => p.payment_status === 'paid',
+      );
 
       const { data: categories } = await supabase
         .from('tournament_categories')
@@ -291,22 +424,34 @@ export async function loadOrganizerPlayerSpending(
         .in('id', tournamentIds);
 
       const tournMap = new Map((tournaments || []).map(t => [t.id, t]));
+      const memberLookup = buildMemberLookup(
+        (memberSubs || []).map(m => ({ ...m, plan: null })),
+      );
 
-      (paidPlayers || []).forEach(p => {
+      paidPlayers.forEach(p => {
         if (!p.name) return;
         const cat = (categories || []).find(c => c.id === p.category_id);
         const tourn = tournMap.get(p.tournament_id);
-        const isMember = p.phone_number ? memberPhoneSet.has(p.phone_number) : false;
-        const catRegFee = Number(cat?.registration_fee) || 0;
-        const catMemberPrice = Number(cat?.member_price) || 0;
-        const catNonMemberPrice = Number(cat?.non_member_price) || 0;
-        const tournRegFee = Number(tourn?.registration_fee) || 0;
-        const tournMemberPrice = Number(tourn?.member_price) || 0;
-        const tournNonMemberPrice = Number(tourn?.non_member_price) || 0;
-        const fee = isMember
-          ? catMemberPrice || tournMemberPrice || catRegFee || tournRegFee
-          : catNonMemberPrice || tournNonMemberPrice || catRegFee || tournRegFee;
-        if (fee > 0) addSpending(p.name, p.phone_number, fee, 0);
+        const phoneKey = normalizePhoneKey(p.phone_number);
+        const nameKey = normalizeNameKey(p.name);
+        const member = (phoneKey && memberLookup.get(phoneKey)) || (nameKey && memberLookup.get(nameKey)) || {
+          isMember: !!(phoneKey && memberPhoneSet.has(phoneKey)),
+          isStaff: false,
+          planName: null,
+          discountPercent: 0,
+        };
+        const { amount } = computeTournamentPlayerPrice(
+          {
+            registrationFee: Number(tourn?.registration_fee) || 0,
+            memberPrice: Number(tourn?.member_price) || 0,
+            nonMemberPrice: Number(tourn?.non_member_price) || 0,
+            categoryRegistrationFee: Number(cat?.registration_fee) || 0,
+            categoryMemberPrice: Number(cat?.member_price) || 0,
+            categoryNonMemberPrice: Number(cat?.non_member_price) || 0,
+          },
+          member,
+        );
+        if (amount > 0) addSpending(p.name, p.phone_number, amount, 0);
       });
     }
   }

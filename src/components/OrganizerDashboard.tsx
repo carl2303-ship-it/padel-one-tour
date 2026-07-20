@@ -233,6 +233,13 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
             <Trophy className="w-4 h-4" />
             {t.nav?.tournaments || 'Tournaments'}
           </button>
+          <button
+            onClick={() => onNavigate('metrics')}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+          >
+            <BarChart3 className="w-4 h-4" />
+            Métricas
+          </button>
         </div>
       </div>
 

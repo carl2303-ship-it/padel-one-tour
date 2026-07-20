@@ -8,6 +8,7 @@ import {
   ArrowUpDown, Award, Upload, CreditCard
 } from 'lucide-react';
 import ImportContactsModal from './ImportContactsModal';
+import OrganizerPlayersModal from './OrganizerPlayersModal';
 
 interface MembershipPlan {
   id: string;
@@ -62,7 +63,7 @@ interface Lead {
   tournament_name: string;
 }
 
-type Tab = 'plans' | 'members';
+type Tab = 'players' | 'plans' | 'members';
 type StatusFilter = 'all' | 'active' | 'expired';
 type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
 type GenderFilter = 'all' | 'male' | 'female';
@@ -93,7 +94,7 @@ export default function OrganizerMembers() {
   const { t } = useI18n();
   const { user } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<Tab>('plans');
+  const [activeTab, setActiveTab] = useState<Tab>('players');
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -586,6 +587,28 @@ export default function OrganizerMembers() {
     <div className="space-y-6">
       <div className="flex items-center gap-4 border-b border-gray-200">
         <button
+          onClick={() => setActiveTab('players')}
+          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
+            activeTab === 'players'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Users className="w-4 h-4 inline mr-2" />
+          Jogadores
+        </button>
+        <button
+          onClick={() => setActiveTab('members')}
+          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
+            activeTab === 'members'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <CreditCard className="w-4 h-4 inline mr-2" />
+          {(t as any).organizerMembers?.members || 'Membros'}
+        </button>
+        <button
           onClick={() => setActiveTab('plans')}
           className={`px-4 py-2 font-medium border-b-2 transition-colors ${
             activeTab === 'plans'
@@ -596,18 +619,9 @@ export default function OrganizerMembers() {
           <Award className="w-4 h-4 inline mr-2" />
           {(t as any).organizerMembers?.plans || 'Planos'}
         </button>
-        <button
-          onClick={() => setActiveTab('members')}
-          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-            activeTab === 'members'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users className="w-4 h-4 inline mr-2" />
-          {(t as any).organizerMembers?.members || 'Membros'}
-        </button>
       </div>
+
+      {activeTab === 'players' && <OrganizerPlayersModal embedded />}
 
       {activeTab === 'plans' && (
         <div className="space-y-4">

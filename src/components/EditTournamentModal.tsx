@@ -1115,7 +1115,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
               </label>
             </div>
             <p className="text-xs text-gray-500 mt-1 ml-7">
-              Se ativo, os jogadores podem escolher pagar no clube em vez de pagar online. O gestor do clube marca o pagamento na app Manager.
+              Se ativo, os jogadores podem escolher pagar no local em vez de pagar online. Pode marcar o pagamento como pago na lista de inscritos deste torneio.
             </p>
 
             <div className="flex items-center gap-3 mt-3">

@@ -21,7 +21,11 @@ import {
 
 type Tab = 'overview' | 'spending';
 
-export default function OrganizerMetrics() {
+interface OrganizerMetricsProps {
+  onOpenTournament?: (tournamentId: string) => void;
+}
+
+export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsProps) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>('year');
@@ -187,7 +191,19 @@ export default function OrganizerMetrics() {
                   <tbody>
                     {tournamentMetrics.map(t => (
                       <tr key={t.tournamentId} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="py-2.5 pr-3 font-medium text-gray-900">{t.tournamentName}</td>
+                        <td className="py-2.5 pr-3 font-medium text-gray-900">
+                          {onOpenTournament ? (
+                            <button
+                              type="button"
+                              onClick={() => onOpenTournament(t.tournamentId)}
+                              className="text-left text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                            >
+                              {t.tournamentName}
+                            </button>
+                          ) : (
+                            t.tournamentName
+                          )}
+                        </td>
                         <td className="py-2.5 pr-3 text-gray-600">{formatDate(t.startDate)}</td>
                         <td className="py-2.5 pr-3 text-right">{t.registrations}</td>
                         <td className="py-2.5 pr-3 text-right">{t.newPlayers}</td>
