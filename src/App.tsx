@@ -20,11 +20,12 @@ import { useAuth } from './lib/authContext';
 import { useCustomLogo } from './lib/useCustomLogo';
 import OrganizerDashboard from './components/OrganizerDashboard';
 import OrganizerMembers from './components/OrganizerMembers';
+import OrganizerMetrics from './components/OrganizerMetrics';
 import OrganizerSponsors from './components/OrganizerSponsors';
 import { fetchClientModules } from './lib/useClientModules';
 import { LogOut, Settings, Menu, X, Trophy, CheckCircle, BarChart3, Users, Award } from 'lucide-react';
 
-type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors';
+type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors' | 'metrics';
 
 function App() {
   const { t } = useI18n();
@@ -525,6 +526,13 @@ function App() {
                           {(t as any).organizerNav?.members || 'Membros'}
                         </button>
                         <button
+                          onClick={() => setView('metrics')}
+                          className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'metrics' ? 'bg-indigo-700 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                        >
+                          <BarChart3 className="w-4 h-4" />
+                          Métricas
+                        </button>
+                        <button
                           onClick={() => setView('sponsors')}
                           className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition shadow-md ${view === 'sponsors' ? 'bg-amber-700 text-white' : 'bg-amber-600 text-white hover:bg-amber-700'}`}
                         >
@@ -603,6 +611,13 @@ function App() {
                     >
                       <Users className="w-4 h-4" />
                       {(t as any).organizerNav?.members || 'Membros'}
+                    </button>
+                    <button
+                      onClick={() => { setView('metrics'); setShowMobileMenu(false); }}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition shadow-md"
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                      Métricas
                     </button>
                     <button
                       onClick={() => { setView('sponsors'); setShowMobileMenu(false); }}
@@ -706,6 +721,8 @@ function App() {
           )}
 
           {view === 'members' && isIndependentOrganizer && <OrganizerMembers />}
+
+          {view === 'metrics' && isIndependentOrganizer && <OrganizerMetrics />}
 
           {view === 'sponsors' && isIndependentOrganizer && <OrganizerSponsors />}
         </main>

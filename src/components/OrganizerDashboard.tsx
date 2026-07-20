@@ -267,6 +267,7 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
           label={td.monthlyRevenue || 'Revenue'}
           value={`${stats.revenue.toFixed(0)}€`}
           bgColor="bg-emerald-50"
+          onClick={() => onNavigate('metrics')}
         />
       </div>
 

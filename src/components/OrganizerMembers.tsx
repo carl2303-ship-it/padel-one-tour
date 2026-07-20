@@ -5,7 +5,7 @@ import { useAuth } from '../lib/authContext';
 import {
   Plus, X, Users, Edit2, Trash2, Check, Mail, Phone,
   User, Trophy, Eye, Calendar, Medal, Filter, Download,
-  ArrowUpDown, Award, Upload
+  ArrowUpDown, Award, Upload, CreditCard
 } from 'lucide-react';
 import ImportContactsModal from './ImportContactsModal';
 
@@ -31,6 +31,29 @@ interface Subscription {
   notes: string | null;
   plan: MembershipPlan;
   plan_id: string;
+  player_account?: {
+    birth_date: string | null;
+    gender: 'male' | 'female' | 'other' | null;
+  } | null;
+}
+
+interface TournamentHistory {
+  tournament_id: string;
+  tournament_name: string;
+  start_date: string;
+  end_date: string;
+  category_name: string | null;
+  final_position: number | null;
+  payment_status: string | null;
+}
+
+interface TournamentPlayerLead {
+  player_name: string;
+  player_phone: string;
+  total_spent: number;
+  tournament_count: number;
+  last_tournament_date: string;
+  tournament_names: string[];
 }
 
 interface Lead {
@@ -42,6 +65,7 @@ interface Lead {
 type Tab = 'plans' | 'members';
 type StatusFilter = 'all' | 'active' | 'expired';
 type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
+type GenderFilter = 'all' | 'male' | 'female';
 
 function normalizePhone(phone: string): string {
   let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
@@ -101,9 +125,14 @@ export default function OrganizerMembers() {
   const [phoneLookupDone, setPhoneLookupDone] = useState(false);
 
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [historyPlayer, setHistoryPlayer] = useState<{ name: string; phone: string; tournaments: string[] } | null>(null);
+  const [historyPlayer, setHistoryPlayer] = useState<{ name: string; phone: string } | null>(null);
+  const [tournamentHistory, setTournamentHistory] = useState<TournamentHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [tournamentPlayerLeads, setTournamentPlayerLeads] = useState<TournamentPlayerLead[]>([]);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [filterGender, setFilterGender] = useState<GenderFilter>('all');
+  const [filterAge, setFilterAge] = useState<string>('all');
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortAsc, setSortAsc] = useState(true);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -142,7 +171,68 @@ export default function OrganizerMembers() {
       .eq('club_owner_id', user!.id)
       .order('member_name');
 
-    if (data) setSubscriptions(data as Subscription[]);
+    if (data) {
+      const enriched = await Promise.all(
+        (data as Subscription[]).map(async (sub) => {
+          if (!sub.member_phone) return { ...sub, player_account: null };
+          const normalized = normalizePhone(sub.member_phone);
+          const { data: account } = await supabase
+            .from('player_accounts')
+            .select('birth_date, gender')
+            .or(`phone_number.eq.${normalized},phone_number.eq.${sub.member_phone}`)
+            .maybeSingle();
+          return { ...sub, player_account: account };
+        }),
+      );
+      setSubscriptions(enriched);
+    }
+
+    const { data: tournamentTx } = await supabase
+      .from('player_transactions')
+      .select('player_name, player_phone, amount, transaction_date, notes')
+      .eq('club_owner_id', user!.id)
+      .eq('reference_type', 'tournament')
+      .order('transaction_date', { ascending: false });
+
+    const memberPhones = new Set(
+      (data || [])
+        .map((s: Subscription) => (s.member_phone ? normalizePhone(s.member_phone) : null))
+        .filter(Boolean),
+    );
+
+    if (tournamentTx?.length) {
+      const map = new Map<string, TournamentPlayerLead>();
+      tournamentTx.forEach(tx => {
+        const key = tx.player_phone || tx.player_name.toLowerCase();
+        const tournamentName = tx.notes?.replace(/^Torneio:\s*/, '').split(' - ')[0] || '';
+        const existing = map.get(key);
+        if (existing) {
+          existing.total_spent += Number(tx.amount) || 0;
+          existing.tournament_count += 1;
+          if (tx.transaction_date > existing.last_tournament_date) {
+            existing.last_tournament_date = tx.transaction_date;
+          }
+          if (tournamentName && !existing.tournament_names.includes(tournamentName)) {
+            existing.tournament_names.push(tournamentName);
+          }
+        } else {
+          map.set(key, {
+            player_name: tx.player_name,
+            player_phone: tx.player_phone,
+            total_spent: Number(tx.amount) || 0,
+            tournament_count: 1,
+            last_tournament_date: tx.transaction_date,
+            tournament_names: tournamentName ? [tournamentName] : [],
+          });
+        }
+      });
+      setTournamentPlayerLeads(
+        Array.from(map.values()).filter(p => !memberPhones.has(normalizePhone(p.player_phone))),
+      );
+    } else {
+      setTournamentPlayerLeads([]);
+    }
+
     setLoading(false);
   }
 
@@ -256,15 +346,15 @@ export default function OrganizerMembers() {
     const { data } = await supabase
       .from('players')
       .select('name, phone_number')
-      .eq('phone_number', normalized)
+      .or(`phone_number.eq.${normalized},phone_number.eq.${phone}`)
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (data) {
       setMemberForm((prev) => ({
         ...prev,
         member_name: data.name || prev.member_name,
-        member_phone: normalized,
+        member_phone: data.phone_number || normalized,
       }));
     }
     setPhoneLookupDone(true);
@@ -342,22 +432,58 @@ export default function OrganizerMembers() {
   }
 
   async function viewHistory(sub: Subscription) {
-    const phone = sub.member_phone;
-    if (!phone) return;
-
-    const { data } = await supabase
-      .from('players')
-      .select('tournament_id, tournaments(name)')
-      .eq('phone_number', phone);
-
-    const tournaments = (data || []).map((p: any) => p.tournaments?.name).filter(Boolean);
-
-    setHistoryPlayer({
-      name: sub.member_name || phone,
-      phone,
-      tournaments,
-    });
+    if (!sub.member_phone) return;
+    setHistoryPlayer({ name: sub.member_name || sub.member_phone, phone: sub.member_phone });
+    setLoadingHistory(true);
+    setTournamentHistory([]);
     setShowHistoryModal(true);
+
+    const normalized = normalizePhone(sub.member_phone);
+    const { data: players } = await supabase
+      .from('players')
+      .select(`
+        id,
+        tournament_id,
+        final_position,
+        payment_status,
+        category:tournament_categories(name),
+        tournament:tournaments(id, name, start_date, end_date)
+      `)
+      .or(`phone_number.eq.${normalized},phone_number.eq.${sub.member_phone}`)
+      .order('created_at', { ascending: false });
+
+    if (players?.length) {
+      const history: TournamentHistory[] = players
+        .filter(p => p.tournament)
+        .map(p => {
+          const tournament = p.tournament as { id: string; name: string; start_date: string; end_date: string };
+          const category = p.category as { name: string } | null;
+          return {
+            tournament_id: tournament.id,
+            tournament_name: tournament.name,
+            start_date: tournament.start_date,
+            end_date: tournament.end_date,
+            category_name: category?.name || null,
+            final_position: p.final_position,
+            payment_status: p.payment_status,
+          };
+        });
+      setTournamentHistory(
+        history.filter((h, idx, arr) => arr.findIndex(item => item.tournament_id === h.tournament_id) === idx),
+      );
+    }
+    setLoadingHistory(false);
+  }
+
+  function getAge(birthDate: string | null | undefined): number | null {
+    if (!birthDate) return null;
+    const birth = new Date(birthDate);
+    if (Number.isNaN(birth.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age;
   }
 
   function exportCSV() {
@@ -407,6 +533,20 @@ export default function OrganizerMembers() {
     if (statusFilter !== 'all') {
       result = result.filter((s) => s.status === statusFilter);
     }
+    if (filterGender !== 'all') {
+      result = result.filter(s => s.player_account?.gender === filterGender);
+    }
+    if (filterAge !== 'all') {
+      result = result.filter(s => {
+        const age = getAge(s.player_account?.birth_date);
+        if (age === null) return false;
+        if (filterAge === 'under18') return age < 18;
+        if (filterAge === '18-35') return age >= 18 && age <= 35;
+        if (filterAge === '36-50') return age >= 36 && age <= 50;
+        if (filterAge === 'over50') return age > 50;
+        return true;
+      });
+    }
     result.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -429,7 +569,7 @@ export default function OrganizerMembers() {
       return sortAsc ? cmp : -cmp;
     });
     return result;
-  }, [subscriptions, statusFilter, sortField, sortAsc]);
+  }, [subscriptions, statusFilter, sortField, sortAsc, filterGender, filterAge]);
 
   function toggleSort(field: SortField) {
     if (sortField === field) {
@@ -562,6 +702,37 @@ export default function OrganizerMembers() {
               {(t as any).organizerMembers?.manageMembers || 'Gerir Membros'}
             </h2>
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setFilterGender('all')}
+                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'all' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFilterGender('male')}
+                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'male' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                >
+                  M
+                </button>
+                <button
+                  onClick={() => setFilterGender('female')}
+                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'female' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                >
+                  F
+                </button>
+              </div>
+              <select
+                value={filterAge}
+                onChange={e => setFilterAge(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
+              >
+                <option value="all">Todas idades</option>
+                <option value="under18">&lt;18</option>
+                <option value="18-35">18-35</option>
+                <option value="36-50">36-50</option>
+                <option value="over50">50+</option>
+              </select>
               <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setStatusFilter('all')}
@@ -786,6 +957,65 @@ export default function OrganizerMembers() {
                             >
                               <Plus className="w-3.5 h-3.5 inline mr-1" />
                               {(t as any).organizerMembers?.addAsMember || 'Adicionar'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tournamentPlayerLeads.length > 0 && (
+            <div className="mt-8 space-y-3">
+              <h3 className="text-md font-semibold text-gray-700 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-emerald-500" />
+                Jogadores de torneios ({tournamentPlayerLeads.length})
+              </h3>
+              <p className="text-sm text-gray-500">
+                Jogadores que pagaram inscrições mas ainda não são membros
+              </p>
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 border-b border-gray-100">
+                      <tr>
+                        <th className="text-left px-4 py-3 font-medium text-gray-600">Nome</th>
+                        <th className="text-left px-4 py-3 font-medium text-gray-600">Telefone</th>
+                        <th className="text-right px-4 py-3 font-medium text-gray-600">Torneios</th>
+                        <th className="text-right px-4 py-3 font-medium text-gray-600">Total pago</th>
+                        <th className="text-right px-4 py-3 font-medium text-gray-600"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {tournamentPlayerLeads.slice(0, 30).map((lead, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-gray-800">{lead.player_name}</td>
+                          <td className="px-4 py-3 text-gray-600">{lead.player_phone}</td>
+                          <td className="px-4 py-3 text-right text-gray-600">{lead.tournament_count}</td>
+                          <td className="px-4 py-3 text-right font-medium">{lead.total_spent.toFixed(0)}€</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => {
+                                setMemberForm({
+                                  member_phone: lead.player_phone,
+                                  member_name: lead.player_name,
+                                  member_email: '',
+                                  plan_id: plans[0]?.id || '',
+                                  amount_paid: 0,
+                                  notes: '',
+                                  status: 'active',
+                                  start_date: new Date().toISOString().split('T')[0],
+                                });
+                                setEditingSubscription(null);
+                                setShowMemberModal(true);
+                              }}
+                              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                            >
+                              <Plus className="w-3.5 h-3.5 inline mr-1" />
+                              Adicionar
                             </button>
                           </td>
                         </tr>
@@ -1060,7 +1290,7 @@ export default function OrganizerMembers() {
 
       {showHistoryModal && historyPlayer && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center p-5 border-b border-gray-100">
               <h3 className="text-lg font-semibold text-gray-800">
                 <Trophy className="w-4 h-4 inline mr-2 text-yellow-500" />
@@ -1071,19 +1301,38 @@ export default function OrganizerMembers() {
               </button>
             </div>
             <div className="p-5">
-              {historyPlayer.tournaments.length === 0 ? (
+              {loadingHistory ? (
+                <p className="text-gray-500 text-center py-4">A carregar histórico...</p>
+              ) : tournamentHistory.length === 0 ? (
                 <p className="text-gray-500 text-center py-4">
                   {(t as any).organizerMembers?.noHistory || 'Sem participações registadas'}
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {historyPlayer.tournaments.map((name, i) => (
-                    <li key={i} className="flex items-center gap-2 text-sm text-gray-700 py-2 px-3 bg-gray-50 rounded-lg">
-                      <Medal className="w-4 h-4 text-blue-500 shrink-0" />
-                      {name}
-                    </li>
+                <div className="space-y-2">
+                  {tournamentHistory.map(h => (
+                    <div key={h.tournament_id} className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                      <p className="font-medium text-gray-900">{h.tournament_name}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {new Date(h.start_date).toLocaleDateString('pt-PT')}
+                        {h.category_name && ` · ${h.category_name}`}
+                      </p>
+                      <div className="flex gap-2 mt-2 flex-wrap">
+                        {h.final_position && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                            {h.final_position}º lugar
+                          </span>
+                        )}
+                        {h.payment_status && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            h.payment_status === 'paid' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'
+                          }`}>
+                            {h.payment_status === 'paid' ? 'Pago' : 'Pendente'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   ))}
-                </ul>
+                </div>
               )}
             </div>
           </div>
