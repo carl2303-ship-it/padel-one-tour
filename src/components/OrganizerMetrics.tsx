@@ -5,6 +5,7 @@ import {
   type MembershipMetric,
   type PlayerSpending,
   type TournamentMetric,
+  type DateRange,
   getDateRange,
   loadOrganizerMembershipMetrics,
   loadOrganizerPlayerSpending,
@@ -27,10 +28,13 @@ interface OrganizerMetricsProps {
 
 export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsProps) {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>('year');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
+  const [customDraftStart, setCustomDraftStart] = useState('');
+  const [customDraftEnd, setCustomDraftEnd] = useState('');
+  const [appliedCustomStart, setAppliedCustomStart] = useState('');
+  const [appliedCustomEnd, setAppliedCustomEnd] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [expandedTournaments, setExpandedTournaments] = useState(true);
   const [expandedMemberships, setExpandedMemberships] = useState(true);
@@ -45,33 +49,53 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   });
   const [playerSpending, setPlayerSpending] = useState<PlayerSpending[]>([]);
 
-  const range = useMemo(
-    () => getDateRange(dateFilter, customStart, customEnd),
-    [dateFilter, customStart, customEnd],
-  );
+  const range = useMemo((): DateRange | null => {
+    if (dateFilter === 'custom') {
+      if (!appliedCustomStart || !appliedCustomEnd) return null;
+      return getDateRange('custom', appliedCustomStart, appliedCustomEnd);
+    }
+    return getDateRange(dateFilter);
+  }, [dateFilter, appliedCustomStart, appliedCustomEnd]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (activeRange: DateRange) => {
     if (!user?.id) return;
-    setLoading(true);
+    setRefreshing(true);
     try {
       const [tournaments, memberships, spending] = await Promise.all([
-        loadOrganizerTournamentMetrics(user.id, range),
-        loadOrganizerMembershipMetrics(user.id),
-        loadOrganizerPlayerSpending(user.id, range),
+        loadOrganizerTournamentMetrics(user.id, activeRange),
+        loadOrganizerMembershipMetrics(user.id, activeRange),
+        loadOrganizerPlayerSpending(user.id, activeRange),
       ]);
       setTournamentMetrics(tournaments);
       setMembershipMetrics(memberships);
       setPlayerSpending(spending);
+      setHasLoaded(true);
     } catch (err) {
       console.error('[OrganizerMetrics] load:', err);
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  }, [user?.id, range]);
+  }, [user?.id]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    if (!range) return;
+    void loadData(range);
+  }, [range, loadData]);
+
+  const applyCustomRange = () => {
+    if (!customDraftStart || !customDraftEnd) return;
+    if (customDraftStart > customDraftEnd) return;
+    setAppliedCustomStart(customDraftStart);
+    setAppliedCustomEnd(customDraftEnd);
+  };
+
+  const handleDateFilterChange = (value: DateFilter) => {
+    setDateFilter(value);
+    if (value !== 'custom') {
+      setAppliedCustomStart('');
+      setAppliedCustomEnd('');
+    }
+  };
 
   const summary = useMemo(() => {
     const tournamentsRevenue = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
@@ -96,13 +120,15 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   const formatDate = (d: string) =>
     new Date(d).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  if (loading) {
+  if (!hasLoaded && refreshing) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
       </div>
     );
   }
+
+  const customRangeInvalid = customDraftStart && customDraftEnd && customDraftStart > customDraftEnd;
 
   return (
     <div className="space-y-6">
@@ -111,13 +137,16 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <BarChart3 className="w-7 h-7 text-blue-600" />
             Métricas
+            {refreshing && (
+              <span className="inline-block w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            )}
           </h1>
           <p className="text-sm text-gray-500 mt-1">Torneios, memberships e receita do organizador</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={dateFilter}
-            onChange={e => setDateFilter(e.target.value as DateFilter)}
+            onChange={e => handleDateFilterChange(e.target.value as DateFilter)}
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
           >
             <option value="today">Hoje</option>
@@ -128,18 +157,49 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
             <option value="custom">Personalizado</option>
           </select>
           {dateFilter === 'custom' && (
-            <>
-              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} className="px-2 py-2 border rounded-lg text-sm" />
-              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} className="px-2 py-2 border rounded-lg text-sm" />
-            </>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="date"
+                value={customDraftStart}
+                onChange={e => setCustomDraftStart(e.target.value)}
+                className="px-2 py-2 border rounded-lg text-sm"
+              />
+              <span className="text-gray-400 text-sm">até</span>
+              <input
+                type="date"
+                value={customDraftEnd}
+                onChange={e => setCustomDraftEnd(e.target.value)}
+                className="px-2 py-2 border rounded-lg text-sm"
+              />
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                disabled={!customDraftStart || !customDraftEnd || !!customRangeInvalid}
+                className="px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Aplicar
+              </button>
+            </div>
           )}
         </div>
       </div>
 
+      {dateFilter === 'custom' && !range && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+          Seleccione a data inicial e final e clique em Aplicar para ver as métricas do período.
+        </p>
+      )}
+
+      {customRangeInvalid && (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+          A data inicial não pode ser posterior à data final.
+        </p>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <SummaryCard label="Receita total" value={`${summary.totalRevenue.toFixed(0)}€`} icon={<CreditCard className="w-5 h-5 text-emerald-600" />} bg="bg-emerald-50" />
         <SummaryCard label="Torneios" value={String(summary.tournamentCount)} icon={<Trophy className="w-5 h-5 text-blue-600" />} bg="bg-blue-50" />
-        <SummaryCard label="Inscrições" value={String(summary.registrations)} icon={<Users className="w-5 h-5 text-indigo-600" />} bg="bg-indigo-50" />
+        <SummaryCard label="Jogadores inscritos" value={String(summary.registrations)} icon={<Users className="w-5 h-5 text-indigo-600" />} bg="bg-indigo-50" />
         <SummaryCard label="Membros activos" value={String(membershipMetrics.activeMembers)} icon={<Users className="w-5 h-5 text-purple-600" />} bg="bg-purple-50" />
       </div>
 
@@ -181,7 +241,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
                     <tr className="text-left text-gray-500 border-b">
                       <th className="py-2 pr-3">Torneio</th>
                       <th className="py-2 pr-3">Data</th>
-                      <th className="py-2 pr-3 text-right">Inscritos</th>
+                      <th className="py-2 pr-3 text-right">Jogadores</th>
                       <th className="py-2 pr-3 text-right">Novos</th>
                       <th className="py-2 pr-3 text-right">Membros</th>
                       <th className="py-2 pr-3 text-right">Pagos</th>
@@ -224,9 +284,9 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
             onToggle={() => setExpandedMemberships(v => !v)}
           >
             <div className="grid grid-cols-3 gap-3 mb-4">
-              <MiniStat label="Total membros" value={membershipMetrics.totalMembers} />
-              <MiniStat label="Activos" value={membershipMetrics.activeMembers} />
-              <MiniStat label="Receita total" value={`${membershipMetrics.totalRevenue.toFixed(0)}€`} />
+              <MiniStat label="Novos no período" value={membershipMetrics.totalMembers} />
+              <MiniStat label="Activos (período)" value={membershipMetrics.activeMembers} />
+              <MiniStat label="Receita (período)" value={`${membershipMetrics.totalRevenue.toFixed(0)}€`} />
             </div>
             {membershipMetrics.plans.length === 0 ? (
               <p className="text-sm text-gray-500">Sem planos de membership.</p>
@@ -236,7 +296,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
                   <div key={plan.name} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div>
                       <p className="font-medium text-gray-900">{plan.name}</p>
-                      <p className="text-xs text-gray-500">{plan.count} membros</p>
+                      <p className="text-xs text-gray-500">{plan.count} {plan.count === 1 ? 'membership' : 'memberships'}</p>
                     </div>
                     <p className="font-semibold text-gray-900">{plan.revenue.toFixed(0)}€</p>
                   </div>

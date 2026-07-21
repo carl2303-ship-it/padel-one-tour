@@ -5,7 +5,6 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from './playerTournamentPrice';
-import { isIndividualTournament } from './tournamentRegistrationCounts';
 
 export type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 
@@ -79,11 +78,108 @@ export function getDateRange(filter: DateFilter, customStart?: string, customEnd
   };
 }
 
+function subscriptionDate(sub: { created_at?: string | null; start_date?: string | null }): string {
+  return (sub.created_at || sub.start_date || '').slice(0, 10);
+}
+
+export function filterSubscriptionsByRange<T extends { created_at?: string | null; start_date?: string | null }>(
+  subs: T[],
+  range: DateRange,
+): T[] {
+  if (range.startDate === '2000-01-01') return subs;
+  return subs.filter(s => {
+    const d = subscriptionDate(s);
+    if (!d) return false;
+    return d >= range.startDate && d <= range.endDate;
+  });
+}
+
 function normalizeName(name: string): string {
   return normalizeNameKey(name);
 }
 
 const PAGE_SIZE = 1000;
+
+export interface PlayerRegistrationRow {
+  id: string;
+  phone_number: string | null;
+  created_at: string;
+  tournament_id: string;
+}
+
+/** All player registrations for dashboard/charts (paginated; includes super_team_players). */
+export async function fetchOrganizerPlayerRegistrations(
+  tournaments: Array<{ id: string; format: string }>,
+): Promise<PlayerRegistrationRow[]> {
+  const all: PlayerRegistrationRow[] = [];
+  const regularIds = tournaments.filter(t => t.format !== 'super_teams').map(t => t.id);
+
+  for (let i = 0; i < regularIds.length; i += 50) {
+    const batchIds = regularIds.slice(i, i + 50);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('players')
+        .select('id, phone_number, created_at, tournament_id')
+        .in('tournament_id', batchIds)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        console.error('[organizerMetrics] player registrations fetch:', error);
+        break;
+      }
+      if (!data?.length) break;
+      all.push(...(data as PlayerRegistrationRow[]));
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+
+  const superTeamTournamentIds = tournaments.filter(t => t.format === 'super_teams').map(t => t.id);
+  if (superTeamTournamentIds.length > 0) {
+    const { data: superTeams, error: stError } = await supabase
+      .from('super_teams')
+      .select('id, tournament_id')
+      .in('tournament_id', superTeamTournamentIds);
+    if (stError) {
+      console.error('[organizerMetrics] super_teams fetch:', stError);
+      return all;
+    }
+
+    const teamToTournament = new Map((superTeams || []).map(st => [st.id, st.tournament_id]));
+    const superTeamIds = [...teamToTournament.keys()];
+
+    for (let i = 0; i < superTeamIds.length; i += 50) {
+      const batch = superTeamIds.slice(i, i + 50);
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('super_team_players')
+          .select('id, phone_number, created_at, super_team_id')
+          .in('super_team_id', batch)
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) {
+          console.error('[organizerMetrics] super_team_players fetch:', error);
+          break;
+        }
+        if (!data?.length) break;
+        for (const row of data) {
+          const tournamentId = teamToTournament.get(row.super_team_id);
+          if (!tournamentId) continue;
+          all.push({
+            id: row.id,
+            phone_number: row.phone_number,
+            created_at: row.created_at,
+            tournament_id: tournamentId,
+          });
+        }
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+    }
+  }
+
+  return all;
+}
 
 async function fetchPlayersForTournaments(tournamentIds: string[]) {
   if (!tournamentIds.length) return [];
@@ -126,38 +222,28 @@ async function fetchRegistrationCounts(
   await Promise.all(
     tournaments.map(async (t) => {
       if (t.format === 'super_teams') {
-        const { count } = await supabase
+        const { data: superTeams } = await supabase
           .from('super_teams')
-          .select('id', { count: 'exact', head: true })
+          .select('id')
           .eq('tournament_id', t.id);
-        counts.set(t.id, count ?? 0);
-        return;
-      }
-
-      if (isIndividualTournament(t as any)) {
+        if (!superTeams?.length) {
+          counts.set(t.id, 0);
+          return;
+        }
         const { count } = await supabase
-          .from('players')
+          .from('super_team_players')
           .select('id', { count: 'exact', head: true })
-          .eq('tournament_id', t.id);
+          .in('super_team_id', superTeams.map(st => st.id));
         counts.set(t.id, count ?? 0);
         return;
       }
 
-      const { count: teamCount } = await supabase
-        .from('teams')
-        .select('id', { count: 'exact', head: true })
-        .eq('tournament_id', t.id);
-
-      if ((teamCount ?? 0) > 0) {
-        counts.set(t.id, teamCount ?? 0);
-        return;
-      }
-
-      const { count: playerCount } = await supabase
+      // Equipas e individual: contar jogadores (2 por equipa), não equipas
+      const { count } = await supabase
         .from('players')
         .select('id', { count: 'exact', head: true })
         .eq('tournament_id', t.id);
-      counts.set(t.id, playerCount ?? 0);
+      counts.set(t.id, count ?? 0);
     }),
   );
   return counts;
@@ -299,13 +385,18 @@ export async function loadOrganizerTournamentMetrics(
   return tournaments.map(t => metricsMap.get(t.id)!);
 }
 
-export async function loadOrganizerMembershipMetrics(organizerId: string): Promise<MembershipMetric> {
-  const { data: subs } = await supabase
+export async function loadOrganizerMembershipMetrics(
+  organizerId: string,
+  range: DateRange,
+): Promise<MembershipMetric> {
+  const { data: allSubs } = await supabase
     .from('member_subscriptions')
-    .select('id, amount_paid, status, plan:membership_plans(name)')
+    .select('id, amount_paid, status, created_at, start_date, plan:membership_plans(name)')
     .eq('club_owner_id', organizerId);
 
-  if (!subs?.length) {
+  const subs = filterSubscriptionsByRange(allSubs || [], range);
+
+  if (!subs.length) {
     return { totalMembers: 0, activeMembers: 0, totalRevenue: 0, plans: [] };
   }
 
@@ -336,10 +427,12 @@ export async function loadOrganizerPlayerSpending(
   organizerId: string,
   range: DateRange,
 ): Promise<PlayerSpending[]> {
-  const { data: memberSubs } = await supabase
+  const { data: memberSubsRaw } = await supabase
     .from('member_subscriptions')
-    .select('member_name, member_phone, amount_paid')
+    .select('member_name, member_phone, amount_paid, created_at, start_date')
     .eq('club_owner_id', organizerId);
+
+  const memberSubs = filterSubscriptionsByRange(memberSubsRaw || [], range);
 
   const memberPhoneSet = new Set(
     (memberSubs || []).map(m => normalizePhoneKey(m.member_phone)).filter(Boolean),

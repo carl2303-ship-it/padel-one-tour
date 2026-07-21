@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { fetchOrganizerPlayerRegistrations, type PlayerRegistrationRow } from '../lib/organizerMetrics';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { Trophy, Users, UserPlus, CreditCard, Calendar, AlertTriangle, TrendingUp, ArrowRight, BarChart3 } from 'lucide-react';
@@ -15,13 +16,7 @@ interface TournamentRow {
   end_date: string;
   status: string;
   registration_fee: number | null;
-}
-
-interface PlayerRow {
-  id: string;
-  phone_number: string;
-  created_at: string;
-  tournament_id: string;
+  format: string;
 }
 
 interface MemberSubscription {
@@ -56,7 +51,7 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
 
   const [loading, setLoading] = useState(true);
   const [tournaments, setTournaments] = useState<TournamentRow[]>([]);
-  const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [players, setPlayers] = useState<PlayerRegistrationRow[]>([]);
   const [members, setMembers] = useState<MemberSubscription[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>('all');
 
@@ -69,26 +64,15 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
     try {
       const { data: tournamentsData } = await supabase
         .from('tournaments')
-        .select('id, name, start_date, end_date, status, registration_fee')
+        .select('id, name, start_date, end_date, status, registration_fee, format')
         .eq('user_id', user!.id);
 
       const fetchedTournaments = (tournamentsData || []) as TournamentRow[];
       setTournaments(fetchedTournaments);
 
-      const tournamentIds = fetchedTournaments.map(tr => tr.id);
-
-      if (tournamentIds.length > 0) {
-        const batchSize = 50;
-        let allPlayers: PlayerRow[] = [];
-        for (let i = 0; i < tournamentIds.length; i += batchSize) {
-          const batch = tournamentIds.slice(i, i + batchSize);
-          const { data: playersData } = await supabase
-            .from('players')
-            .select('id, phone_number, created_at, tournament_id')
-            .in('tournament_id', batch);
-          if (playersData) allPlayers = allPlayers.concat(playersData as PlayerRow[]);
-        }
-        setPlayers(allPlayers);
+      if (fetchedTournaments.length > 0) {
+        const registrations = await fetchOrganizerPlayerRegistrations(fetchedTournaments);
+        setPlayers(registrations);
       } else {
         setPlayers([]);
       }
@@ -155,22 +139,30 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
     };
   }, [filteredTournaments, filteredPlayers, members, rangeStart, players]);
 
+  // Alinha com Métricas: jogadores atribuídos ao mês do start_date do torneio (não created_at)
   const chartData = useMemo(() => {
     const numMonths = dateRange === 'week' ? 4 : dateRange === 'month' ? 4 : dateRange === '3months' ? 3 : dateRange === 'year' ? 12 : 6;
     const now = new Date();
     const months: { month: string; count: number }[] = [];
+    const tournamentStartById = new Map(
+      tournaments.map(tr => [tr.id, tr.start_date.slice(0, 10)]),
+    );
 
     for (let i = numMonths - 1; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthLabel = date.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+      const year = date.getFullYear();
+      const month = date.getMonth(); // 0-based
       const count = players.filter(p => {
-        const created = new Date(p.created_at);
-        return created.getFullYear() === date.getFullYear() && created.getMonth() === date.getMonth();
+        const start = tournamentStartById.get(p.tournament_id);
+        if (!start) return false;
+        const [y, m] = start.split('-').map(Number);
+        return y === year && m - 1 === month;
       }).length;
       months.push({ month: monthLabel, count });
     }
     return months;
-  }, [players, dateRange]);
+  }, [players, tournaments, dateRange]);
 
   const now = new Date();
   const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
