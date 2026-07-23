@@ -98,62 +98,67 @@ function App() {
 
   useEffect(() => {
     const checkForDeepLink = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const tournamentId = urlParams.get('register');
-      const paymentStatus = urlParams.get('payment');
-      const pathname = window.location.pathname;
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const tournamentId = urlParams.get('register');
+        const paymentStatus = urlParams.get('payment');
+        const pathname = window.location.pathname;
 
-      if (paymentStatus === 'success') {
-        setPaymentSuccess(true);
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, '', cleanUrl);
-        setTimeout(() => {
-          setPaymentSuccess(false);
-        }, 8000);
-      }
-
-      const liveMatch = pathname.match(/^\/tournament\/([^/]+)\/live$/);
-      if (liveMatch) {
-        const tournamentIdFromPath = liveMatch[1];
-        const { data: tournament } = await supabase
-          .from('tournaments')
-          .select('*')
-          .eq('id', tournamentIdFromPath)
-          .maybeSingle();
-
-        if (tournament) {
-          setSelectedTournament(tournament);
-          setView('live');
+        if (paymentStatus === 'success') {
+          setPaymentSuccess(true);
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, '', cleanUrl);
+          setTimeout(() => {
+            setPaymentSuccess(false);
+          }, 8000);
         }
-        setIsLoadingDeepLink(false);
-        return;
-      }
 
-      if (tournamentId) {
-        const { data: tournament } = await supabase
-          .from('tournaments')
-          .select('*')
-          .eq('id', tournamentId)
-          .maybeSingle();
+        const liveMatch = pathname.match(/^\/tournament\/([^/]+)\/live$/);
+        if (liveMatch) {
+          const tournamentIdFromPath = liveMatch[1];
+          const { data: tournament } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentIdFromPath)
+            .maybeSingle();
 
-        if (tournament) {
-          setSelectedTournament(tournament);
-          setView('registration');
-          setRegistrationLinkError(null);
-        } else {
-          const { data: rpcTournament } = await supabase.rpc('get_public_tournament', {
-            p_tournament_id: tournamentId,
-          });
-          if (rpcTournament && typeof rpcTournament === 'object' && (rpcTournament as { id?: string }).id) {
-            setSelectedTournament(rpcTournament as Tournament);
+          if (tournament) {
+            setSelectedTournament(tournament);
+            setView('live');
+          }
+          return;
+        }
+
+        if (tournamentId) {
+          const { data: tournament } = await supabase
+            .from('tournaments')
+            .select('*')
+            .eq('id', tournamentId)
+            .maybeSingle();
+
+          if (tournament) {
+            setSelectedTournament(tournament);
             setView('registration');
             setRegistrationLinkError(null);
           } else {
-            setRegistrationLinkError('Torneio não encontrado ou inscrições não estão abertas.');
+            const { data: rpcTournament } = await supabase.rpc('get_public_tournament', {
+              p_tournament_id: tournamentId,
+            });
+            if (rpcTournament && typeof rpcTournament === 'object' && (rpcTournament as { id?: string }).id) {
+              setSelectedTournament(rpcTournament as Tournament);
+              setView('registration');
+              setRegistrationLinkError(null);
+            } else {
+              setRegistrationLinkError('Torneio não encontrado ou inscrições não estão abertas.');
+            }
           }
         }
+      } catch (err) {
+        console.error('[DeepLink] error:', err);
+        setRegistrationLinkError('Não foi possível abrir o link. Tente novamente.');
+      } finally {
+        setIsLoadingDeepLink(false);
       }
-      setIsLoadingDeepLink(false);
     };
 
     checkForDeepLink();
@@ -183,6 +188,15 @@ function App() {
       return;
     }
 
+    const hasPublicDeepLink =
+      view === 'registration' ||
+      view === 'live' ||
+      !!new URLSearchParams(window.location.search).get('register');
+
+    const goOrganizerHome = () => {
+      if (!hasPublicDeepLink) setView('dashboard');
+    };
+
     // Check if user owns a club (needed for multiple paths below)
     const { data: ownedClub } = await supabase
       .from('clubs')
@@ -203,11 +217,11 @@ function App() {
         const liteClubMode = mods.hasTournaments && !mods.hasManager;
         setShowOrganizerHub(liteClubMode);
         setIsIndependentOrganizer(false);
-        if (liteClubMode) setView('dashboard');
+        if (liteClubMode) goOrganizerHome();
       } else {
         setShowOrganizerHub(true);
         setIsIndependentOrganizer(true);
-        setView('dashboard');
+        goOrganizerHome();
       }
       await loadUserRole();
       return;
@@ -237,6 +251,7 @@ function App() {
           setNeedsModule(true);
           setModuleMessage('O módulo de Torneios não está ativo para o seu clube. Contacte o suporte Padel One.');
           setNeedsLicense(false);
+          setUserRole('organizer');
           return;
         }
         const liteClubMode = mods.hasTournaments && !mods.hasManager;
@@ -245,7 +260,7 @@ function App() {
         setShowOrganizerHub(liteClubMode);
         setIsIndependentOrganizer(false);
         setUserRole('organizer');
-        if (liteClubMode) setView('dashboard');
+        if (liteClubMode) goOrganizerHome();
         return;
       }
       setLicenseMessage(
@@ -254,6 +269,7 @@ function App() {
           : 'O seu clube ainda não foi ativado. Introduza a chave de licença que recebeu.'
       );
       setNeedsLicense(true);
+      setUserRole('organizer');
       return;
     }
 
@@ -268,6 +284,7 @@ function App() {
       if (orgRecord?.subscription_expires_at && new Date(orgRecord.subscription_expires_at) < new Date()) {
         setLicenseMessage('A sua licença de organizador expirou. Introduza uma nova chave para renovar.');
         setNeedsLicense(true);
+        setUserRole('organizer');
         return;
       }
 
@@ -276,6 +293,7 @@ function App() {
         setNeedsModule(true);
         setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
         setNeedsLicense(false);
+        setUserRole('organizer');
         return;
       }
 
@@ -284,20 +302,14 @@ function App() {
       setShowOrganizerHub(true);
       setIsIndependentOrganizer(true);
       setUserRole('organizer');
-      setView('dashboard');
+      goOrganizerHome();
       return;
     }
 
     // No settings or not paid — needs license
-    if (!settings) {
-      setLicenseMessage('Introduza a chave de licença que recebeu para ativar o seu acesso.');
-      setNeedsLicense(true);
-      return;
-    }
-
-    // Has settings but not paid organizer
     setLicenseMessage('Introduza a chave de licença que recebeu para ativar o seu acesso.');
     setNeedsLicense(true);
+    setUserRole(settings?.role || 'organizer');
   };
 
   const loadUserRole = async () => {
@@ -366,7 +378,12 @@ function App() {
     setLicenseError('');
   };
 
-  if (authLoading || isLoadingDeepLink || (user && userRole === null)) {
+  const isPublicRegistrationOrLive =
+    view === 'registration' ||
+    view === 'live' ||
+    !!new URLSearchParams(window.location.search).get('register');
+
+  if (authLoading || isLoadingDeepLink || (user && userRole === null && !isPublicRegistrationOrLive)) {
     return (
       <div className="min-h-screen bg-[#f7f7f7] flex items-center justify-center">
         <div className="text-center">
@@ -676,7 +693,20 @@ function App() {
           {view === 'leagues' && <LeagueManagement onBack={() => setView(showOrganizerHub ? 'dashboard' : 'list')} />}
 
           {view === 'dashboard' && showOrganizerHub && (
-            <OrganizerDashboard onNavigate={(v) => setView(v as View)} />
+            <OrganizerDashboard
+              onNavigate={(v) => setView(v as View)}
+              onOpenTournament={async (tournamentId) => {
+                const { data } = await supabase
+                  .from('tournaments')
+                  .select('*')
+                  .eq('id', tournamentId)
+                  .maybeSingle();
+                if (data) {
+                  setSelectedTournament(data);
+                  setView('detail');
+                }
+              }}
+            />
           )}
 
           {view === 'members' && showOrganizerHub && <OrganizerMembers />}

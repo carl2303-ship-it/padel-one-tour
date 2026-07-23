@@ -1,12 +1,20 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { fetchOrganizerPlayerRegistrations, type PlayerRegistrationRow } from '../lib/organizerMetrics';
+import {
+  fetchOrganizerPlayerRegistrations,
+  filterSubscriptionsByRange,
+  getDateRange,
+  loadOrganizerPeriodRevenue,
+  type PlayerRegistrationRow,
+} from '../lib/organizerMetrics';
+import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { Trophy, Users, UserPlus, CreditCard, Calendar, AlertTriangle, TrendingUp, ArrowRight, BarChart3 } from 'lucide-react';
 
 interface OrganizerDashboardProps {
   onNavigate: (view: string) => void;
+  onOpenTournament?: (tournamentId: string) => void;
 }
 
 interface TournamentRow {
@@ -17,6 +25,7 @@ interface TournamentRow {
   status: string;
   registration_fee: number | null;
   format: string;
+  round_robin_type?: string | null;
 }
 
 interface MemberSubscription {
@@ -33,6 +42,10 @@ interface MemberSubscription {
 
 type DateRange = 'week' | 'month' | '3months' | '6months' | 'year' | 'all';
 
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function getDateRangeStart(range: DateRange): Date | null {
   const now = new Date();
   switch (range) {
@@ -45,7 +58,17 @@ function getDateRangeStart(range: DateRange): Date | null {
   }
 }
 
-export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardProps) {
+function dashboardRangeToMetrics(range: DateRange) {
+  if (range === 'week') return getDateRange('week');
+  if (range === 'month') return getDateRange('month');
+  if (range === 'year') return getDateRange('year');
+  if (range === 'all') return getDateRange('all');
+  const start = getDateRangeStart(range)!;
+  const end = new Date();
+  return { startDate: toYmd(start), endDate: toYmd(end) };
+}
+
+export default function OrganizerDashboard({ onNavigate, onOpenTournament }: OrganizerDashboardProps) {
   const { t } = useI18n();
   const { user } = useAuth();
 
@@ -54,9 +77,26 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
   const [players, setPlayers] = useState<PlayerRegistrationRow[]>([]);
   const [members, setMembers] = useState<MemberSubscription[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>('all');
+  const [revenue, setRevenue] = useState(0);
+  const [registrationCounts, setRegistrationCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (user) fetchDashboardData();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      // Card "Receita Mensal": sempre o mês civil actual (datas locais)
+      try {
+        const period = await loadOrganizerPeriodRevenue(user.id, getDateRange('month'));
+        if (!cancelled) setRevenue(period.total);
+      } catch (err) {
+        console.error('Error loading dashboard revenue:', err);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user]);
 
   async function fetchDashboardData() {
@@ -64,17 +104,22 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
     try {
       const { data: tournamentsData } = await supabase
         .from('tournaments')
-        .select('id, name, start_date, end_date, status, registration_fee, format')
+        .select('id, name, start_date, end_date, status, registration_fee, format, round_robin_type')
         .eq('user_id', user!.id);
 
       const fetchedTournaments = (tournamentsData || []) as TournamentRow[];
       setTournaments(fetchedTournaments);
 
       if (fetchedTournaments.length > 0) {
-        const registrations = await fetchOrganizerPlayerRegistrations(fetchedTournaments);
+        const [registrations, counts] = await Promise.all([
+          fetchOrganizerPlayerRegistrations(fetchedTournaments),
+          fetchTournamentRegistrationCounts(fetchedTournaments),
+        ]);
         setPlayers(registrations);
+        setRegistrationCounts(counts);
       } else {
         setPlayers([]);
+        setRegistrationCounts({});
       }
 
       const { data: membersData } = await supabase
@@ -91,11 +136,15 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
   }
 
   const rangeStart = getDateRangeStart(dateRange);
+  const metricsRange = useMemo(() => dashboardRangeToMetrics(dateRange), [dateRange]);
 
   const filteredTournaments = useMemo(() => {
     if (!rangeStart) return tournaments;
-    return tournaments.filter(tr => new Date(tr.start_date) >= rangeStart);
-  }, [tournaments, rangeStart]);
+    return tournaments.filter(tr => {
+      const start = tr.start_date.slice(0, 10);
+      return start >= metricsRange.startDate && start <= metricsRange.endDate;
+    });
+  }, [tournaments, rangeStart, metricsRange]);
 
   const filteredPlayers = useMemo(() => {
     if (!rangeStart) return players;
@@ -121,14 +170,8 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
     const effectiveStart = rangeStart || currentMonthStart;
     const newPlayers = Array.from(phoneFirstDates.values()).filter(d => d >= effectiveStart).length;
 
-    const activeMembers = members.filter(m => m.status === 'active').length;
-
-    const revenue = members
-      .filter(m => {
-        if (!rangeStart) return true;
-        return new Date(m.created_at) >= rangeStart;
-      })
-      .reduce((sum, m) => sum + (m.amount_paid || 0), 0);
+    const activeMembers = filterSubscriptionsByRange(members, metricsRange)
+      .filter(m => m.status === 'active').length;
 
     return {
       totalTournaments: filteredTournaments.length,
@@ -137,7 +180,7 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
       activeMembers,
       revenue,
     };
-  }, [filteredTournaments, filteredPlayers, members, rangeStart, players]);
+  }, [filteredTournaments, filteredPlayers, members, rangeStart, players, metricsRange, revenue]);
 
   // Alinha com Métricas: jogadores atribuídos ao mês do start_date do torneio (não created_at)
   const chartData = useMemo(() => {
@@ -179,9 +222,16 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
     return m.status === 'active' && end < now;
   });
 
+  const todayYmd = toYmd(new Date());
   const upcomingTournaments = tournaments
-    .filter(tr => new Date(tr.start_date) > now)
-    .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime())
+    .filter(tr => {
+      if (tr.status === 'cancelled' || tr.status === 'completed') return false;
+      const start = tr.start_date.slice(0, 10);
+      const end = (tr.end_date || tr.start_date).slice(0, 10);
+      // Hoje, futuros, ou a decorrer
+      return start >= todayYmd || (start <= todayYmd && end >= todayYmd);
+    })
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))
     .slice(0, 5);
 
   const maxCount = Math.max(...chartData.map(d => d.count), 1);
@@ -263,7 +313,7 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
         />
         <StatCard
           icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
-          label={td.monthlyRevenue || 'Revenue'}
+          label={td.monthlyRevenue || 'Receita Mensal'}
           value={`${stats.revenue.toFixed(0)}€`}
           bgColor="bg-emerald-50"
           onClick={() => onNavigate('metrics')}
@@ -324,26 +374,41 @@ export default function OrganizerDashboard({ onNavigate }: OrganizerDashboardPro
             <p className="text-sm text-gray-500 py-8 text-center">{td.noUpcoming || 'No upcoming tournaments'}</p>
           ) : (
             <div className="space-y-3">
-              {upcomingTournaments.map(tournament => (
-                <div
-                  key={tournament.id}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{tournament.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {new Date(tournament.start_date).toLocaleDateString('pt-PT')}
-                    </p>
-                  </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    tournament.status === 'active' ? 'bg-emerald-100 text-emerald-700'
-                    : tournament.status === 'completed' ? 'bg-gray-100 text-gray-700'
-                    : 'bg-blue-100 text-blue-700'
-                  }`}>
-                    {tournament.status}
-                  </span>
-                </div>
-              ))}
+              {upcomingTournaments.map(tournament => {
+                const enrolled = registrationCounts[tournament.id] || 0;
+                return (
+                  <button
+                    key={tournament.id}
+                    type="button"
+                    onClick={() => onOpenTournament?.(tournament.id)}
+                    className="w-full flex items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors text-left"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-blue-700 hover:underline truncate">
+                        {tournament.name}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {tournament.start_date.slice(0, 10).split('-').reverse().join('/')}
+                        {' · '}
+                        {enrolled} {enrolled === 1 ? (td.entrySingular || 'inscrito') : (td.entriesEnrolled || 'inscritos')}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-full">
+                        <Users className="w-3 h-3" />
+                        {enrolled}
+                      </span>
+                      <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                        tournament.status === 'active' ? 'bg-emerald-100 text-emerald-700'
+                        : tournament.status === 'completed' ? 'bg-gray-100 text-gray-700'
+                        : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {tournament.status}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

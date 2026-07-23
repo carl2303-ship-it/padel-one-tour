@@ -37,6 +37,7 @@ async function init() {
 
     const path = window.location.pathname;
     const isLivePage = path.match(/^\/tournament\/[^/]+\/live$/);
+    const registerId = new URLSearchParams(window.location.search).get('register');
 
     const { I18nProvider } = await import('./lib/i18nContext');
 
@@ -46,6 +47,22 @@ async function init() {
         <StrictMode>
           <I18nProvider>
             <LiveTournamentView />
+          </I18nProvider>
+        </StrictMode>
+      );
+      return;
+    }
+
+    // Public registration bypasses organizer App gates (license/module/role spinner)
+    if (registerId) {
+      const { AuthProvider } = await import('./lib/authContext');
+      const { default: PublicRegistrationPage } = await import('./components/PublicRegistrationPage');
+      rootInstance.render(
+        <StrictMode>
+          <I18nProvider>
+            <AuthProvider>
+              <PublicRegistrationPage />
+            </AuthProvider>
           </I18nProvider>
         </StrictMode>
       );

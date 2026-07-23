@@ -137,6 +137,7 @@ export const translations = {
       newPlayersMonth: 'New Players (month)',
       activeMembers: 'Active Members',
       monthlyRevenue: 'Monthly Revenue',
+      revenue: 'Revenue',
       upcomingTournaments: 'Upcoming Tournaments',
       playerEvolution: 'Player Evolution (6 months)',
       memberAlerts: 'Membership Alerts',
@@ -151,6 +152,8 @@ export const translations = {
       thisYear: 'This year',
       allTime: 'All time',
       noData: 'No data',
+      playersEnrolled: 'registered',
+      playerSingular: 'registered',
     },
     organizerMembers: {
       title: 'Member Management',
@@ -941,6 +944,7 @@ export const translations = {
       newPlayersMonth: 'Novos Jogadores (mês)',
       activeMembers: 'Membros Ativos',
       monthlyRevenue: 'Receita Mensal',
+      revenue: 'Receita',
       upcomingTournaments: 'Próximos Torneios',
       playerEvolution: 'Evolução de Jogadores (6 meses)',
       memberAlerts: 'Alertas de Membros',
@@ -955,6 +959,8 @@ export const translations = {
       thisYear: 'Este ano',
       allTime: 'Todo o período',
       noData: 'Sem dados',
+      playersEnrolled: 'inscritos',
+      playerSingular: 'inscrito',
     },
     organizerMembers: {
       title: 'Gestão de Membros',

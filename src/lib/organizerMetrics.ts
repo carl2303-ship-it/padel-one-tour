@@ -43,8 +43,10 @@ export interface PlayerSpending {
 
 export function getDateRange(filter: DateFilter, customStart?: string, customEnd?: string): DateRange {
   const now = new Date();
+  const toYmd = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
   const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
   let start = new Date(now);
 
   switch (filter) {
@@ -69,12 +71,12 @@ export function getDateRange(filter: DateFilter, customStart?: string, customEnd
       break;
     case 'all':
     default:
-      return { startDate: '2000-01-01', endDate: end.toISOString().split('T')[0] };
+      return { startDate: '2000-01-01', endDate: toYmd(end) };
   }
 
   return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
+    startDate: toYmd(start),
+    endDate: toYmd(end),
   };
 }
 
@@ -420,6 +422,44 @@ export async function loadOrganizerMembershipMetrics(
     plans: Array.from(planMap.entries())
       .map(([name, data]) => ({ name, ...data }))
       .sort((a, b) => b.revenue - a.revenue),
+  };
+}
+
+/** Receita real do período: transações de torneio + memberships criados no intervalo. */
+export async function loadOrganizerPeriodRevenue(
+  organizerId: string,
+  range: DateRange,
+): Promise<{ tournamentRevenue: number; membershipRevenue: number; total: number }> {
+  let txQuery = supabase
+    .from('player_transactions')
+    .select('amount, transaction_type, reference_type, transaction_date')
+    .eq('club_owner_id', organizerId);
+
+  if (range.startDate !== '2000-01-01') {
+    txQuery = txQuery.gte('transaction_date', range.startDate).lte('transaction_date', range.endDate);
+  }
+
+  const [txResult, membershipMetrics] = await Promise.all([
+    txQuery,
+    loadOrganizerMembershipMetrics(organizerId, range),
+  ]);
+
+  const tournamentRevenue = (txResult.data || [])
+    .filter(tx => tx.transaction_type === 'tournament' || tx.reference_type === 'tournament')
+    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+
+  // Fallback: se ainda não há transações, usar métricas estimadas por jogadores pagos
+  let resolvedTournamentRevenue = tournamentRevenue;
+  if (tournamentRevenue === 0) {
+    const tournamentMetrics = await loadOrganizerTournamentMetrics(organizerId, range);
+    resolvedTournamentRevenue = tournamentMetrics.reduce((sum, m) => sum + (m.revenue || 0), 0);
+  }
+
+  const membershipRevenue = membershipMetrics.totalRevenue;
+  return {
+    tournamentRevenue: resolvedTournamentRevenue,
+    membershipRevenue,
+    total: resolvedTournamentRevenue + membershipRevenue,
   };
 }
 

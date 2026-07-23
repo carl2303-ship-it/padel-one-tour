@@ -8,6 +8,7 @@ import {
   type DateRange,
   getDateRange,
   loadOrganizerMembershipMetrics,
+  loadOrganizerPeriodRevenue,
   loadOrganizerPlayerSpending,
   loadOrganizerTournamentMetrics,
 } from '../lib/organizerMetrics';
@@ -48,6 +49,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
     plans: [],
   });
   const [playerSpending, setPlayerSpending] = useState<PlayerSpending[]>([]);
+  const [periodTournamentRevenue, setPeriodTournamentRevenue] = useState(0);
 
   const range = useMemo((): DateRange | null => {
     if (dateFilter === 'custom') {
@@ -61,14 +63,16 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
     if (!user?.id) return;
     setRefreshing(true);
     try {
-      const [tournaments, memberships, spending] = await Promise.all([
+      const [tournaments, memberships, spending, periodRevenue] = await Promise.all([
         loadOrganizerTournamentMetrics(user.id, activeRange),
         loadOrganizerMembershipMetrics(user.id, activeRange),
         loadOrganizerPlayerSpending(user.id, activeRange),
+        loadOrganizerPeriodRevenue(user.id, activeRange),
       ]);
       setTournamentMetrics(tournaments);
       setMembershipMetrics(memberships);
       setPlayerSpending(spending);
+      setPeriodTournamentRevenue(periodRevenue.tournamentRevenue);
       setHasLoaded(true);
     } catch (err) {
       console.error('[OrganizerMetrics] load:', err);
@@ -98,7 +102,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   };
 
   const summary = useMemo(() => {
-    const tournamentsRevenue = tournamentMetrics.reduce((sum, t) => sum + t.revenue, 0);
+    const tournamentsRevenue = periodTournamentRevenue;
     const registrations = tournamentMetrics.reduce((sum, t) => sum + t.registrations, 0);
     const newPlayers = tournamentMetrics.reduce((sum, t) => sum + t.newPlayers, 0);
     return {
@@ -109,7 +113,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
       newPlayers,
       tournamentCount: tournamentMetrics.length,
     };
-  }, [tournamentMetrics, membershipMetrics]);
+  }, [tournamentMetrics, membershipMetrics, periodTournamentRevenue]);
 
   const filteredSpending = useMemo(() => {
     if (spendingFilter === 'members') return playerSpending.filter(p => p.isMember);
