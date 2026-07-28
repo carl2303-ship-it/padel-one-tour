@@ -554,7 +554,7 @@ function App() {
                               }}
                               className={`px-3 py-2 text-sm font-semibold rounded-lg transition ${
                                 active
-                                  ? 'text-[#007BFF] bg-blue-50'
+                                  ? 'text-blue-600 bg-blue-50'
                                   : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                               }`}
                             >
@@ -604,25 +604,25 @@ function App() {
                   <>
                     <button
                       onClick={() => { setView('dashboard'); setShowMobileMenu(false); }}
-                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'dashboard' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'dashboard' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
                       Dashboard
                     </button>
                     <button
                       onClick={() => { setView('list'); setSelectedTournament(null); setShowMobileMenu(false); }}
-                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'list' || view === 'detail' || view === 'leagues' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'list' || view === 'detail' || view === 'leagues' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
                       {t.nav.tournaments}
                     </button>
                     <button
                       onClick={() => { setView('members'); setShowMobileMenu(false); }}
-                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'members' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'members' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
                       Jogadores
                     </button>
                     <button
                       onClick={() => { setView('sponsors'); setShowMobileMenu(false); }}
-                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'sponsors' ? 'text-[#007BFF] bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                      className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'sponsors' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
                       Sponsors
                     </button>

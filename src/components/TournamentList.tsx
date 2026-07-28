@@ -264,7 +264,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#007BFF]"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
   }
@@ -277,7 +277,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
             onClick={() => setFilter('all')}
             className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold transition-colors whitespace-nowrap shadow-sm ${
               filter === 'all'
-                ? 'bg-[#007BFF] text-white shadow-md'
+                ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-[#111111] hover:bg-gray-50 border border-gray-200'
             }`}
           >
@@ -287,7 +287,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
             onClick={() => setFilter('active')}
             className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold transition-colors whitespace-nowrap shadow-sm ${
               filter === 'active'
-                ? 'bg-[#007BFF] text-white shadow-md'
+                ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-[#111111] hover:bg-gray-50 border border-gray-200'
             }`}
           >
@@ -297,7 +297,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
             onClick={() => setFilter('completed')}
             className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold transition-colors whitespace-nowrap shadow-sm ${
               filter === 'completed'
-                ? 'bg-[#007BFF] text-white shadow-md'
+                ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-[#111111] hover:bg-gray-50 border border-gray-200'
             }`}
           >
@@ -308,7 +308,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
               <select
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                className="appearance-none pl-8 pr-8 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 cursor-pointer shadow-sm focus:outline-none focus:ring-2 focus:ring-[#007BFF]/20"
+                className="appearance-none pl-8 pr-8 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 cursor-pointer shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600/20"
               >
                 <option value="all">{t.tournament.allCategories || 'Todas as categorias'}</option>
                 {availableCategories.map(cat => (
@@ -342,7 +342,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
           )}
           <button
             onClick={onCreateTournament}
-            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-[#007BFF] text-white rounded-lg hover:bg-[#0069d9] transition-colors text-sm sm:text-base font-bold shadow-md"
+            className="flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base font-bold shadow-md"
           >
             <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
             <span className="hidden sm:inline">{t.tournament.create}</span>
@@ -358,7 +358,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
           <p className="text-sm sm:text-base text-gray-500 mb-4 sm:mb-6 px-4">{t.tournament.createFirst}</p>
           <button
             onClick={onCreateTournament}
-            className="inline-flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-[#007BFF] text-white rounded-lg hover:bg-[#0069d9] transition-colors text-sm sm:text-base font-bold shadow-md"
+            className="inline-flex items-center gap-1.5 sm:gap-2 px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm sm:text-base font-bold shadow-md"
           >
             <Plus className="w-4 h-4 sm:w-5 sm:h-5" />
             {t.tournament.create}
@@ -385,8 +385,8 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
                 className="w-full p-4 sm:p-6 text-left group"
               >
                 <div className="flex items-start justify-between mb-3 sm:mb-4">
-                  <div className="p-2 sm:p-3 bg-[#007BFF]/10 rounded-lg group-hover:bg-[#007BFF]/20 transition-colors">
-                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-[#007BFF]" />
+                  <div className="p-2 sm:p-3 bg-blue-600/10 rounded-lg group-hover:bg-blue-600/20 transition-colors">
+                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
                   </div>
                   <span
                     className={`px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs font-medium ${getStatusColor(
@@ -396,7 +396,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
                     {t.status[tournament.status as keyof typeof t.status]}
                   </span>
                 </div>
-                <h3 className="text-lg sm:text-xl font-bold text-[#111111] mb-3 sm:mb-4 group-hover:text-[#007BFF] transition-colors">
+                <h3 className="text-lg sm:text-xl font-bold text-[#111111] mb-3 sm:mb-4 group-hover:text-blue-600 transition-colors">
                   {tournament.name}
                 </h3>
                 <div className="space-y-1.5 sm:space-y-2">
@@ -408,7 +408,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
                   </div>
                   <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm text-gray-500">
                     <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
-                    <span className="font-semibold text-[#007BFF]">{registrationCounts[tournament.id] || 0}</span>
+                    <span className="font-semibold text-blue-600">{registrationCounts[tournament.id] || 0}</span>
                     <span>/</span>
                     <span>{categoryMaxTeams[tournament.id] || tournament.max_teams} inscritos</span>
                   </div>
@@ -425,7 +425,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
                 <div className="flex gap-2">
                   <button
                     onClick={(e) => handleCopyTournament(e, tournament)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-[#007BFF]/10 text-[#007BFF] rounded-lg hover:bg-[#007BFF]/20 transition-colors text-sm font-bold"
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-blue-600/10 text-blue-600 rounded-lg hover:bg-blue-600/20 transition-colors text-sm font-bold"
                     title="Copy tournament"
                   >
                     <Copy className="w-3.5 h-3.5" />

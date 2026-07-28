@@ -68,7 +68,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
   );
   const [newCourtName, setNewCourtName] = useState('');
   const [venueAddress, setVenueAddress] = useState((tournament as any).venue_address || '');
-  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState((tournament as any).visibility_radius_km || 25);
+  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState((tournament as any).visibility_radius_km || 50);
   const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   useEffect(() => {
@@ -367,10 +367,12 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
         club_id: primaryClubId || null,
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames.length > 0 ? effectiveCourtNames : null,
-        venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : (tournament as any).venue_address || null,
+        venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : ((tournament as any).venue_address || null),
         venue_lat: venueLat,
         venue_lng: venueLng,
-        visibility_radius_km: isIndependentOrganizer ? visibilityRadiusKm : ((tournament as any).visibility_radius_km || 25),
+        visibility_radius_km: isIndependentOrganizer && formData.visibility === 'public'
+          ? visibilityRadiusKm
+          : ((tournament as any).visibility_radius_km || 50),
       })
       .eq('id', tournament.id);
 
@@ -561,29 +563,31 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  A morada será convertida em coordenadas para mostrar o torneio aos jogadores próximos.
+                  A morada será convertida em coordenadas{formData.visibility === 'public' ? ' para a descoberta por zona' : ''}.
                   {geocodingStatus === 'success' && <span className="text-green-600 ml-1">Localização encontrada.</span>}
                   {geocodingStatus === 'error' && <span className="text-amber-600 ml-1">Morada não encontrada.</span>}
                 </p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="5"
-                    max="200"
-                    step="5"
-                    value={visibilityRadiusKm}
-                    onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+              {formData.visibility === 'public' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="5"
+                      max="200"
+                      step="5"
+                      value={visibilityRadiusKm}
+                      onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente.
+                  </p>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente.
-                </p>
-              </div>
+              )}
             </div>
           )}
 
@@ -1144,34 +1148,47 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   {t.tournament.visibility || 'Visibilidade'}
                 </label>
-                <div className="flex gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setFormData({ ...formData, visibility: 'public' })}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
                       formData.visibility === 'public'
                         ? 'bg-blue-600 text-white border-blue-600'
                         : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                     }`}
                   >
-                    🌐 {t.tournament.visibilityPublic || 'Público'}
+                    {t.tournament.visibilityPublic || 'Na minha zona'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, visibility: 'players_only' })}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      formData.visibility === 'players_only'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {t.tournament.visibilityPlayersOnly || 'Só os meus jogadores'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setFormData({ ...formData, visibility: 'invite_only' })}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium border transition-colors ${
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
                       formData.visibility === 'invite_only'
                         ? 'bg-amber-600 text-white border-amber-600'
                         : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                     }`}
                   >
-                    🔒 {t.tournament.visibilityInviteOnly || 'Por Convite'}
+                    {t.tournament.visibilityInviteOnly || 'Por Convite'}
                   </button>
                 </div>
                 <p className="text-xs text-gray-500 mt-1.5">
                   {formData.visibility === 'invite_only'
                     ? (t.tournament.visibilityInviteOnlyHelper || 'Apenas jogadores convidados verão este torneio na app Player.')
-                    : (t.tournament.visibilityPublicHelper || 'Todos os jogadores podem ver este torneio na app Player.')}
+                    : formData.visibility === 'players_only'
+                      ? (t.tournament.visibilityPlayersOnlyHelper || 'Apenas contactos da tua lista de jogadores vêem este torneio.')
+                      : (t.tournament.visibilityPublicHelper || 'Jogadores na zona do local vêem este torneio automaticamente.')}
                 </p>
               </div>
 

@@ -38,6 +38,43 @@
 .theme-padel1 .hover\:bg-brand-primary:hover { background-color: var(--brand-primary-hover); }
 .theme-padel1 .ring-brand-primary { --tw-ring-color: var(--brand-primary); }
 
+/* Legacy hardcoded Boost blue (#007BFF) → CSS vars quando há cor personalizada */
+:root[data-custom-colors="true"] .text-\[\#007BFF\],
+:root[data-custom-colors="true"] .text-\[\#007bff\] {
+  color: var(--brand-primary) !important;
+}
+:root[data-custom-colors="true"] .bg-\[\#007BFF\],
+:root[data-custom-colors="true"] .bg-\[\#007bff\] {
+  background-color: var(--brand-primary) !important;
+}
+:root[data-custom-colors="true"] .border-\[\#007BFF\],
+:root[data-custom-colors="true"] .border-\[\#007bff\] {
+  border-color: var(--brand-primary) !important;
+}
+:root[data-custom-colors="true"] .hover\:bg-\[\#0069d9\]:hover {
+  background-color: var(--brand-primary-hover) !important;
+}
+:root[data-custom-colors="true"] .hover\:text-\[\#0069d9\]:hover {
+  color: var(--brand-primary-hover) !important;
+}
+:root[data-custom-colors="true"] .bg-\[\#007BFF\]\/10,
+:root[data-custom-colors="true"] .bg-\[\#007bff\]\/10 {
+  background-color: color-mix(in srgb, var(--brand-primary) 10%, transparent) !important;
+}
+:root[data-custom-colors="true"] .bg-\[\#007BFF\]\/20,
+:root[data-custom-colors="true"] .bg-\[\#007bff\]\/20 {
+  background-color: color-mix(in srgb, var(--brand-primary) 20%, transparent) !important;
+}
+:root[data-custom-colors="true"] .hover\:bg-\[\#007BFF\]\/20:hover {
+  background-color: color-mix(in srgb, var(--brand-primary) 20%, transparent) !important;
+}
+:root[data-custom-colors="true"] .group:hover .group-hover\:text-\[\#007BFF\] {
+  color: var(--brand-primary) !important;
+}
+:root[data-custom-colors="true"] .focus\:ring-\[\#007BFF\]\/20:focus {
+  --tw-ring-color: color-mix(in srgb, var(--brand-primary) 20%, transparent) !important;
+}
+
 /* Force 24h format for time inputs */
 input[type="time"]::-webkit-calendar-picker-indicator {
   background: none;

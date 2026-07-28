@@ -34,33 +34,90 @@ export function getDefaultBrandFromHost(): ThemeBrand {
   return 'padel1';
 }
 
-function darkenHex(hex: string, amount = 0.12): string {
+function parseHex(hex: string): [number, number, number] | null {
   const normalized = hex.replace('#', '');
-  if (normalized.length !== 6) return hex;
-  const r = Math.max(0, Math.round(parseInt(normalized.slice(0, 2), 16) * (1 - amount)));
-  const g = Math.max(0, Math.round(parseInt(normalized.slice(2, 4), 16) * (1 - amount)));
-  const b = Math.max(0, Math.round(parseInt(normalized.slice(4, 6), 16) * (1 - amount)));
+  if (normalized.length !== 6) return null;
+  return [
+    parseInt(normalized.slice(0, 2), 16),
+    parseInt(normalized.slice(2, 4), 16),
+    parseInt(normalized.slice(4, 6), 16),
+  ];
+}
+
+function toHex(r: number, g: number, b: number): string {
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+}
+
+function darkenHex(hex: string, amount = 0.12): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return hex;
+  const [r, g, b] = rgb;
+  return toHex(
+    Math.max(0, Math.round(r * (1 - amount))),
+    Math.max(0, Math.round(g * (1 - amount))),
+    Math.max(0, Math.round(b * (1 - amount))),
+  );
+}
+
+function mixWithWhite(hex: string, whiteRatio: number): string {
+  const rgb = parseHex(hex);
+  if (!rgb) return hex;
+  const mix = 1 - whiteRatio;
+  return toHex(
+    Math.round(rgb[0] * mix + 255 * whiteRatio),
+    Math.round(rgb[1] * mix + 255 * whiteRatio),
+    Math.round(rgb[2] * mix + 255 * whiteRatio),
+  );
+}
+
+const BRAND_TINT_VARS = [
+  ['--brand-tint-50', 0.92],
+  ['--brand-tint-100', 0.85],
+  ['--brand-tint-200', 0.75],
+  ['--brand-tint-300', 0.55],
+  ['--brand-tint-400', 0.35],
+  ['--brand-tint-800', null],
+  ['--brand-tint-900', null],
+] as const;
+
+function applyPrimaryTintVars(root: HTMLElement, primary: string) {
+  for (const [name, whiteRatio] of BRAND_TINT_VARS) {
+    if (whiteRatio === null) continue;
+    root.style.setProperty(name, mixWithWhite(primary, whiteRatio));
+  }
+  root.style.setProperty('--brand-tint-800', darkenHex(primary, 0.25));
+  root.style.setProperty('--brand-tint-900', darkenHex(primary, 0.4));
+}
+
+function clearPrimaryTintVars(root: HTMLElement) {
+  for (const [name] of BRAND_TINT_VARS) {
+    root.style.removeProperty(name);
+  }
 }
 
 export function applyOrganizationColors(org: Organization | null, brand: ThemeBrand) {
   const root = document.documentElement;
+  const primary = org?.primary_color?.trim() || null;
 
-  if (org?.primary_color) {
-    root.style.setProperty('--brand-primary', org.primary_color);
-    root.style.setProperty('--brand-primary-hover', darkenHex(org.primary_color));
+  if (primary && /^#[0-9A-Fa-f]{6}$/.test(primary)) {
+    root.style.setProperty('--brand-primary', primary);
+    root.style.setProperty('--brand-primary-hover', darkenHex(primary));
+    applyPrimaryTintVars(root, primary);
+    root.dataset.customColors = 'true';
   } else {
     root.style.removeProperty('--brand-primary');
     root.style.removeProperty('--brand-primary-hover');
+    clearPrimaryTintVars(root);
+    root.dataset.customColors = 'false';
   }
 
-  if (org?.accent_color) {
-    root.style.setProperty('--brand-accent', org.accent_color);
+  const accent = org?.accent_color?.trim() || null;
+  if (accent && /^#[0-9A-Fa-f]{6}$/.test(accent)) {
+    root.style.setProperty('--brand-accent', accent);
   } else {
     root.style.removeProperty('--brand-accent');
   }
 
-  root.dataset.customColors = org?.primary_color ? 'true' : 'false';
   root.dataset.brand = brand;
 }
 

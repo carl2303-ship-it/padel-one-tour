@@ -182,7 +182,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition pr-12"
                     placeholder={t.auth.passwordPlaceholder}
                     disabled={loading}
                   />
@@ -215,7 +215,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition pr-12"
                     placeholder={t.auth.confirmPasswordPlaceholder}
                     disabled={loading}
                   />
@@ -241,7 +241,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#007BFF] hover:bg-[#0069d9] text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
               >
                 {loading ? t.auth.pleaseWait : t.auth.updatePassword}
               </button>
@@ -257,7 +257,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition"
                   placeholder={t.auth.emailPlaceholder}
                   disabled={loading}
                 />
@@ -266,7 +266,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#007BFF] hover:bg-[#0069d9] text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
               >
                 {loading ? t.auth.pleaseWait : t.auth.resetPassword}
               </button>
@@ -278,7 +278,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   setError('');
                   setSuccess('');
                 }}
-                className="w-full text-[#007BFF] hover:text-[#0069d9] font-medium py-2 transition"
+                className="w-full text-blue-600 hover:text-blue-700 font-medium py-2 transition"
               >
                 {t.auth.backToSignIn}
               </button>
@@ -294,7 +294,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition"
                   placeholder={t.auth.emailPlaceholder}
                   disabled={loading}
                 />
@@ -310,7 +310,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#007BFF] focus:border-transparent transition pr-12"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition pr-12"
                   placeholder={t.auth.passwordPlaceholder}
                   disabled={loading}
                 />
@@ -336,7 +336,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-[#007BFF] hover:bg-[#0069d9] text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
               >
                 {loading ? t.auth.pleaseWait : t.auth.signIn}
               </button>
@@ -348,7 +348,7 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
                     setShowResetPassword(true);
                     setError('');
                   }}
-                  className="text-sm text-[#007BFF] hover:text-[#0069d9] font-medium transition"
+                  className="text-sm text-blue-600 hover:text-blue-700 font-medium transition"
                 >
                   {t.auth.forgotPassword}
                 </button>

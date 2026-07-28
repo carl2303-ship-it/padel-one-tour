@@ -1,11 +1,10 @@
-import { boostpadelSupabase, Organization } from './boostpadelSupabase';
+import { Organization } from './boostpadelSupabase';
 import { supabase } from './supabase';
 import {
   applyOrganizationColors,
-  applyThemeBrand,
   getActiveBrand,
+  getActiveOrganization,
   getDefaultBrandFromHost,
-  type ThemeBrand,
 } from './organizationTheme';
 
 export type BrandColorInput = {
@@ -19,29 +18,35 @@ function normalizeHex(value: string | null | undefined): string | null {
   return /^#[0-9A-Fa-f]{6}$/.test(trimmed) ? trimmed : null;
 }
 
+function applyLoadedColors(colors: BrandColorInput) {
+  applyOrganizationColors(
+    colors as Organization,
+    getActiveBrand() || getDefaultBrandFromHost(),
+  );
+}
+
 export async function loadOrganizerBrandColors(userId: string): Promise<BrandColorInput | null> {
-  const { data: org } = await boostpadelSupabase
-    .from('organizations')
-    .select('primary_color, accent_color, source')
-    .eq('tour_user_id', userId)
-    .maybeSingle();
-
-  if (org?.primary_color || org?.accent_color) {
-    const brand: ThemeBrand = org.source === 'boost' ? 'boost' : 'padel1';
-    applyThemeBrand(brand);
-    applyOrganizationColors(org as Organization, brand);
-    return { primary_color: org.primary_color, accent_color: org.accent_color };
-  }
-
-  const { data: settings } = await supabase
+  const { data: settings, error: settingsError } = await supabase
     .from('user_logo_settings')
     .select('primary_color, accent_color')
     .eq('user_id', userId)
     .maybeSingle();
 
-  if (settings?.primary_color || settings?.accent_color) {
-    applyOrganizationColors(settings as Organization, getActiveBrand() || getDefaultBrandFromHost());
+  if (!settingsError && (settings?.primary_color || settings?.accent_color)) {
+    applyLoadedColors(settings);
     return settings;
+  }
+
+  const cachedOrg = getActiveOrganization();
+  if (cachedOrg?.primary_color || cachedOrg?.accent_color) {
+    applyLoadedColors({
+      primary_color: cachedOrg.primary_color,
+      accent_color: cachedOrg.accent_color,
+    });
+    return {
+      primary_color: cachedOrg.primary_color,
+      accent_color: cachedOrg.accent_color,
+    };
   }
 
   return null;
@@ -66,21 +71,20 @@ export async function saveOrganizerBrandColors(
     updated_at: new Date().toISOString(),
   };
 
-  if (existing) {
-    await supabase.from('user_logo_settings').update(payload).eq('user_id', userId);
-  } else {
-    await supabase.from('user_logo_settings').insert({
-      user_id: userId,
-      role: 'organizer',
-      logo_url: null,
-      ...payload,
-    });
+  const writeResult = existing
+    ? await supabase.from('user_logo_settings').update(payload).eq('user_id', userId)
+    : await supabase.from('user_logo_settings').insert({
+        user_id: userId,
+        role: 'organizer',
+        logo_url: null,
+        ...payload,
+      });
+
+  if (writeResult.error) {
+    throw new Error(writeResult.error.message);
   }
 
-  applyOrganizationColors(
-    { primary_color: primary, accent_color: accent } as Organization,
-    getActiveBrand() || getDefaultBrandFromHost(),
-  );
+  applyLoadedColors({ primary_color: primary, accent_color: accent });
 
   let syncedToOrganization = false;
 

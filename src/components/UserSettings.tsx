@@ -145,8 +145,8 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
 
     try {
       const result = await saveOrganizerBrandColors(user.id, {
-        primary_color: primaryColorHex.trim() || null,
-        accent_color: accentColorHex.trim() || null,
+        primary_color: primaryColorHex.trim() || primaryColor,
+        accent_color: accentColorHex.trim() || accentColor,
       });
 
       setBrandMessage({

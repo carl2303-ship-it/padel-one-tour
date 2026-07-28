@@ -231,7 +231,7 @@ Deno.serve(async (req: Request) => {
         }
 
         if (tournament.venue_lat && tournament.venue_lng) {
-          const radius = tournament.visibility_radius_km || 25;
+          const radius = tournament.visibility_radius_km || 50;
           const { data: nearbyPlayers } = await admin
             .from("player_accounts")
             .select("id, lat, lng")

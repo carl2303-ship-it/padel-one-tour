@@ -56,7 +56,8 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     { name: '', min_level: '', max_level: '', max_teams: '999' },
   ]);
   const [venueAddress, setVenueAddress] = useState('');
-  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState(25);
+  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState(50);
+  const [tournamentVisibility, setTournamentVisibility] = useState<'public' | 'players_only' | 'invite_only'>('public');
   const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   useEffect(() => {
@@ -328,11 +329,11 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames,
         allow_public_registration: true,
-        visibility: 'public',
+        visibility: isIndependentOrganizer ? tournamentVisibility : 'public',
         venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : null,
         venue_lat: venueLat,
         venue_lng: venueLng,
-        visibility_radius_km: isIndependentOrganizer ? visibilityRadiusKm : 25,
+        visibility_radius_km: isIndependentOrganizer && tournamentVisibility === 'public' ? visibilityRadiusKm : 50,
       },
     ]).select();
 
@@ -945,8 +946,51 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
               <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-blue-600" />
-                Local do Torneio
+                Local e Visibilidade
               </h3>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Quem vê este torneio?</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('public')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'public'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Na minha zona
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('players_only')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'players_only'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Só os meus jogadores
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('invite_only')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'invite_only'
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Por convite
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5">
+                  {tournamentVisibility === 'public' && 'Jogadores na zona do local vêem este torneio automaticamente na app.'}
+                  {tournamentVisibility === 'players_only' && 'Apenas contactos da tua lista de jogadores vêem este torneio.'}
+                  {tournamentVisibility === 'invite_only' && 'Apenas jogadores convidados vêem este torneio.'}
+                </p>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Morada / Local</label>
                 <input
@@ -957,29 +1001,31 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  A morada será convertida em coordenadas para mostrar o torneio aos jogadores próximos.
+                  A morada será convertida em coordenadas{tournamentVisibility === 'public' ? ' para a descoberta por zona' : ''}.
                   {geocodingStatus === 'success' && <span className="text-green-600 ml-1">Localização encontrada.</span>}
                   {geocodingStatus === 'error' && <span className="text-amber-600 ml-1">Morada não encontrada - o torneio será criado sem geolocalização.</span>}
                 </p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="5"
-                    max="200"
-                    step="5"
-                    value={visibilityRadiusKm}
-                    onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+              {tournamentVisibility === 'public' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="5"
+                      max="200"
+                      step="5"
+                      value={visibilityRadiusKm}
+                      onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente na app Player.
+                  </p>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente na app Player.
-                </p>
-              </div>
+              )}
             </div>
           )}
 
