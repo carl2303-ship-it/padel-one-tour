@@ -234,6 +234,8 @@ function App() {
       return;
     }
 
+    const isBoostSaasOrganizer = user.user_metadata?.source === 'boost_saas';
+
     // Check user_logo_settings
     const { data: settings } = await supabase
       .from('user_logo_settings')
@@ -281,7 +283,7 @@ function App() {
     }
 
     // Independent paid organizer (no club ownership)
-    if (settings?.is_paid_organizer) {
+    if (settings?.is_paid_organizer || isBoostSaasOrganizer) {
       const { data: orgRecord } = await supabase
         .from('organizers')
         .select('subscription_expires_at')
@@ -296,7 +298,7 @@ function App() {
       }
 
       const mods = await fetchClientModules('organizer', user.id);
-      if (!mods.hasTournaments) {
+      if (!mods.hasTournaments && !isBoostSaasOrganizer) {
         setNeedsModule(true);
         setModuleMessage('O módulo de Torneios não está ativo para a sua conta. Contacte o suporte Padel One.');
         setNeedsLicense(false);
