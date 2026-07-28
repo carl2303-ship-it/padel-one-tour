@@ -1,6 +1,7 @@
 import { useState, useEffect, useContext } from 'react';
 import { supabase } from './supabase';
 import { AuthContext } from './authContext';
+import { getBrandLogoUrl } from './organizationTheme';
 
 export function useCustomLogo(userId?: string) {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -37,8 +38,7 @@ export function useCustomLogo(userId?: string) {
     }
   };
 
-  // URL padrão do logo BoostPadel no Supabase Storage
-  const defaultLogoUrl = 'https://rqiwnxcexsccguruiteq.supabase.co/storage/v1/object/sign/Logos/Boostpadel-logo.png?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV81OWQyMTAwNy1kOWY2LTQwZjktYWY4NC02MDBlZDJkZGQ0MTkiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJMb2dvcy9Cb29zdHBhZGVsLWxvZ28ucG5nIiwiaWF0IjoxNzY5NjAzMDg5LCJleHAiOjIwODQ5NjMwODl9.NZ_fLlxEIFXTHM3PyKW-UJa-YF32fdVTqkLJrbGXhg0';
+  const defaultLogoUrl = getBrandLogoUrl();
 
   return {
     logoUrl: logoUrl || defaultLogoUrl,

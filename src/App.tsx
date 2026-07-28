@@ -23,6 +23,7 @@ import OrganizerMembers from './components/OrganizerMembers';
 import OrganizerMetrics from './components/OrganizerMetrics';
 import OrganizerSponsors from './components/OrganizerSponsors';
 import { fetchClientModules } from './lib/useClientModules';
+import { loadOrganizerBrandColors } from './lib/organizerBrandColors';
 import { LogOut, Settings, Menu, X, Trophy, CheckCircle } from 'lucide-react';
 
 type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard' | 'members' | 'sponsors' | 'metrics';
@@ -95,6 +96,12 @@ function App() {
     setShowSettings(false);
     setRefreshKey((k) => k + 1);
   };
+
+  useEffect(() => {
+    if (user && userRole === 'organizer') {
+      loadOrganizerBrandColors(user.id);
+    }
+  }, [user, userRole]);
 
   useEffect(() => {
     const checkForDeepLink = async () => {

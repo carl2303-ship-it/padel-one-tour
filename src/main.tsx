@@ -23,6 +23,9 @@ function showError(title: string, message: string, detail?: string) {
 
 async function init() {
   try {
+    const { initializeOrganizationTheme } = await import('./lib/organizationTheme');
+    await initializeOrganizationTheme();
+
     // Register Service Worker for push notifications
     if ('serviceWorker' in navigator) {
       try {

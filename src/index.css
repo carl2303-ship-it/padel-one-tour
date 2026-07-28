@@ -10,6 +10,34 @@
   }
 }
 
+:root.theme-boost {
+  --brand-primary: #007BFF;
+  --brand-primary-hover: #0069d9;
+  --brand-accent: #FF9900;
+  --brand-dark: #111111;
+  --brand-bg: #f7f7f7;
+}
+
+:root.theme-padel1 {
+  --brand-primary: #D32F2F;
+  --brand-primary-hover: #b71c1c;
+  --brand-accent: #212121;
+  --brand-dark: #212121;
+  --brand-bg: #fafafa;
+}
+
+.theme-boost .bg-brand-primary { background-color: var(--brand-primary); }
+.theme-boost .text-brand-primary { color: var(--brand-primary); }
+.theme-boost .border-brand-primary { border-color: var(--brand-primary); }
+.theme-boost .hover\:bg-brand-primary:hover { background-color: var(--brand-primary-hover); }
+.theme-boost .ring-brand-primary { --tw-ring-color: var(--brand-primary); }
+
+.theme-padel1 .bg-brand-primary { background-color: var(--brand-primary); }
+.theme-padel1 .text-brand-primary { color: var(--brand-primary); }
+.theme-padel1 .border-brand-primary { border-color: var(--brand-primary); }
+.theme-padel1 .hover\:bg-brand-primary:hover { background-color: var(--brand-primary-hover); }
+.theme-padel1 .ring-brand-primary { --tw-ring-color: var(--brand-primary); }
+
 /* Force 24h format for time inputs */
 input[type="time"]::-webkit-calendar-picker-indicator {
   background: none;

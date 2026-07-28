@@ -3,7 +3,18 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
-import { X, Lock, Mail, CheckCircle, AlertCircle, CreditCard, Image, KeyRound, Send, Bell, BellOff, Upload } from 'lucide-react';
+import { X, Lock, Mail, CheckCircle, AlertCircle, CreditCard, Image, KeyRound, Send, Bell, BellOff, Upload, Palette } from 'lucide-react';
+import { loadOrganizerBrandColors, saveOrganizerBrandColors } from '../lib/organizerBrandColors';
+import { boostpadelSupabase } from '../lib/boostpadelSupabase';
+import {
+  loadSaasSubscription,
+  cancelSubscriptionAtPeriodEnd,
+  reactivateSubscription,
+  formatSubscriptionDate,
+  planLabel,
+  daysUntilExpiry,
+  type SaasSubscriptionInfo,
+} from '../lib/saasSubscription';
 
 interface UserSettingsProps {
   onClose: () => void;
@@ -55,9 +66,24 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
   const [testEmailLoading, setTestEmailLoading] = useState(false);
   const [testEmailMessage, setTestEmailMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [primaryColor, setPrimaryColor] = useState('#007BFF');
+  const [primaryColorHex, setPrimaryColorHex] = useState('');
+  const [accentColor, setAccentColor] = useState('#FF9900');
+  const [accentColorHex, setAccentColorHex] = useState('');
+  const [brandLoading, setBrandLoading] = useState(false);
+  const [brandMessage, setBrandMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [hasOrganization, setHasOrganization] = useState(false);
+
+  const [saasSubscription, setSaasSubscription] = useState<SaasSubscriptionInfo | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [subscriptionMessage, setSubscriptionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     loadStripeSettings();
     loadLogoSettings();
+    loadBrandSettings();
+    loadSubscriptionInfo();
   }, [user]);
 
   const loadStripeSettings = async () => {
@@ -86,6 +112,105 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
 
     if (data) {
       setLogoUrl(data.logo_url || '');
+    }
+  };
+
+  const loadBrandSettings = async () => {
+    if (!user) return;
+
+    const colors = await loadOrganizerBrandColors(user.id);
+
+    const { data: org } = await boostpadelSupabase
+      .from('organizations')
+      .select('id')
+      .eq('tour_user_id', user.id)
+      .maybeSingle();
+
+    setHasOrganization(!!org);
+
+    const primary = colors?.primary_color || '';
+    const accent = colors?.accent_color || '';
+    setPrimaryColorHex(primary);
+    setAccentColorHex(accent);
+    if (primary) setPrimaryColor(primary);
+    if (accent) setAccentColor(accent);
+  };
+
+  const handleSaveBrandColors = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    setBrandMessage(null);
+    setBrandLoading(true);
+
+    try {
+      const result = await saveOrganizerBrandColors(user.id, {
+        primary_color: primaryColorHex.trim() || null,
+        accent_color: accentColorHex.trim() || null,
+      });
+
+      setBrandMessage({
+        type: 'success',
+        text: result.syncedToOrganization
+          ? 'Cores guardadas! Visíveis na app e na página pública do organizador.'
+          : 'Cores guardadas na app. (Sem licença Boost ligada — a página pública mantém cores default.)',
+      });
+    } catch (error: unknown) {
+      setBrandMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Erro ao guardar cores',
+      });
+    } finally {
+      setBrandLoading(false);
+    }
+  };
+
+  const handleResetBrandColors = () => {
+    setPrimaryColor('#007BFF');
+    setAccentColor('#FF9900');
+    setPrimaryColorHex('');
+    setAccentColorHex('');
+  };
+
+  const loadSubscriptionInfo = async () => {
+    if (!user) return;
+    const sub = await loadSaasSubscription(user.id);
+    setSaasSubscription(sub);
+  };
+
+  const handleConfirmCancelSubscription = async () => {
+    setSubscriptionLoading(true);
+    setSubscriptionMessage(null);
+    try {
+      const result = await cancelSubscriptionAtPeriodEnd();
+      setSubscriptionMessage({ type: 'success', text: result.message });
+      setShowCancelModal(false);
+      await loadSubscriptionInfo();
+    } catch (error: unknown) {
+      setSubscriptionMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Erro ao cancelar',
+      });
+      setShowCancelModal(false);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
+
+  const handleReactivateSubscription = async () => {
+    setSubscriptionLoading(true);
+    setSubscriptionMessage(null);
+    try {
+      const result = await reactivateSubscription();
+      setSubscriptionMessage({ type: 'success', text: result.message });
+      await loadSubscriptionInfo();
+    } catch (error: unknown) {
+      setSubscriptionMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Erro ao reativar',
+      });
+    } finally {
+      setSubscriptionLoading(false);
     }
   };
 
@@ -392,6 +517,134 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
             </div>
           </div>
 
+          {saasSubscription && (
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <CreditCard className="w-5 h-5" />
+                Subscrição SaaS Tour
+              </h3>
+              <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase font-semibold">Plano</p>
+                    <p className="text-lg font-bold text-gray-900">{planLabel(saasSubscription.plan_type)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase font-semibold">Estado</p>
+                    <p className={`text-sm font-bold ${
+                      saasSubscription.status === 'active' && !saasSubscription.cancel_at_period_end
+                        ? 'text-green-600' : 'text-orange-600'
+                    }`}>
+                      {saasSubscription.cancel_at_period_end
+                        ? 'Cancela no fim do período'
+                        : saasSubscription.status === 'active'
+                          ? 'Ativa · Renovação automática'
+                          : saasSubscription.status}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase font-semibold">Início</p>
+                    <p className="text-sm font-medium text-gray-800">
+                      {formatSubscriptionDate(saasSubscription.contract_start)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 uppercase font-semibold">
+                      {saasSubscription.cancel_at_period_end ? 'Acesso até' : 'Próxima renovação'}
+                    </p>
+                    <p className="text-sm font-medium text-gray-800">
+                      {formatSubscriptionDate(saasSubscription.subscription_expires_at)}
+                    </p>
+                    {daysUntilExpiry(saasSubscription.subscription_expires_at) !== null && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {daysUntilExpiry(saasSubscription.subscription_expires_at)! > 0
+                          ? `${daysUntilExpiry(saasSubscription.subscription_expires_at)} dias restantes`
+                          : 'Período terminado'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {saasSubscription.stripe_subscription_id && (
+                  <p className="text-xs text-gray-500">
+                    A subscrição renova automaticamente via Stripe em cada ciclo (mensal ou anual).
+                  </p>
+                )}
+
+                {subscriptionMessage && (
+                  <div className={`flex items-center gap-2 p-3 rounded-lg text-sm ${
+                    subscriptionMessage.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+                  }`}>
+                    {subscriptionMessage.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                    {subscriptionMessage.text}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-3 pt-2">
+                  {saasSubscription.stripe_subscription_id && !saasSubscription.cancel_at_period_end && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      disabled={subscriptionLoading}
+                      className="px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 disabled:opacity-50 transition"
+                    >
+                      Cancelar subscrição
+                    </button>
+                  )}
+                  {saasSubscription.cancel_at_period_end && saasSubscription.stripe_subscription_id && (
+                    <button
+                      type="button"
+                      onClick={handleReactivateSubscription}
+                      disabled={subscriptionLoading}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
+                    >
+                      {subscriptionLoading ? 'A processar...' : 'Manter subscrição (reativar)'}
+                    </button>
+                  )}
+                  {!saasSubscription.stripe_subscription_id && (
+                    <p className="text-xs text-gray-500">
+                      Licença manual — para alterações contacte info@boostpadel.store
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showCancelModal && saasSubscription && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[60]">
+              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+                <h4 className="text-xl font-bold text-gray-900 mb-3">Cancelar subscrição?</h4>
+                <p className="text-sm text-gray-600 mb-2">
+                  A subscrição <strong>{planLabel(saasSubscription.plan_type)}</strong> continuará ativa até ao fim do período atual.
+                </p>
+                <p className="text-sm text-gray-600 mb-4">
+                  Mantém acesso completo até{' '}
+                  <strong>{formatSubscriptionDate(saasSubscription.subscription_expires_at)}</strong>.
+                  Depois dessa data, a licença será suspensa e não haverá nova cobrança.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowCancelModal(false)}
+                    disabled={subscriptionLoading}
+                    className="flex-1 py-3 border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-50 transition"
+                  >
+                    Voltar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCancelSubscription}
+                    disabled={subscriptionLoading}
+                    className="flex-1 py-3 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 disabled:opacity-50 transition"
+                  >
+                    {subscriptionLoading ? 'A cancelar...' : 'Sim, cancelar no fim do período'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {isPushSupported ? (
             <div>
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -566,6 +819,112 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
               >
                 {logoLoading ? t.settings.logo.saving : t.settings.logo.save}
               </button>
+            </form>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Palette className="w-5 h-5" />
+              Cores da Marca
+            </h3>
+            <form onSubmit={handleSaveBrandColors} className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Personalize as cores da interface. Deixe vazio para usar as cores Boost Padel default.
+                {hasOrganization && (
+                  <span className="block mt-1 text-xs text-blue-600">
+                    As cores também aparecem na sua página pública tour.boostpadel.store/seu-slug
+                  </span>
+                )}
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Cor Principal</label>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="color"
+                      value={primaryColorHex || primaryColor}
+                      onChange={(e) => {
+                        setPrimaryColor(e.target.value);
+                        setPrimaryColorHex(e.target.value);
+                      }}
+                      className="w-12 h-10 border border-gray-300 rounded-lg cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      value={primaryColorHex}
+                      onChange={(e) => setPrimaryColorHex(e.target.value)}
+                      placeholder="#007BFF (default Boost)"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Cor Accent</label>
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="color"
+                      value={accentColorHex || accentColor}
+                      onChange={(e) => {
+                        setAccentColor(e.target.value);
+                        setAccentColorHex(e.target.value);
+                      }}
+                      className="w-12 h-10 border border-gray-300 rounded-lg cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      value={accentColorHex}
+                      onChange={(e) => setAccentColorHex(e.target.value)}
+                      placeholder="#FF9900 (default Boost)"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className="rounded-xl p-4 border border-gray-200"
+                style={{
+                  background: `linear-gradient(135deg, ${primaryColorHex || primaryColor}22, ${accentColorHex || accentColor}22)`,
+                }}
+              >
+                <p className="text-sm font-semibold mb-2" style={{ color: primaryColorHex || primaryColor }}>
+                  Pré-visualização
+                </p>
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-lg text-white text-sm font-bold"
+                  style={{ backgroundColor: primaryColorHex || primaryColor }}
+                >
+                  Botão exemplo
+                </button>
+              </div>
+
+              {brandMessage && (
+                <div className={`flex items-center gap-2 p-4 rounded-lg ${
+                  brandMessage.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
+                }`}>
+                  {brandMessage.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+                  <span className="text-sm font-medium">{brandMessage.text}</span>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleResetBrandColors}
+                  className="flex-1 py-3 px-4 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition"
+                >
+                  Repor default
+                </button>
+                <button
+                  type="submit"
+                  disabled={brandLoading}
+                  className="flex-1 py-3 px-4 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition"
+                >
+                  {brandLoading ? 'A guardar...' : 'Guardar Cores'}
+                </button>
+              </div>
             </form>
           </div>
 
