@@ -401,28 +401,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
       }
     }
 
-    // Notify players about the new tournament (fire-and-forget, but log result)
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co';
-      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-      const { data: { session } } = await supabase.auth.getSession();
-      fetch(`${supabaseUrl}/functions/v1/notify-new-tournament`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || anonKey}`,
-          'apikey': anonKey,
-        },
-        body: JSON.stringify({ tournamentId: newTournamentId }),
-      })
-        .then(async (res) => {
-          const body = await res.json().catch(() => ({}));
-          console.log('[Push] notify-new-tournament:', res.status, body);
-        })
-        .catch(err => console.error('[Push] notify-new-tournament error:', err));
-    } catch (err) {
-      console.error('[Push] Error triggering new tournament notification:', err);
-    }
+    // Notification is sent only when tournament becomes active (Edit / publish), not on draft create.
 
     onSuccess();
     onClose();

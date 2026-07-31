@@ -8,7 +8,8 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from '../lib/playerTournamentPrice';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell } from 'lucide-react';
+import { notifyTournamentPlayers } from '../lib/notifyTournament';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
 import MatchModal from './MatchModal';
@@ -144,6 +145,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [resolvedRoundRobinType, setResolvedRoundRobinType] = useState<string | null>((tournament as any).round_robin_type || null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [liveLinkCopied, setLiveLinkCopied] = useState(false);
+  const [notifySending, setNotifySending] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [matchViewSortBy, setMatchViewSortBy] = useState<'time' | 'court' | 'group' | 'courts_grid'>('time');
@@ -4595,6 +4597,51 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     setTimeout(() => setLiveLinkCopied(false), 2000);
   };
 
+  const handleResendTournamentAlert = async () => {
+    if (notifySending) return;
+    const isActive =
+      currentTournament.status === 'active' || currentTournament.status === 'in_progress';
+    if (!isActive) {
+      alert('O torneio tem de estar Ativo para enviar alertas. Altere o estado em Editar.');
+      return;
+    }
+    if ((currentTournament as any).visibility === 'invite_only') {
+      alert('Torneios por convite não enviam alertas públicas.');
+      return;
+    }
+    if ((currentTournament as any).allow_public_registration === false) {
+      alert('Active a inscrição pública antes de enviar a alerta.');
+      return;
+    }
+    const ok = confirm(
+      'Reenviar alerta push aos jogadores com nível compatível com as categorias deste torneio?\n\nUse isto quando mudar data, categorias ou quiser lembrar as vagas.',
+    );
+    if (!ok) return;
+
+    setNotifySending(true);
+    try {
+      const result = await notifyTournamentPlayers({
+        tournamentId: currentTournament.id,
+        forceResend: true,
+      });
+      if (!result.ok) {
+        alert(result.error || result.message || 'Não foi possível enviar a alerta.');
+        return;
+      }
+      const skipped = result.details?.[0]?.skipped;
+      if (skipped === 'no_targets' || skipped === 'no_targets_after_filter') {
+        alert('Nenhum jogador elegível encontrado (nível/género/clube).');
+        return;
+      }
+      alert(`Alerta enviada. Push entregues: ${result.notified ?? 0}`);
+    } catch (err) {
+      console.error('[Push] resend error:', err);
+      alert('Erro ao enviar a alerta. Tente novamente.');
+    } finally {
+      setNotifySending(false);
+    }
+  };
+
   const handleDeleteTeam = async (teamId: string) => {
     if (!confirm(t.tournament.confirmDeleteTeam)) return;
     
@@ -6828,6 +6875,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               {liveLinkCopied ? <Check className="w-4 h-4" /> : <Trophy className="w-4 h-4" />}
               {liveLinkCopied ? 'Copiado!' : 'Link Live'}
             </button>
+            {(currentTournament.status === 'active' || currentTournament.status === 'in_progress') &&
+              (currentTournament as any).visibility !== 'invite_only' &&
+              (currentTournament as any).allow_public_registration !== false && (
+              <button
+                onClick={handleResendTournamentAlert}
+                disabled={notifySending}
+                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition disabled:opacity-60"
+                title="Reenviar alerta push (filtra por nível das categorias)"
+              >
+                <Bell className="w-4 h-4" />
+                {notifySending ? 'A enviar...' : 'Reenviar Alerta'}
+              </button>
+            )}
             <button
               onClick={handleExportPDF}
               className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"

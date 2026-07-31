@@ -10,17 +10,19 @@ const corsHeaders = {
 };
 
 /**
- * Notify players when a new tournament becomes visible.
+ * Notify players when a tournament becomes active (or on manual resend).
  *
- * Can be called:
- * 1. Directly when a tournament is created/published (from Tour app)
- * 2. Via cron to catch any tournaments that became active recently
+ * Body:
+ * - tournamentId?: string
+ * - forceResend?: boolean  — bypass already_sent, use update copy, filter by category levels
+ * - mode?: "cron" | "direct"
  *
- * Uses open_game_notifications_sent with notification_type = 'new_tournament' to avoid duplicates.
+ * Skips draft / cancelled. Cron only looks at recently activated tournaments.
  */
 
 interface RequestBody {
   tournamentId?: string;
+  forceResend?: boolean;
   mode?: "cron" | "direct";
 }
 
@@ -33,7 +35,6 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Normalize phone for matching organizer_players ↔ player_accounts */
 function normalizePhone(phone: string | null | undefined): string {
   if (!phone) return "";
   let cleaned = phone.replace(/[\s\-\(\)\.]/g, "");
@@ -65,6 +66,36 @@ function parseClubIds(tournament: Record<string, unknown>): string[] {
   return clubIds;
 }
 
+function playerLevelMatches(
+  level: number | null | undefined,
+  ranges: Array<{ min: number | null; max: number | null; accepted: string[] | null }>,
+): boolean {
+  if (!ranges.length) return true; // no category constraints → all levels
+  if (level == null || Number.isNaN(level)) return true; // unknown level: include
+
+  return ranges.some((r) => {
+    if (r.accepted && r.accepted.length > 0) {
+      const levelStr = String(level);
+      const levelOneDecimal = level.toFixed(1);
+      const levelInt = String(Math.floor(level));
+      if (
+        r.accepted.includes(levelStr) ||
+        r.accepted.includes(levelOneDecimal) ||
+        r.accepted.includes(levelInt)
+      ) {
+        return true;
+      }
+    }
+    const minOk = r.min == null || level >= Number(r.min);
+    const maxOk = r.max == null || level <= Number(r.max);
+    // If only accepted_levels was set (no min/max), don't match via range
+    if (r.min == null && r.max == null && r.accepted && r.accepted.length > 0) {
+      return false;
+    }
+    return minOk && maxOk;
+  });
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -93,12 +124,15 @@ Deno.serve(async (req: Request) => {
       body = { mode: "cron" };
     }
 
+    const forceResend = !!body.forceResend;
     let tournamentsToNotify: any[] = [];
 
     if (body.tournamentId) {
       const { data: tournament } = await admin
         .from("tournaments")
-        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, user_id, venue_lat, venue_lng, visibility_radius_km")
+        .select(
+          "id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, user_id, venue_lat, venue_lng, visibility_radius_km, updated_at",
+        )
         .eq("id", body.tournamentId)
         .maybeSingle();
 
@@ -106,15 +140,18 @@ Deno.serve(async (req: Request) => {
         tournamentsToNotify = [tournament];
       }
     } else {
+      // Cron: only recently activated tournaments (not drafts)
       const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split("T")[0];
 
       const { data: recentTournaments } = await admin
         .from("tournaments")
-        .select("id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, created_at, user_id, venue_lat, venue_lng, visibility_radius_km")
-        .in("status", ["draft", "active", "in_progress"])
+        .select(
+          "id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, created_at, updated_at, user_id, venue_lat, venue_lng, visibility_radius_km",
+        )
+        .eq("status", "active")
         .gte("end_date", today)
-        .gte("created_at", thirtyMinAgo)
+        .gte("updated_at", thirtyMinAgo)
         .neq("visibility", "invite_only");
 
       tournamentsToNotify = recentTournaments || [];
@@ -131,27 +168,33 @@ Deno.serve(async (req: Request) => {
     const details: Array<Record<string, unknown>> = [];
 
     for (const tournament of tournamentsToNotify) {
+      if (tournament.status !== "active" && tournament.status !== "in_progress") {
+        details.push({ id: tournament.id, skipped: "not_active", status: tournament.status });
+        continue;
+      }
+
       if (tournament.visibility === "invite_only") {
         details.push({ id: tournament.id, skipped: "invite_only" });
         continue;
       }
 
-      // Club/public tournaments must be open for registration to be useful
-      if (tournament.allow_public_registration === false && tournament.visibility !== "invite_only") {
+      if (tournament.allow_public_registration === false) {
         details.push({ id: tournament.id, skipped: "registration_closed" });
         continue;
       }
 
-      const { data: alreadySent } = await admin
-        .from("open_game_notifications_sent")
-        .select("id")
-        .eq("game_id", tournament.id)
-        .eq("notification_type", "new_tournament")
-        .limit(1);
+      if (!forceResend) {
+        const { data: alreadySent } = await admin
+          .from("open_game_notifications_sent")
+          .select("id")
+          .eq("game_id", tournament.id)
+          .eq("notification_type", "new_tournament")
+          .limit(1);
 
-      if (alreadySent && alreadySent.length > 0) {
-        details.push({ id: tournament.id, skipped: "already_sent" });
-        continue;
+        if (alreadySent && alreadySent.length > 0) {
+          details.push({ id: tournament.id, skipped: "already_sent" });
+          continue;
+        }
       }
 
       let clubName = "";
@@ -191,12 +234,40 @@ Deno.serve(async (req: Request) => {
       const locationPart = clubName ? ` · ${clubName}` : "";
       const formatPart = formatLabel ? ` · ${formatLabel}` : "";
 
-      const payload = {
-        title: `Novo torneio: ${tournament.name}`,
-        body: `${dateStr}${locationPart}${formatPart}. Inscreve-te já!`,
-        url: `/?screen=tournaments&tournament=${tournament.id}`,
-        tag: `new-tournament-${tournament.id}`,
-      };
+      // Load category level ranges for filtering (always useful; required intent on resend)
+      const { data: categories } = await admin
+        .from("tournament_categories")
+        .select("min_level, max_level, accepted_levels, name")
+        .eq("tournament_id", tournament.id);
+
+      const levelRanges = (categories || []).map((c: any) => ({
+        min: c.min_level != null ? Number(c.min_level) : null,
+        max: c.max_level != null ? Number(c.max_level) : null,
+        accepted: Array.isArray(c.accepted_levels) ? c.accepted_levels.map(String) : null,
+      }));
+      const hasLevelConstraints = levelRanges.some(
+        (r) => r.min != null || r.max != null || (r.accepted && r.accepted.length > 0),
+      );
+
+      const categoryNames = (categories || [])
+        .map((c: any) => c.name)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+
+      const payload = forceResend
+        ? {
+          title: `Atualização: ${tournament.name}`,
+          body: `${dateStr}${locationPart}${formatPart}${categoryNames ? ` · ${categoryNames}` : ""}. Vê as novidades e inscreve-te!`,
+          url: `/?screen=tournaments&tournament=${tournament.id}`,
+          tag: `tournament-update-${tournament.id}-${Date.now()}`,
+        }
+        : {
+          title: `Novo torneio: ${tournament.name}`,
+          body: `${dateStr}${locationPart}${formatPart}. Inscreve-te já!`,
+          url: `/?screen=tournaments&tournament=${tournament.id}`,
+          tag: `new-tournament-${tournament.id}`,
+        };
 
       let targetPlayerIds: string[] = [];
       const isIndependentTournament = clubIds.length === 0;
@@ -215,7 +286,6 @@ Deno.serve(async (req: Request) => {
             contacts.map((c: any) => normalizePhone(c.phone_number)).filter(Boolean),
           );
           if (phoneKeys.size > 0) {
-            // Fetch candidate accounts and match normalized phones (exact IN fails across formats)
             const { data: accounts } = await admin
               .from("player_accounts")
               .select("id, phone_number")
@@ -248,7 +318,6 @@ Deno.serve(async (req: Request) => {
 
         targetPlayerIds = [...targetSet];
       } else {
-        // Club tournaments: notify players linked to the club(s)
         const { data: clubPlayers } = await admin
           .from("player_clubs")
           .select("player_account_id")
@@ -261,14 +330,6 @@ Deno.serve(async (req: Request) => {
         if (clubPlayerIds.length > 0) {
           targetPlayerIds = clubPlayerIds;
         } else {
-          // Fallback: players with push who previously played at this club
-          const { data: pastPlayers } = await admin
-            .from("players")
-            .select("player_account_id, tournament_id")
-            .not("player_account_id", "is", null)
-            .limit(2000);
-
-          // Prefer push subscribers as last resort only for small clubs with no player_clubs
           const { data: subscriptions } = await admin
             .from("push_subscriptions")
             .select("player_account_id")
@@ -281,7 +342,6 @@ Deno.serve(async (req: Request) => {
           console.log(
             `[notify-new-tournament] Club ${clubIds.join(",")} has no player_clubs; fallback to ${targetPlayerIds.length} push subscribers`,
           );
-          void pastPlayers;
         }
       }
 
@@ -290,28 +350,45 @@ Deno.serve(async (req: Request) => {
         continue;
       }
 
-      if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
+      // Gender + level filter in batches
+      const filteredIds: string[] = [];
+      for (let i = 0; i < targetPlayerIds.length; i += 500) {
+        const batch = targetPlayerIds.slice(i, i + 500);
         const { data: players } = await admin
           .from("player_accounts")
-          .select("id, gender, player_category")
-          .in("id", targetPlayerIds.slice(0, 500));
+          .select("id, gender, player_category, level")
+          .in("id", batch);
 
-        if (players) {
-          targetPlayerIds = players
-            .filter((p: any) => {
-              const playerGender =
-                p.gender ||
-                (p.player_category?.startsWith("M") ? "male" : null) ||
-                (p.player_category?.startsWith("F") ? "female" : null);
-              if (!playerGender) return true;
-              return playerGender === tournament.gender;
-            })
-            .map((p: any) => p.id);
+        for (const p of players || []) {
+          if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
+            const playerGender =
+              p.gender ||
+              (p.player_category?.startsWith("M") ? "male" : null) ||
+              (p.player_category?.startsWith("F") ? "female" : null);
+            if (playerGender && playerGender !== tournament.gender) continue;
+          }
+
+          // On forceResend always apply level filter when categories have constraints.
+          // On first notify also apply if constraints exist (avoid irrelevant levels).
+          if (hasLevelConstraints) {
+            const lvl = p.level != null ? Number(p.level) : null;
+            if (!playerLevelMatches(lvl, levelRanges)) continue;
+          }
+
+          filteredIds.push(p.id);
         }
+      }
+      targetPlayerIds = filteredIds;
+
+      if (targetPlayerIds.length === 0) {
+        details.push({ id: tournament.id, skipped: "no_targets_after_filter" });
+        continue;
       }
 
       const targets = targetPlayerIds.slice(0, 500);
-      console.log(`[notify-new-tournament] Sending for "${tournament.name}" to ${targets.length} players`);
+      console.log(
+        `[notify-new-tournament] ${forceResend ? "Resend" : "New"} for "${tournament.name}" to ${targets.length} players (levelFilter=${hasLevelConstraints})`,
+      );
 
       const results = await Promise.allSettled(
         targets.map(async (playerAccountId: string) => {
@@ -332,8 +409,8 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Only dedupe when at least one push was delivered (allows retry if VAPID/subs fail)
-      if (sentCount > 0) {
+      // Mark first activation notify as sent (resend bypasses this check via forceResend)
+      if (sentCount > 0 && !forceResend) {
         await admin
           .from("open_game_notifications_sent")
           .insert({
@@ -349,6 +426,8 @@ Deno.serve(async (req: Request) => {
         name: tournament.name,
         targets: targets.length,
         sent: sentCount,
+        forceResend,
+        levelFilter: hasLevelConstraints,
       });
       console.log(`[notify-new-tournament] "${tournament.name}": ${sentCount} push to ${targets.length} targets`);
     }

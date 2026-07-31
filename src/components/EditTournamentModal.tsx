@@ -9,6 +9,7 @@ import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { processAllUnratedMatches } from '../lib/ratingEngine';
 import { parseClubIds } from '../lib/parseClubIds';
 import { geocodeAddress } from '../lib/geocoding';
+import { notifyTournamentPlayers } from '../lib/notifyTournament';
 
 type EditTournamentModalProps = {
   tournament: Tournament;
@@ -421,6 +422,17 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
 
     setLoading(false);
     if (updatedTournament) {
+      // Push only when tournament is first activated (not while draft)
+      const becameActive =
+        formData.status === 'active' &&
+        tournament.status !== 'active' &&
+        formData.visibility !== 'invite_only' &&
+        !!formData.allow_public_registration;
+      if (becameActive) {
+        notifyTournamentPlayers({ tournamentId: tournament.id })
+          .then((r) => console.log('[Push] notify on activate:', r))
+          .catch((err) => console.error('[Push] activate notify error:', err));
+      }
       onSuccess(updatedTournament);
     }
     onClose();

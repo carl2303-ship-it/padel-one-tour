@@ -17,6 +17,7 @@ import {
   type LadderChallenge,
   type LadderPosition,
 } from '../lib/ladderTournament'
+import { notifyTournamentPlayers } from '../lib/notifyTournament'
 
 type TeamRow = {
   id: string
@@ -229,6 +230,13 @@ export default function LadderTournamentView({
       return
     }
     await supabase.from('tournaments').update({ status: 'active' }).eq('id', tournament.id)
+    const allowPublic = (tournament as any).allow_public_registration !== false
+    const inviteOnly = (tournament as any).visibility === 'invite_only'
+    if (allowPublic && !inviteOnly) {
+      notifyTournamentPlayers({ tournamentId: tournament.id })
+        .then((r) => console.log('[Push] notify ladder publish:', r))
+        .catch(() => {})
+    }
     await load()
   }
 

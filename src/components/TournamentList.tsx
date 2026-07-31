@@ -238,24 +238,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     // NÃO copiar jogadores, equipas ou jogos - torneio fica limpo e pronto a usar
     
     if (newTournament) {
-      try {
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://rqiwnxcexsccguruiteq.supabase.co';
-        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-        const { data: { session } } = await supabase.auth.getSession();
-        fetch(`${supabaseUrl}/functions/v1/notify-new-tournament`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token || anonKey}`,
-            'apikey': anonKey,
-          },
-          body: JSON.stringify({ tournamentId: newTournament.id }),
-        }).catch(() => {});
-      } catch {
-        /* ignore */
-      }
-
-      alert(`Torneio "${newName}" criado com sucesso!\n\nConfigurações copiadas:\n- Formato: ${tournament.format}\n- Categorias: ${categories?.length || 0}\n- Campos: ${tournament.number_of_courts}\n\nAgora pode adicionar os jogadores.`);
+      alert(`Torneio "${newName}" criado com sucesso!\n\nConfigurações copiadas:\n- Formato: ${tournament.format}\n- Categorias: ${categories?.length || 0}\n- Campos: ${tournament.number_of_courts}\n\nAgora pode adicionar os jogadores.\n\nNota: a alerta push só é enviada quando o torneio for posto como Ativo.`);
       fetchTournaments();
     }
   };
