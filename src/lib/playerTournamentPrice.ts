@@ -1,5 +1,7 @@
 /** Shared pricing helpers for tournament registration (member / non-member / staff). */
 
+import { normalizePhone } from './phoneUtils';
+
 export type PriceKind = 'member' | 'non_member' | 'exempt';
 
 export interface MemberPriceInfo {
@@ -19,14 +21,7 @@ export interface TournamentPriceInputs {
 }
 
 export function normalizePhoneKey(phone: string | null | undefined): string {
-  if (!phone) return '';
-  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
-  if (cleaned.startsWith('+00')) cleaned = cleaned.slice(3);
-  else if (cleaned.startsWith('+')) cleaned = cleaned.slice(1);
-  else if (cleaned.startsWith('00')) cleaned = cleaned.slice(2);
-  cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '');
-  if (cleaned.startsWith('0') && cleaned.length >= 9) cleaned = cleaned.slice(1);
-  return cleaned;
+  return normalizePhone(phone);
 }
 
 export function normalizeNameKey(name: string | null | undefined): string {
