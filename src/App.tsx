@@ -187,7 +187,7 @@ function App() {
     } else {
       checkLicenseAndLoadRole();
     }
-  }, [user]);
+  }, [user?.id]);
 
   const checkLicenseAndLoadRole = async () => {
     if (!user) {
@@ -201,7 +201,9 @@ function App() {
       !!new URLSearchParams(window.location.search).get('register');
 
     const goOrganizerHome = () => {
-      if (!hasPublicDeepLink) setView('dashboard');
+      if (!hasPublicDeepLink) {
+        setView((currentView) => currentView === 'list' ? 'dashboard' : currentView);
+      }
     };
 
     // Check if user owns a club (needed for multiple paths below)
