@@ -15,6 +15,8 @@ type Player = {
   name: string;
   email: string | null;
   phone_number: string | null;
+  tournament_id?: string | null;
+  player_account_id?: string | null;
 };
 
 type EditTeamModalProps = {
@@ -335,7 +337,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
       }
 
       onSuccess();
-    } catch (err) {
+    } catch {
       setError('An unexpected error occurred');
       setLoading(false);
     }

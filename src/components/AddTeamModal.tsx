@@ -12,8 +12,6 @@ import { useI18n } from '../lib/i18nContext';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
-  playerName: string,
-  playerPhone: string,
   tournamentName: string,
   categoryName?: string
 ) => {
@@ -208,8 +206,6 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       const selectedCategory = categories.find(c => c.id === categoryId);
       await sendWelcomeEmail(
         playerData.email,
-        playerData.name,
-        playerData.phone_number,
         tournament.name,
         selectedCategory?.name
       );
@@ -233,7 +229,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     }
 
     if (existingPlayer.tournament_id === tournamentId) {
-      const updates: Record<string, any> = {};
+      const updates: Record<string, string | boolean | null> = {};
       const targetCategoryId = lockedCategoryId || categoryId || null;
       if (existingPlayer.category_id !== targetCategoryId) updates.category_id = targetCategoryId;
       if (wantsDinner !== !!existingPlayer.wants_dinner) updates.wants_dinner = wantsDinner;
@@ -264,7 +260,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     );
 
     if (playerInThisTournament) {
-      const updates: Record<string, any> = {};
+      const updates: Record<string, string | boolean | null> = {};
       updates.wants_dinner = wantsDinner;
       if (!playerInThisTournament.email && existingPlayer.email) updates.email = existingPlayer.email;
       const normalizedPhone = normalizePhone(existingPlayer.phone_number);
@@ -301,8 +297,6 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       const selectedCategory = categories.find(c => c.id === categoryId);
       await sendWelcomeEmail(
         newPlayer.email,
-        newPlayer.name,
-        newPlayer.phone_number || '',
         tournament.name,
         selectedCategory?.name
       );

@@ -8,8 +8,6 @@ import { normalizePhone } from '../lib/phoneUtils';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
-  playerName: string,
-  playerPhone: string,
   tournamentName: string,
   categoryName?: string
 ) => {
@@ -51,6 +49,22 @@ type ExistingPlayer = {
   name: string;
   phone_number: string | null;
   email?: string | null;
+};
+
+type TeamPlayerReference = {
+  player1: Omit<ExistingPlayer, 'id'> | null;
+  player2: Omit<ExistingPlayer, 'id'> | null;
+};
+
+type PlayerInsert = {
+  tournament_id: string;
+  category_id: string;
+  name: string;
+  email?: string | null;
+  phone_number?: string | null;
+  seed: number | null;
+  user_id: null;
+  wants_dinner: boolean;
 };
 
 function normalizePlayerName(name: string): string {
@@ -152,7 +166,7 @@ export default function AddIndividualPlayerModal({
               player2:players!teams_player2_id_fkey(name, email, phone_number)
             `)
             .in('tournament_id', tournamentIds)
-        : Promise.resolve({ data: [] as any[] }),
+        : Promise.resolve({ data: [] as TeamPlayerReference[] }),
       supabase
         .from('organizer_players')
         .select('name, email, phone_number')
@@ -293,7 +307,7 @@ export default function AddIndividualPlayerModal({
         return;
       }
 
-      const insertData: any = {
+      const insertData: PlayerInsert = {
         tournament_id: tournamentId,
         category_id: selectedCategoryId,
         name: selectedPlayer.name,
@@ -367,7 +381,7 @@ export default function AddIndividualPlayerModal({
         return;
       }
 
-      const insertData: any = {
+      const insertData: PlayerInsert = {
         tournament_id: tournamentId,
         category_id: selectedCategoryId,
         name: formData.name.trim(),
@@ -405,8 +419,6 @@ export default function AddIndividualPlayerModal({
           const selectedCategory = categories.find(c => c.id === selectedCategoryId);
           await sendWelcomeEmail(
             formData.email.trim(),
-            formData.name.trim(),
-            formData.phone.trim(),
             tournament.name,
             selectedCategory?.name
           );

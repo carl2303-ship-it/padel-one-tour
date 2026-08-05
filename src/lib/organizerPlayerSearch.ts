@@ -8,6 +8,13 @@ type PlayerRow = Pick<Player, 'id' | 'name' | 'email' | 'phone_number'> & {
   player_account_id?: string | null;
 };
 
+type PlayerIdentity = {
+  name: string;
+  email?: string | null;
+  phone_number?: string | null;
+  player_account_id?: string | null;
+};
+
 function normalizeName(name: string): string {
   return name.trim().toLocaleLowerCase('pt').replace(/\s+/g, ' ');
 }
@@ -17,8 +24,8 @@ function normalizeEmail(email: string | null | undefined): string {
 }
 
 export function isSameOrganizerPlayer(
-  first: Pick<PlayerRow, 'name' | 'email' | 'phone_number' | 'player_account_id'>,
-  second: Pick<PlayerRow, 'name' | 'email' | 'phone_number' | 'player_account_id'>,
+  first: PlayerIdentity,
+  second: PlayerIdentity,
 ): boolean {
   if (
     first.player_account_id &&
