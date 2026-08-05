@@ -51,11 +51,6 @@ type ExistingPlayer = {
   email?: string | null;
 };
 
-type TeamPlayerReference = {
-  player1: Omit<ExistingPlayer, 'id'> | null;
-  player2: Omit<ExistingPlayer, 'id'> | null;
-};
-
 type PlayerInsert = {
   tournament_id: string;
   category_id: string;
@@ -151,22 +146,13 @@ export default function AddIndividualPlayerModal({
 
     const tournamentIds = userTournaments?.map(t => t.id) || [];
 
-    const [playersResult, teamsResult, organizerResult, accountsResult] = await Promise.all([
+    const [playersResult, organizerResult, accountsResult] = await Promise.all([
       tournamentIds.length > 0
         ? supabase
             .from('players')
             .select('id, name, phone_number, email')
             .in('tournament_id', tournamentIds)
         : Promise.resolve({ data: [] as { id: string; name: string; phone_number: string | null; email: string | null }[] }),
-      tournamentIds.length > 0
-        ? supabase
-            .from('teams')
-            .select(`
-              player1:players!teams_player1_id_fkey(name, email, phone_number),
-              player2:players!teams_player2_id_fkey(name, email, phone_number)
-            `)
-            .in('tournament_id', tournamentIds)
-        : Promise.resolve({ data: [] as TeamPlayerReference[] }),
       supabase
         .from('organizer_players')
         .select('name, email, phone_number')
@@ -232,11 +218,6 @@ export default function AddIndividualPlayerModal({
 
     for (const p of playersResult.data || []) {
       addPlayer(p.name, p.phone_number, p.email);
-    }
-
-    for (const team of teamsResult.data || []) {
-      if (team.player1) addPlayer(team.player1.name, team.player1.phone_number, team.player1.email);
-      if (team.player2) addPlayer(team.player2.name, team.player2.phone_number, team.player2.email);
     }
 
     for (const op of organizerResult.data || []) {

@@ -3,7 +3,11 @@ import { normalizePhoneKey } from './phoneUtils';
 
 const PAGE_SIZE = 1000;
 
-type PlayerRow = Pick<Player, 'id' | 'name' | 'email' | 'phone_number'> & {
+type PlayerRow = {
+  id: Player['id'];
+  name: Player['name'];
+  email: Player['email'];
+  phone_number: string | null;
   tournament_id?: string | null;
   player_account_id?: string | null;
 };

@@ -8232,8 +8232,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       {showAddTeam && (
         <AddTeamModal
           tournamentId={tournament.id}
-          categories={categories}
-          selectedCategory={selectedCategory}
+          lockedCategoryId={
+            selectedCategory && selectedCategory !== 'no-category'
+              ? selectedCategory
+              : undefined
+          }
           onClose={() => setShowAddTeam(false)}
           onSuccess={() => {
             setShowAddTeam(false);
