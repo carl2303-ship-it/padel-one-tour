@@ -3,6 +3,8 @@ import { supabase, TournamentCategory } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
 import { X } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
+import { normalizePhone } from '../lib/phoneUtils';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
@@ -53,29 +55,6 @@ type ExistingPlayer = {
 
 function normalizePlayerName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
-}
-
-function normalizePlayerPhone(phone: string | null | undefined): string | null {
-  if (!phone) return null;
-  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
-  let hadPrefix = false;
-  if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true; }
-  else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true; }
-  else if (cleaned.startsWith('00')) { cleaned = cleaned.slice(2); hadPrefix = true; }
-  
-  if (hadPrefix) {
-    cleaned = cleaned.replace(/^(351|352|353|354|355|356|357|358|359|370|371|372|373|374|375|376|377|378|380|381|382|383|385|386|387|389|420|421|423|212|213|216|244|245|258|297|298|299|852|853|855|856|880|886|960|961|962|963|964|965|966|967|968|971|972|973|974|975|976|977|992|993|994|995|996|997|998)(?=\d{7,})/, '');
-    cleaned = cleaned.replace(/^(20|27|30|31|32|33|34|36|39|40|41|43|44|45|46|47|48|49|51|52|53|54|55|56|57|58|60|61|62|63|64|65|66|81|82|84|86|90|91|92|93|94|95|98)(?=\d{7,})/, '');
-    cleaned = cleaned.replace(/^[17](?=\d{9,})/, '');
-  } else {
-    cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '');
-  }
-  
-  if (cleaned.startsWith('0') && cleaned.length >= 9) {
-    cleaned = cleaned.slice(1);
-  }
-  
-  return cleaned;
 }
 
 type Tournament = {
@@ -185,7 +164,7 @@ export default function AddIndividualPlayerModal({
 
     const accountsByPhone = new Map<string, { name: string; email: string | null; phone_number: string }>();
     for (const acc of accountsResult.data || []) {
-      const key = normalizePlayerPhone(acc.phone_number);
+      const key = normalizePhone(acc.phone_number);
       if (key) accountsByPhone.set(key, acc);
     }
 
@@ -194,7 +173,7 @@ export default function AddIndividualPlayerModal({
     const addPlayer = (name: string, phone: string | null | undefined, email: string | null | undefined) => {
       if (!name?.trim()) return;
 
-      const phoneKey = normalizePlayerPhone(phone);
+      const phoneKey = normalizePhone(phone);
       const normalizedName = normalizePlayerName(name);
       const account = phoneKey ? accountsByPhone.get(phoneKey) : undefined;
       const displayName = (account?.name || name).trim();
@@ -260,6 +239,23 @@ export default function AddIndividualPlayerModal({
     }
   };
 
+  const getRegistrationConflict = async (candidate: {
+    name: string;
+    email?: string | null;
+    phone_number?: string | null;
+  }): Promise<string | null> => {
+    const { data, error: lookupError } = await supabase
+      .from('players')
+      .select('name, email, phone_number, player_account_id')
+      .eq('tournament_id', tournamentId)
+      .eq('category_id', selectedCategoryId);
+
+    if (lookupError) return lookupError.message;
+    return (data || []).some(player => isSameOrganizerPlayer(candidate, player))
+      ? 'Este jogador já está inscrito nesta categoria.'
+      : null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -285,11 +281,24 @@ export default function AddIndividualPlayerModal({
         return;
       }
 
+      const normalizedPhone = normalizePhone(selectedPlayer.phone_number) || null;
+      const registrationConflict = await getRegistrationConflict({
+        name: selectedPlayer.name,
+        email: selectedPlayer.email,
+        phone_number: normalizedPhone,
+      });
+      if (registrationConflict) {
+        setError(registrationConflict);
+        setLoading(false);
+        return;
+      }
+
       const insertData: any = {
         tournament_id: tournamentId,
         category_id: selectedCategoryId,
         name: selectedPlayer.name,
-        phone_number: selectedPlayer.phone_number,
+        email: selectedPlayer.email || null,
+        phone_number: normalizedPhone,
         seed: seed === '' ? null : seed,
         user_id: null,
         wants_dinner: wantsDinner,
@@ -315,20 +324,6 @@ export default function AddIndividualPlayerModal({
         setError(submitError.message);
         setLoading(false);
       } else {
-        // Create or update player_account if user is authenticated and has phone
-        if (user?.id && selectedPlayer.phone_number) {
-          await supabase
-            .from('player_accounts')
-            .upsert({
-              phone_number: selectedPlayer.phone_number,
-              user_id: user.id,
-              name: selectedPlayer.name,
-              email: selectedPlayer.email || null
-            }, {
-              onConflict: 'phone_number'
-            });
-        }
-
         onSuccess();
         onClose();
       }
@@ -345,8 +340,9 @@ export default function AddIndividualPlayerModal({
         return;
       }
 
+      const normalizedPhone = normalizePhone(formData.phone) || null;
+
       if (formData.phone.trim()) {
-        const normalizedPhone = formData.phone.trim().replace(/[\s\-\(\)\.]/g, '');
         const { data: existingAccount } = await supabase
           .from('player_accounts')
           .select('name')
@@ -358,6 +354,17 @@ export default function AddIndividualPlayerModal({
           setLoading(false);
           return;
         }
+      }
+
+      const registrationConflict = await getRegistrationConflict({
+        name: formData.name.trim(),
+        email: formData.email.trim() || null,
+        phone_number: normalizedPhone,
+      });
+      if (registrationConflict) {
+        setError(registrationConflict);
+        setLoading(false);
+        return;
       }
 
       const insertData: any = {
@@ -372,9 +379,7 @@ export default function AddIndividualPlayerModal({
       if (formData.email.trim()) {
         insertData.email = formData.email.trim();
       }
-      if (formData.phone.trim()) {
-        insertData.phone_number = formData.phone.trim();
-      }
+      if (normalizedPhone) insertData.phone_number = normalizedPhone;
 
       console.log('[PLAYER INSERT - NEW] Inserindo novo jogador:', insertData);
 
@@ -405,20 +410,6 @@ export default function AddIndividualPlayerModal({
             tournament.name,
             selectedCategory?.name
           );
-        }
-
-        // Create or update player_account if user is authenticated and has phone
-        if (user?.id && formData.phone.trim()) {
-          await supabase
-            .from('player_accounts')
-            .upsert({
-              phone_number: formData.phone.trim(),
-              user_id: user.id,
-              name: formData.name.trim(),
-              email: formData.email.trim() || null
-            }, {
-              onConflict: 'phone_number'
-            });
         }
 
         onSuccess();
