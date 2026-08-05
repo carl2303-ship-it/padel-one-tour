@@ -2216,7 +2216,10 @@ export async function advanceKnockoutWinner(
  * ganharem todos os jogos).
  *
  * Ex. quartos com 2 grupos de 4:
- *   J1: 1°A vs 2°B | J2: 3°A vs 4°B | J3: 4°A vs 3°B | J4: 1°B vs 2°A
+ *   J1: 1°A vs 4°B | J2: 3°A vs 2°B | J3: 2°A vs 3°B | J4: 4°A vs 1°B
+ *
+ * A ordem J1/J2 e J3/J4 mantém o 1° e o 2° de cada grupo em metades
+ * opostas do quadro, considerando que J1+J2 e J3+J4 alimentam as meias.
  */
 function buildTwoGroupKnockoutPairs<T extends { id: string }>(
   rankA: T[],
@@ -2224,26 +2227,17 @@ function buildTwoGroupKnockoutPairs<T extends { id: string }>(
   numMatches: number
 ): Array<[T, T]> {
   const pairs: Array<[T, T]> = [];
-  const half = numMatches / 2;
+  let seedOrder = [0];
 
-  for (let i = 0; i < half; i++) {
-    const a = rankA[i * 2];
-    const b = rankB[i * 2 + 1];
-    if (a && b) pairs.push([a, b]);
+  while (seedOrder.length < numMatches) {
+    const offset = seedOrder.length;
+    seedOrder = seedOrder.flatMap(seed => [seed, seed + offset]);
   }
 
-  for (let k = 0; k < half; k++) {
-    if (k === half - 1) {
-      const bWinner = rankB[0];
-      const aRunnerUp = rankA[1];
-      if (bWinner && aRunnerUp) pairs.push([bWinner, aRunnerUp]);
-    } else {
-      const posA = numMatches - 1 - k;
-      const posB = numMatches - 2 - k;
-      const a = rankA[posA];
-      const b = rankB[posB];
-      if (a && b) pairs.push([a, b]);
-    }
+  for (const rankIndex of seedOrder.slice(0, numMatches)) {
+    const a = rankA[rankIndex];
+    const b = rankB[numMatches - 1 - rankIndex];
+    if (a && b) pairs.push([a, b]);
   }
 
   return pairs;
