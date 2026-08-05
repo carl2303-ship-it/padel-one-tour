@@ -31,6 +31,7 @@ type View = 'list' | 'detail' | 'registration' | 'leagues' | 'live' | 'dashboard
 function App() {
   const { t } = useI18n();
   const { user, loading: authLoading, signOut } = useAuth();
+  const userId = user?.id;
   const { logoUrl } = useCustomLogo();
   const [view, setView] = useState<View>('list');
   const [selectedTournament, setSelectedTournament] = useState<Tournament | null>(null);
@@ -172,7 +173,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       if (view !== 'registration' && view !== 'live') {
         setView('list');
         setSelectedTournament(null);
@@ -187,7 +188,7 @@ function App() {
     } else {
       checkLicenseAndLoadRole();
     }
-  }, [user]);
+  }, [userId]);
 
   const checkLicenseAndLoadRole = async () => {
     if (!user) {
@@ -201,7 +202,9 @@ function App() {
       !!new URLSearchParams(window.location.search).get('register');
 
     const goOrganizerHome = () => {
-      if (!hasPublicDeepLink) setView('dashboard');
+      if (!hasPublicDeepLink) {
+        setView((currentView) => currentView === 'list' ? 'dashboard' : currentView);
+      }
     };
 
     // Check if user owns a club (needed for multiple paths below)

@@ -3,15 +3,15 @@ import { supabase, Player, TournamentCategory } from '../lib/supabase';
 import {
   fetchAllOrganizerPlayers,
   getOrganizerTournamentIds,
+  isSameOrganizerPlayer,
   searchOrganizerPlayers,
 } from '../lib/organizerPlayerSearch';
+import { normalizePhone } from '../lib/phoneUtils';
 import { X, Plus, Search } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
-  playerName: string,
-  playerPhone: string,
   tournamentName: string,
   categoryName?: string
 ) => {
@@ -95,7 +95,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
         setPlayers([]);
         return;
       }
-      const all = await fetchAllOrganizerPlayers(ids);
+      const all = await fetchAllOrganizerPlayers(ids, tournamentId);
       setPlayers(all as Player[]);
     } catch (err) {
       console.error('[AddTeam] fetch players:', err);
@@ -115,7 +115,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       if (!tournamentIds.length) return;
       setSearching(true);
       try {
-        const results = await searchOrganizerPlayers(tournamentIds, term);
+        const results = await searchOrganizerPlayers(tournamentIds, term, tournamentId);
         setSearchResults(results as Player[]);
       } catch (err) {
         console.error('[AddTeam] search players:', err);
@@ -156,13 +156,45 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
+    const targetCategoryId = lockedCategoryId || categoryId || null;
+    const candidate = {
+      name: playerData.name.trim(),
+      email: playerData.email.trim() || null,
+      phone_number: normalizePhone(playerData.phone_number) || null,
+    };
+    let existingPlayersQuery = supabase
+      .from('players')
+      .select('id, name, email, phone_number, player_account_id')
+      .eq('tournament_id', tournamentId);
+    existingPlayersQuery = targetCategoryId
+      ? existingPlayersQuery.eq('category_id', targetCategoryId)
+      : existingPlayersQuery.is('category_id', null);
+    const { data: existingPlayers, error: lookupError } = await existingPlayersQuery;
+    if (lookupError) throw lookupError;
+
+    const existingPlayer = existingPlayers?.find(player =>
+      isSameOrganizerPlayer(candidate, player)
+    );
+    if (existingPlayer) {
+      const { error } = await supabase
+        .from('players')
+        .update({
+          email: existingPlayer.email || candidate.email,
+          phone_number: normalizePhone(existingPlayer.phone_number || candidate.phone_number) || null,
+          wants_dinner: wantsDinner,
+        })
+        .eq('id', existingPlayer.id);
+      if (error) throw error;
+      return existingPlayer.id;
+    }
+
     const { data, error } = await supabase
       .from('players')
       .insert([{
-        ...playerData,
+        ...candidate,
         user_id: null,
         tournament_id: tournamentId,
-        category_id: categoryId || null,
+        category_id: targetCategoryId,
         wants_dinner: wantsDinner
       }])
       .select()
@@ -174,8 +206,6 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       const selectedCategory = categories.find(c => c.id === categoryId);
       await sendWelcomeEmail(
         playerData.email,
-        playerData.name,
-        playerData.phone_number,
         tournament.name,
         selectedCategory?.name
       );
@@ -199,27 +229,47 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
     }
 
     if (existingPlayer.tournament_id === tournamentId) {
-      const updates: Record<string, any> = {};
-      if (categoryId && existingPlayer.category_id !== categoryId) updates.category_id = categoryId;
+      const updates: Record<string, string | boolean | null> = {};
+      const targetCategoryId = lockedCategoryId || categoryId || null;
+      if (existingPlayer.category_id !== targetCategoryId) updates.category_id = targetCategoryId;
       if (wantsDinner !== !!existingPlayer.wants_dinner) updates.wants_dinner = wantsDinner;
+      const normalizedPhone = normalizePhone(existingPlayer.phone_number);
+      if (normalizedPhone && normalizedPhone !== existingPlayer.phone_number) {
+        updates.phone_number = normalizedPhone;
+      }
       if (Object.keys(updates).length > 0) {
-        await supabase.from('players').update(updates).eq('id', playerId);
+        const { error } = await supabase.from('players').update(updates).eq('id', playerId);
+        if (error) throw error;
       }
       return playerId;
     }
 
-    const { data: playerInThisTournament } = await supabase
+    const targetCategoryId = lockedCategoryId || categoryId || null;
+    let matchingPlayersQuery = supabase
       .from('players')
-      .select('id')
-      .eq('tournament_id', tournamentId)
-      .eq('phone_number', existingPlayer.phone_number || '')
-      .maybeSingle();
+      .select('id, name, email, phone_number, player_account_id')
+      .eq('tournament_id', tournamentId);
+    matchingPlayersQuery = targetCategoryId
+      ? matchingPlayersQuery.eq('category_id', targetCategoryId)
+      : matchingPlayersQuery.is('category_id', null);
+
+    const { data: tournamentPlayers, error: lookupError } = await matchingPlayersQuery;
+    if (lookupError) throw lookupError;
+    const playerInThisTournament = tournamentPlayers?.find(player =>
+      isSameOrganizerPlayer(existingPlayer, player)
+    );
 
     if (playerInThisTournament) {
-      const updates: Record<string, any> = {};
-      if (categoryId) updates.category_id = categoryId;
+      const updates: Record<string, string | boolean | null> = {};
       updates.wants_dinner = wantsDinner;
-      await supabase.from('players').update(updates).eq('id', playerInThisTournament.id);
+      if (!playerInThisTournament.email && existingPlayer.email) updates.email = existingPlayer.email;
+      const normalizedPhone = normalizePhone(existingPlayer.phone_number);
+      if (normalizedPhone) updates.phone_number = normalizedPhone;
+      const { error } = await supabase
+        .from('players')
+        .update(updates)
+        .eq('id', playerInThisTournament.id);
+      if (error) throw error;
       return playerInThisTournament.id;
     }
 
@@ -228,10 +278,11 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       .insert([{
         name: existingPlayer.name,
         email: existingPlayer.email,
-        phone_number: existingPlayer.phone_number,
-        user_id: null,
+        phone_number: normalizePhone(existingPlayer.phone_number) || null,
+        user_id: existingPlayer.user_id,
+        player_account_id: existingPlayer.player_account_id,
         tournament_id: tournamentId,
-        category_id: categoryId || null,
+        category_id: targetCategoryId,
         wants_dinner: wantsDinner
       }])
       .select()
@@ -246,8 +297,6 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
       const selectedCategory = categories.find(c => c.id === categoryId);
       await sendWelcomeEmail(
         newPlayer.email,
-        newPlayer.name,
-        newPlayer.phone_number || '',
         tournament.name,
         selectedCategory?.name
       );
