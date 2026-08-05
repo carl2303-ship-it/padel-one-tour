@@ -8260,12 +8260,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           tournament={currentTournament}
           matchId={selectedMatchId}
           onClose={() => {
-            // Save match ID for scroll restoration
-            if (selectedMatchId) scrollToMatchIdRef.current = selectedMatchId;
             setShowMatchModal(false);
             setSelectedMatchId(undefined);
-            // Silent refresh to keep scroll position
-            fetchTournamentData(true);
           }}
           onSuccess={() => {
             // Save match ID for scroll restoration
