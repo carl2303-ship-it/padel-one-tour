@@ -542,7 +542,7 @@ function App() {
                         {([
                           { id: 'dashboard' as View, label: 'Dashboard' },
                           { id: 'list' as View, label: t.nav.tournaments },
-                          { id: 'members' as View, label: 'Jogadores' },
+                          { id: 'members' as View, label: 'Membros' },
                           { id: 'sponsors' as View, label: 'Sponsors' },
                         ]).map((item) => {
                           const active =
@@ -621,7 +621,7 @@ function App() {
                       onClick={() => { setView('members'); setShowMobileMenu(false); }}
                       className={`w-full text-left px-3 py-2.5 text-sm font-semibold rounded-lg ${view === 'members' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
                     >
-                      Jogadores
+                      Membros
                     </button>
                     <button
                       onClick={() => { setView('sponsors'); setShowMobileMenu(false); }}
