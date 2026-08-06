@@ -4,11 +4,10 @@ import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import {
   Plus, X, Users, Edit2, Trash2, Check, Mail, Phone,
-  User, Trophy, Eye, Calendar, Medal, Filter, Download,
+  User, Trophy, Eye, Calendar, Medal, Download,
   ArrowUpDown, Award, Upload, CreditCard
 } from 'lucide-react';
 import ImportContactsModal from './ImportContactsModal';
-import OrganizerPlayersModal from './OrganizerPlayersModal';
 
 interface MembershipPlan {
   id: string;
@@ -48,22 +47,7 @@ interface TournamentHistory {
   payment_status: string | null;
 }
 
-interface TournamentPlayerLead {
-  player_name: string;
-  player_phone: string;
-  total_spent: number;
-  tournament_count: number;
-  last_tournament_date: string;
-  tournament_names: string[];
-}
-
-interface Lead {
-  name: string;
-  phone_number: string;
-  tournament_name: string;
-}
-
-type Tab = 'players' | 'plans' | 'members';
+type Tab = 'plans' | 'members';
 type StatusFilter = 'all' | 'active' | 'expired';
 type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
 type GenderFilter = 'all' | 'male' | 'female';
@@ -94,10 +78,9 @@ export default function OrganizerMembers() {
   const { t } = useI18n();
   const { user } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<Tab>('players');
+  const [activeTab, setActiveTab] = useState<Tab>('members');
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -129,7 +112,6 @@ export default function OrganizerMembers() {
   const [historyPlayer, setHistoryPlayer] = useState<{ name: string; phone: string } | null>(null);
   const [tournamentHistory, setTournamentHistory] = useState<TournamentHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [tournamentPlayerLeads, setTournamentPlayerLeads] = useState<TournamentPlayerLead[]>([]);
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [filterGender, setFilterGender] = useState<GenderFilter>('all');
@@ -137,12 +119,12 @@ export default function OrganizerMembers() {
   const [sortField, setSortField] = useState<SortField>('name');
   const [sortAsc, setSortAsc] = useState(true);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   useEffect(() => {
     if (user) {
       loadPlans();
       loadSubscriptions();
-      loadLeads();
     }
   }, [user]);
 
@@ -188,98 +170,7 @@ export default function OrganizerMembers() {
       setSubscriptions(enriched);
     }
 
-    const { data: tournamentTx } = await supabase
-      .from('player_transactions')
-      .select('player_name, player_phone, amount, transaction_date, notes')
-      .eq('club_owner_id', user!.id)
-      .eq('reference_type', 'tournament')
-      .order('transaction_date', { ascending: false });
-
-    const memberPhones = new Set(
-      (data || [])
-        .map((s: Subscription) => (s.member_phone ? normalizePhone(s.member_phone) : null))
-        .filter(Boolean),
-    );
-
-    if (tournamentTx?.length) {
-      const map = new Map<string, TournamentPlayerLead>();
-      tournamentTx.forEach(tx => {
-        const key = tx.player_phone || tx.player_name.toLowerCase();
-        const tournamentName = tx.notes?.replace(/^Torneio:\s*/, '').split(' - ')[0] || '';
-        const existing = map.get(key);
-        if (existing) {
-          existing.total_spent += Number(tx.amount) || 0;
-          existing.tournament_count += 1;
-          if (tx.transaction_date > existing.last_tournament_date) {
-            existing.last_tournament_date = tx.transaction_date;
-          }
-          if (tournamentName && !existing.tournament_names.includes(tournamentName)) {
-            existing.tournament_names.push(tournamentName);
-          }
-        } else {
-          map.set(key, {
-            player_name: tx.player_name,
-            player_phone: tx.player_phone,
-            total_spent: Number(tx.amount) || 0,
-            tournament_count: 1,
-            last_tournament_date: tx.transaction_date,
-            tournament_names: tournamentName ? [tournamentName] : [],
-          });
-        }
-      });
-      setTournamentPlayerLeads(
-        Array.from(map.values()).filter(p => !memberPhones.has(normalizePhone(p.player_phone))),
-      );
-    } else {
-      setTournamentPlayerLeads([]);
-    }
-
     setLoading(false);
-  }
-
-  async function loadLeads() {
-    const { data: tournaments } = await supabase
-      .from('tournaments')
-      .select('id, name')
-      .eq('user_id', user!.id);
-
-    if (!tournaments || tournaments.length === 0) {
-      setLeads([]);
-      return;
-    }
-
-    const tournamentIds = tournaments.map((t: any) => t.id);
-    const tournamentMap = Object.fromEntries(tournaments.map((t: any) => [t.id, t.name]));
-
-    const { data: players } = await supabase
-      .from('players')
-      .select('name, phone_number, tournament_id')
-      .in('tournament_id', tournamentIds)
-      .not('phone_number', 'is', null);
-
-    if (!players) {
-      setLeads([]);
-      return;
-    }
-
-    const { data: members } = await supabase
-      .from('member_subscriptions')
-      .select('member_phone')
-      .eq('club_owner_id', user!.id);
-
-    const memberPhones = new Set((members || []).map((m: any) => m.member_phone));
-
-    const uniqueLeads = new Map<string, Lead>();
-    for (const p of players) {
-      if (p.phone_number && !memberPhones.has(p.phone_number) && !uniqueLeads.has(p.phone_number)) {
-        uniqueLeads.set(p.phone_number, {
-          name: p.name,
-          phone_number: p.phone_number,
-          tournament_name: tournamentMap[p.tournament_id] || '',
-        });
-      }
-    }
-    setLeads(Array.from(uniqueLeads.values()));
   }
 
   async function savePlan() {
@@ -422,14 +313,12 @@ export default function OrganizerMembers() {
     setShowMemberModal(false);
     setEditingSubscription(null);
     loadSubscriptions();
-    loadLeads();
   }
 
   async function deleteMember(subId: string) {
     if (!confirm((t as any).organizerMembers?.confirmDeleteMember || 'Remover este membro?')) return;
     await supabase.from('member_subscriptions').delete().eq('id', subId);
     loadSubscriptions();
-    loadLeads();
   }
 
   async function viewHistory(sub: Subscription) {
@@ -585,47 +474,34 @@ export default function OrganizerMembers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4 border-b border-gray-200">
-        <button
-          onClick={() => setActiveTab('players')}
-          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
-            activeTab === 'players'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users className="w-4 h-4 inline mr-2" />
-          Jogadores
-        </button>
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1">
         <button
           onClick={() => setActiveTab('members')}
-          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
+          className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
             activeTab === 'members'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+              ? 'bg-white text-blue-600 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          <CreditCard className="w-4 h-4 inline mr-2" />
+          <CreditCard className="w-4 h-4" />
           {(t as any).organizerMembers?.members || 'Membros'}
         </button>
         <button
           onClick={() => setActiveTab('plans')}
-          className={`px-4 py-2 font-medium border-b-2 transition-colors ${
+          className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
             activeTab === 'plans'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700'
+              ? 'bg-white text-blue-600 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          <Award className="w-4 h-4 inline mr-2" />
+          <Award className="w-4 h-4" />
           {(t as any).organizerMembers?.plans || 'Planos'}
         </button>
       </div>
 
-      {activeTab === 'players' && <OrganizerPlayersModal embedded />}
-
       {activeTab === 'plans' && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold text-gray-800">
               {(t as any).organizerMembers?.managePlans || 'Gerir Planos'}
             </h2>
@@ -711,100 +587,112 @@ export default function OrganizerMembers() {
 
       {activeTab === 'members' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap justify-between items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <h2 className="text-lg font-semibold text-gray-800">
               {(t as any).organizerMembers?.manageMembers || 'Gerir Membros'}
+              <span className="ml-2 text-sm font-normal text-gray-500">({filteredSubscriptions.length})</span>
             </h2>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setFilterGender('all')}
-                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'all' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-                >
-                  Todos
-                </button>
-                <button
-                  onClick={() => setFilterGender('male')}
-                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'male' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-                >
-                  M
-                </button>
-                <button
-                  onClick={() => setFilterGender('female')}
-                  className={`px-2 py-1 text-xs rounded-md ${filterGender === 'female' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
-                >
-                  F
-                </button>
-              </div>
-              <select
-                value={filterAge}
-                onChange={e => setFilterAge(e.target.value)}
-                className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
-              >
-                <option value="all">Todas idades</option>
-                <option value="under18">&lt;18</option>
-                <option value="18-35">18-35</option>
-                <option value="36-50">36-50</option>
-                <option value="over50">50+</option>
-              </select>
-              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setStatusFilter('all')}
-                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                    statusFilter === 'all' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'
-                  }`}
-                >
-                  {(t as any).organizerMembers?.all || 'Todos'}
-                </button>
-                <button
-                  onClick={() => setStatusFilter('active')}
-                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                    statusFilter === 'active' ? 'bg-white shadow-sm text-green-700' : 'text-gray-500'
-                  }`}
-                >
-                  {(t as any).organizerMembers?.active || 'Ativos'}
-                </button>
-                <button
-                  onClick={() => setStatusFilter('expired')}
-                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
-                    statusFilter === 'expired' ? 'bg-white shadow-sm text-red-700' : 'text-gray-500'
-                  }`}
-                >
-                  {(t as any).organizerMembers?.expired || 'Expirados'}
-                </button>
-              </div>
-              <div className="relative group">
-                <button className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100">
-                  <Download className="w-4 h-4" />
-                </button>
-                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 hidden group-hover:block z-10 min-w-[140px]">
-                  <button onClick={exportCSV} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
-                    CSV
+            <div className="flex w-full flex-col gap-2 sm:w-auto">
+              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3 sm:flex sm:items-center">
+                <div className="flex items-center justify-center gap-1 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setFilterGender('all')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md ${filterGender === 'all' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    Todos
                   </button>
-                  <button onClick={exportPhones} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
-                    <Phone className="w-3.5 h-3.5 inline mr-2" />
-                    {(t as any).organizerMembers?.phoneList || 'Telefones'}
+                  <button
+                    onClick={() => setFilterGender('male')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md ${filterGender === 'male' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    M
                   </button>
-                  <button onClick={exportEmails} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
-                    <Mail className="w-3.5 h-3.5 inline mr-2" />
-                    Emails
+                  <button
+                    onClick={() => setFilterGender('female')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md ${filterGender === 'female' ? 'bg-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    F
+                  </button>
+                </div>
+                <select
+                  value={filterAge}
+                  onChange={e => setFilterAge(e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white"
+                >
+                  <option value="all">Todas idades</option>
+                  <option value="under18">&lt;18</option>
+                  <option value="18-35">18-35</option>
+                  <option value="36-50">36-50</option>
+                  <option value="over50">50+</option>
+                </select>
+                <div className="flex items-center justify-center gap-1 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setStatusFilter('all')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                      statusFilter === 'all' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500'
+                    }`}
+                  >
+                    {(t as any).organizerMembers?.all || 'Todos'}
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('active')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                      statusFilter === 'active' ? 'bg-white shadow-sm text-green-700' : 'text-gray-500'
+                    }`}
+                  >
+                    {(t as any).organizerMembers?.active || 'Ativos'}
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('expired')}
+                    className={`flex-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                      statusFilter === 'expired' ? 'bg-white shadow-sm text-red-700' : 'text-gray-500'
+                    }`}
+                  >
+                    {(t as any).organizerMembers?.expired || 'Expirados'}
                   </button>
                 </div>
               </div>
-              <button
-                onClick={() => setShowImportModal(true)}
-                className="flex items-center gap-2 px-4 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"
-              >
-                <Upload className="w-4 h-4" />
-                Importar
-              </button>
-              <button
-                onClick={() => openMemberModal()}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                {(t as any).organizerMembers?.addMember || 'Adicionar'}
-              </button>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="relative">
+                  <button
+                    onClick={() => setShowExportMenu((visible) => !visible)}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                    aria-expanded={showExportMenu}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden min-[420px]:inline">Exportar</span>
+                  </button>
+                  {showExportMenu && (
+                    <div className="absolute left-0 top-full z-20 mt-1 min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg sm:left-auto sm:right-0">
+                      <button onClick={() => { exportCSV(); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
+                        CSV
+                      </button>
+                      <button onClick={() => { exportPhones(); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
+                        <Phone className="w-3.5 h-3.5 inline mr-2" />
+                        {(t as any).organizerMembers?.phoneList || 'Telefones'}
+                      </button>
+                      <button onClick={() => { exportEmails(); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50">
+                        <Mail className="w-3.5 h-3.5 inline mr-2" />
+                        Emails
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  className="flex items-center justify-center gap-2 rounded-lg border border-blue-600 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span className="hidden min-[420px]:inline">Importar</span>
+                </button>
+                <button
+                  onClick={() => openMemberModal()}
+                  className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span className="hidden min-[420px]:inline">{(t as any).organizerMembers?.addMember || 'Adicionar'}</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -816,8 +704,71 @@ export default function OrganizerMembers() {
               <p>{(t as any).organizerMembers?.noMembers || 'Nenhum membro encontrado'}</p>
             </div>
           ) : (
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
+            <>
+              <div className="space-y-3 md:hidden">
+                {filteredSubscriptions.map((sub) => (
+                  <article key={sub.id} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 shrink-0 text-gray-400" />
+                          <h3 className="truncate font-semibold text-gray-900">{sub.member_name || '-'}</h3>
+                        </div>
+                        <p className="mt-1 text-sm text-gray-500">{sub.member_phone || '-'}</p>
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                          sub.status === 'active'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {sub.status === 'active'
+                          ? (t as any).organizerMembers?.active || 'Ativo'
+                          : (t as any).organizerMembers?.expired || 'Expirado'}
+                      </span>
+                    </div>
+                    <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-gray-100 pt-3 text-sm">
+                      <div>
+                        <dt className="text-xs text-gray-400">{(t as any).organizerMembers?.plan || 'Plano'}</dt>
+                        <dd className="mt-0.5 font-medium text-gray-700">{sub.plan?.name || '-'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs text-gray-400">{(t as any).organizerMembers?.expiry || 'Expira'}</dt>
+                        <dd className="mt-0.5 flex items-center gap-1 font-medium text-gray-700">
+                          <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                          {sub.end_date}
+                        </dd>
+                      </div>
+                    </dl>
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => viewHistory(sub)}
+                        className="flex items-center justify-center gap-1.5 rounded-lg bg-gray-50 px-2 py-2 text-xs font-medium text-gray-600"
+                      >
+                        <Eye className="h-4 w-4" />
+                        Histórico
+                      </button>
+                      <button
+                        onClick={() => openMemberModal(sub)}
+                        className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-2 py-2 text-xs font-medium text-blue-700"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => deleteMember(sub.id)}
+                        className="flex items-center justify-center gap-1.5 rounded-lg bg-red-50 px-2 py-2 text-xs font-medium text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Eliminar
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              <div className="hidden overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm md:block">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
@@ -916,130 +867,9 @@ export default function OrganizerMembers() {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </>
           )}
 
-          {leads.length > 0 && (
-            <div className="mt-8 space-y-3">
-              <h3 className="text-md font-semibold text-gray-700 flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-yellow-500" />
-                {(t as any).organizerMembers?.leads || 'Leads'} ({leads.length})
-              </h3>
-              <p className="text-sm text-gray-500">
-                {(t as any).organizerMembers?.leadsDescription || 'Jogadores dos seus torneios que ainda não são membros'}
-              </p>
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-100">
-                      <tr>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">
-                          {(t as any).organizerMembers?.name || 'Nome'}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">
-                          {(t as any).organizerMembers?.phone || 'Telefone'}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">
-                          {(t as any).organizerMembers?.tournament || 'Torneio'}
-                        </th>
-                        <th className="text-right px-4 py-3 font-medium text-gray-600"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {leads.slice(0, 20).map((lead, i) => (
-                        <tr key={i} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-800">{lead.name}</td>
-                          <td className="px-4 py-3 text-gray-600">{lead.phone_number}</td>
-                          <td className="px-4 py-3 text-gray-600">{lead.tournament_name}</td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => {
-                                setMemberForm({
-                                  member_phone: lead.phone_number,
-                                  member_name: lead.name,
-                                  member_email: '',
-                                  plan_id: plans[0]?.id || '',
-                                  amount_paid: 0,
-                                  notes: '',
-                                  status: 'active',
-                                  start_date: new Date().toISOString().split('T')[0],
-                                });
-                                setEditingSubscription(null);
-                                setShowMemberModal(true);
-                              }}
-                              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                            >
-                              <Plus className="w-3.5 h-3.5 inline mr-1" />
-                              {(t as any).organizerMembers?.addAsMember || 'Adicionar'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tournamentPlayerLeads.length > 0 && (
-            <div className="mt-8 space-y-3">
-              <h3 className="text-md font-semibold text-gray-700 flex items-center gap-2">
-                <CreditCard className="w-4 h-4 text-emerald-500" />
-                Jogadores de torneios ({tournamentPlayerLeads.length})
-              </h3>
-              <p className="text-sm text-gray-500">
-                Jogadores que pagaram inscrições mas ainda não são membros
-              </p>
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-100">
-                      <tr>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Nome</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Telefone</th>
-                        <th className="text-right px-4 py-3 font-medium text-gray-600">Torneios</th>
-                        <th className="text-right px-4 py-3 font-medium text-gray-600">Total pago</th>
-                        <th className="text-right px-4 py-3 font-medium text-gray-600"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {tournamentPlayerLeads.slice(0, 30).map((lead, i) => (
-                        <tr key={i} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-gray-800">{lead.player_name}</td>
-                          <td className="px-4 py-3 text-gray-600">{lead.player_phone}</td>
-                          <td className="px-4 py-3 text-right text-gray-600">{lead.tournament_count}</td>
-                          <td className="px-4 py-3 text-right font-medium">{lead.total_spent.toFixed(0)}€</td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() => {
-                                setMemberForm({
-                                  member_phone: lead.player_phone,
-                                  member_name: lead.player_name,
-                                  member_email: '',
-                                  plan_id: plans[0]?.id || '',
-                                  amount_paid: 0,
-                                  notes: '',
-                                  status: 'active',
-                                  start_date: new Date().toISOString().split('T')[0],
-                                });
-                                setEditingSubscription(null);
-                                setShowMemberModal(true);
-                              }}
-                              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                            >
-                              <Plus className="w-3.5 h-3.5 inline mr-1" />
-                              Adicionar
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -1068,7 +898,7 @@ export default function OrganizerMembers() {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {(t as any).organizerMembers?.duration || 'Duração (meses)'}
@@ -1228,7 +1058,7 @@ export default function OrganizerMembers() {
                   ))}
                 </select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {(t as any).organizerMembers?.amountPaid || 'Valor pago (€)'}
@@ -1357,7 +1187,6 @@ export default function OrganizerMembers() {
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
         onImported={() => {
-          loadLeads();
           loadSubscriptions();
         }}
       />
