@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
@@ -53,7 +53,7 @@ type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
 type GenderFilter = 'all' | 'male' | 'female';
 
 function normalizePhone(phone: string): string {
-  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  let cleaned = phone.replace(/[\s().-]/g, '');
   let hadPrefix = false;
   if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true; }
   else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true; }
@@ -345,10 +345,11 @@ export default function OrganizerMembers() {
     if (players?.length) {
       const history: TournamentHistory[] = players
         .filter(p => p.tournament)
-        .map(p => {
-          const tournament = p.tournament as { id: string; name: string; start_date: string; end_date: string };
-          const category = p.category as { name: string } | null;
-          return {
+        .flatMap(p => {
+          const tournament = Array.isArray(p.tournament) ? p.tournament[0] : p.tournament;
+          const category = Array.isArray(p.category) ? p.category[0] : p.category;
+          if (!tournament) return [];
+          return [{
             tournament_id: tournament.id,
             tournament_name: tournament.name,
             start_date: tournament.start_date,
@@ -356,7 +357,7 @@ export default function OrganizerMembers() {
             category_name: category?.name || null,
             final_position: p.final_position,
             payment_status: p.payment_status,
-          };
+          }];
         });
       setTournamentHistory(
         history.filter((h, idx, arr) => arr.findIndex(item => item.tournament_id === h.tournament_id) === idx),
