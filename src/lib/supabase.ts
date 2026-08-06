@@ -115,6 +115,9 @@ export type Team = {
   status?: string;
   placement?: number;
   category_id?: string | null;
+  registration_source?: 'partner_invite' | null;
+  partner_match_invite_id?: string | null;
+  organizer_review_status?: 'pending' | 'confirmed' | null;
   created_at: string;
 };
 
