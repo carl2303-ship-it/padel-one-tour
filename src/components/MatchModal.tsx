@@ -4,7 +4,6 @@ import { X, RotateCcw, Pencil, Check } from 'lucide-react';
 import { rescheduleRemainingMatches } from '../lib/reschedule';
 import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from '../lib/leagueStandings';
 import { advanceKnockoutWinner, populatePlacementMatches, populateTeamPlacementMatches } from '../lib/groups';
-import { processMatchRating } from '../lib/ratingEngine';
 import { useI18n } from '../lib/i18nContext';
 
 async function advanceWinnerToNextRound(
@@ -709,10 +708,10 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
 
   useEffect(() => {
     const loadData = async () => {
-      await fetchTeams();
-      if (matchId) {
-        await fetchMatch();
-      }
+      await Promise.all([
+        fetchTeams(),
+        matchId ? fetchMatch() : Promise.resolve(),
+      ]);
     };
     loadData();
   }, [tournamentId, matchId]);
@@ -894,19 +893,55 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
     }
 
     if (finalStatus === 'completed') {
-      const { data: tournament } = await supabase
-        .from('tournaments')
-        .select('format, number_of_courts, start_time, end_time, match_duration_minutes')
-        .eq('id', tournamentId)
-        .single();
+      const theMatchId = matchId || result.data?.[0]?.id;
+      let tournamentMeta = tournament as any;
+      if (!tournamentMeta?.format) {
+        const { data: tournamentRow } = await supabase
+          .from('tournaments')
+          .select('format, number_of_courts, start_time, end_time, match_duration_minutes')
+          .eq('id', tournamentId)
+          .single();
+        tournamentMeta = tournamentRow;
+      }
 
-      const { data: currentMatch } = await supabase
-        .from('matches')
-        .select('round, match_number, category_id')
-        .eq('id', matchId || result.data?.[0]?.id)
-        .single();
+      const { data: currentMatch } = theMatchId
+        ? await supabase
+            .from('matches')
+            .select('round, match_number, category_id')
+            .eq('id', theMatchId)
+            .single()
+        : { data: null };
 
-      if (winner && (tournament?.format === 'single_elimination' || tournament?.format === 'groups_knockout')) {
+      const resolvedFormat = tournamentMeta?.format;
+      const isGroupRound = typeof currentMatch?.round === 'string' && currentMatch.round.startsWith('group_');
+
+      // Fase de grupos: não eliminar/avançar; só montar o quadro no último jogo.
+      if (winner && resolvedFormat === 'groups_knockout' && isGroupRound && currentMatch) {
+        try {
+          let groupQuery = supabase
+            .from('matches')
+            .select('id, status, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3')
+            .eq('tournament_id', tournamentId)
+            .like('round', 'group_%');
+          if (currentMatch.category_id) {
+            groupQuery = groupQuery.eq('category_id', currentMatch.category_id);
+          }
+          const { data: groupMatches } = await groupQuery;
+          const hasResult = (m: any) => {
+            const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+            const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+            return m.status === 'completed' || t1 > 0 || t2 > 0;
+          };
+          if (groupMatches && groupMatches.length > 0 && groupMatches.every(hasResult)) {
+            console.log('[MATCH_MODAL] All group matches done — populating knockout');
+            await populateTeamPlacementMatches(tournamentId, currentMatch.category_id || null);
+          } else {
+            console.log('[MATCH_MODAL] Group match saved — knockout sync deferred until groups finish');
+          }
+        } catch (err) {
+          console.error('[MATCH_MODAL] populateTeamPlacementMatches failed:', err);
+        }
+      } else if (winner && (resolvedFormat === 'single_elimination' || resolvedFormat === 'groups_knockout')) {
         const loserId = winner === formData.team1_id ? formData.team2_id : formData.team1_id;
 
         await supabase
@@ -943,31 +978,13 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             tournamentId,
             currentMatch.round,
             currentMatch.category_id,
-            tournament
+            tournamentMeta
           );
-
-          if (
-            typeof currentMatch.round === 'string' &&
-            currentMatch.round.startsWith('group_')
-          ) {
-            try {
-              console.log('[MATCH_MODAL] Group match done, populating SF/QF/RO16 from rankings (defensive)');
-              await populateTeamPlacementMatches(tournamentId, currentMatch.category_id || null);
-            } catch (err) {
-              console.error('[MATCH_MODAL] populateTeamPlacementMatches failed:', err);
-            }
-          }
         }
-
-        // Disabled: do not auto-reschedule remaining matches when a result is entered
-        // The grid view supports manual drag-and-drop instead, and the function had a runtime bug.
-        // if (currentMatch?.round !== 'group_stage' && !currentMatch?.category_id) {
-        //   await rescheduleRemainingMatches(tournamentId);
-        // }
       }
 
       // CROSSED PLAYOFFS TEAMS - Handle progression for crossed playoff rounds
-      if (winner && tournament?.format === 'crossed_playoffs_teams' && currentMatch) {
+      if (winner && resolvedFormat === 'crossed_playoffs_teams' && currentMatch) {
         const isCrossedKnockout = currentMatch.round?.startsWith('crossed_r1_') || currentMatch.round?.startsWith('crossed_r2_');
         
         if (isCrossedKnockout) {
@@ -990,7 +1007,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         }
       }
 
-      if ((tournament?.format === 'individual_groups_knockout' || tournament?.format === 'mixed_american') && currentMatch) {
+      if ((resolvedFormat === 'individual_groups_knockout' || resolvedFormat === 'mixed_american') && currentMatch) {
         const isGroupMatch = currentMatch.round.startsWith('group_');
 
         if (isGroupMatch) {
@@ -1006,7 +1023,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             if (allGroupsDone) {
               // Para mixed_american, NÃO usar populatePlacementMatches genérica
               // O auto-fill correto (com cruzamento F+M) é feito no fetchTournamentData / handleMatchRealtime
-              if (tournament?.format === 'mixed_american') {
+              if (resolvedFormat === 'mixed_american') {
                 console.log('[MATCH_MODAL] All group matches completed (mixed format) - knockout will be populated by fetchTournamentData');
               } else {
                 console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');
@@ -1027,7 +1044,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
           console.log('[MATCH_MODAL] Individual Groups+Knockout match completed, advancing winner/loser');
           await advanceKnockoutWinner(
             tournamentId,
-            matchId || result.data?.[0]?.id,
+            theMatchId,
             currentMatch.category_id
           );
         }
@@ -1063,22 +1080,12 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
       }
     }
 
-    // Processar rating dos jogadores após jogo completado
-    if (finalStatus === 'completed') {
-      const theMatchId = matchId || result.data?.[0]?.id;
-      if (theMatchId) {
-        try {
-          console.log('[MATCH_MODAL] Processing rating for match:', theMatchId);
-          await processMatchRating(theMatchId);
-        } catch (err) {
-          console.error('[MATCH_MODAL] Error processing match rating:', err);
-          // Não bloquear o fluxo se o rating falhar
-        }
-      }
-    }
+    // Ratings dos jogadores: só no "Finalizar torneio" (processAllUnratedMatches),
+    // para não atrasar a introdução de resultados.
 
+    // Só onSuccess: o parent fecha o modal e faz 1 refresh.
+    // NÃO chamar onClose() aqui — isso duplicava o fetchTournamentData.
     onSuccess();
-    onClose();
   };
 
   const handleRevert = async () => {
@@ -1280,7 +1287,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
 
       console.log('[MATCH_MODAL] Match reverted successfully');
       onSuccess();
-      onClose();
     } catch (err) {
       console.error('[MATCH_MODAL] Error reverting match:', err);
       setError('Failed to revert match');

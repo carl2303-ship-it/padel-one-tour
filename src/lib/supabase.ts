@@ -115,6 +115,7 @@ export type Team = {
   status?: string;
   placement?: number;
   category_id?: string | null;
+  registration_source?: string | null;
   created_at: string;
 };
 

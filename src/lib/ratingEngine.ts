@@ -299,7 +299,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
   const { data: playersData } = await supabase
     .from('players')
-    .select('id, name, phone_number, user_id')
+    .select('id, name, phone_number, user_id, player_account_id')
     .in('id', playerIds)
 
   if (!playersData || playersData.length < 4) {
@@ -309,11 +309,33 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
   const accountsMap = new Map<string, any>()
   const selectFields = 'id, user_id, name, level, rated_matches, wins, losses, level_reliability_percent'
+  const normalizePhoneDigits = (phone: string) => {
+    let cleaned = phone.replace(/[\s\-\(\)\.]/g, '')
+    let hadPrefix = false
+    if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true }
+    else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true }
+    else if (cleaned.startsWith('00')) { cleaned = cleaned.slice(2); hadPrefix = true }
+    if (hadPrefix) {
+      cleaned = cleaned.replace(/^351(?=\d{9})/, '')
+    } else {
+      cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '')
+    }
+    return cleaned
+  }
 
   for (const p of playersData) {
     let account: any = null
 
-    if (p.user_id) {
+    if ((p as any).player_account_id) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select(selectFields)
+        .eq('id', (p as any).player_account_id)
+        .maybeSingle()
+      if (data) account = data
+    }
+
+    if (!account && p.user_id) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
@@ -323,19 +345,28 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     }
 
     if (!account && p.phone_number) {
+      const normalized = normalizePhoneDigits(p.phone_number)
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
-        .eq('phone_number', p.phone_number)
+        .eq('phone_number', normalized)
         .maybeSingle()
       if (data) account = data
+      if (!account && normalized !== p.phone_number) {
+        const { data: data2 } = await supabase
+          .from('player_accounts')
+          .select(selectFields)
+          .eq('phone_number', p.phone_number)
+          .maybeSingle()
+        if (data2) account = data2
+      }
     }
 
     if (!account && p.name) {
       const { data } = await supabase
         .from('player_accounts')
         .select(selectFields)
-        .ilike('name', p.name)
+        .eq('name', p.name.trim())
         .maybeSingle()
       if (data) account = data
     }
@@ -343,6 +374,12 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     if (account) {
       accountsMap.set(p.id, account)
     }
+  }
+
+  const accountIds = Array.from(accountsMap.values()).map((a: any) => a.id)
+  if (new Set(accountIds).size < accountIds.length) {
+    console.error('[RatingEngine] Duplicate player_account mapping in match — skipping to avoid corrupt history:', matchId)
+    return null
   }
 
   if (accountsMap.size < 4) {

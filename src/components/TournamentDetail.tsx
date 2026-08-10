@@ -1348,7 +1348,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1473,7 +1473,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               return !!(m.team1_id || m.team2_id);
             });
 
-            if (allDone && hasEmpty) {
+            if (allDone) {
               categoriesNeedingSync.push(cat.id);
             } else if (!allDone && hasStaleTeams) {
               categoriesNeedingSync.push(cat.id);
@@ -1698,7 +1698,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1812,7 +1812,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
             console.log(`[FETCH-GK] Category ${cat.name}: groups ${allDone ? 'all done' : 'NOT all done'}, knockouts ${hasEmpty ? 'have empty' : 'all filled'}${hasStaleTeams ? ', has stale teams' : ''}`);
 
-            const needsPopulate = allDone && hasEmpty;
+            const needsPopulate = allDone;
             const needsClear = !allDone && hasStaleTeams;
             if (!needsPopulate && !needsClear) continue;
 
@@ -1822,7 +1822,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const doneCount = catGroupMatches.filter(hasResultLocal).length;
             const koEmptyCount = catKnockouts.filter((m: any) => !m.team1_id || !m.team2_id).length;
             const koStaleCount = catKnockouts.filter((m: any) => !hasResultLocal(m) && (m.team1_id || m.team2_id)).length;
-            const fingerprint = `${doneCount}/${catGroupMatches.length}|emp:${koEmptyCount}|stale:${koStaleCount}|action:${needsPopulate ? 'pop' : 'clr'}`;
+            const koPairSig = catKnockouts
+              .filter((m: any) => ['round_of_16', 'quarter_final', 'quarterfinal', 'semi_final', 'semifinal'].includes(m.round))
+              .map((m: any) => `${m.round}:${m.match_number}:${m.team1_id || ''}-${m.team2_id || ''}`)
+              .sort()
+              .join(',');
+            const fingerprint = `${doneCount}/${catGroupMatches.length}|emp:${koEmptyCount}|stale:${koStaleCount}|pairs:${koPairSig}|action:${needsPopulate ? 'pop' : 'clr'}`;
             const lastFingerprint = gkSyncFingerprintRef.current.get(cat.id);
             if (lastFingerprint === fingerprint) {
               console.log(`[FETCH-GK] Skip ${cat.name}: same state as last attempt (${fingerprint}) - populate cannot resolve, breaking loop`);
@@ -7487,7 +7492,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             {groupTeams.map(team => (
                               <div key={team.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg gap-2">
                                 <div className="min-w-0">
-                                  <p className="font-semibold text-gray-900">{team.name}</p>
+                                  <p className="font-semibold text-gray-900">
+                                    {team.seed != null && Number(team.seed) > 0 && (
+                                      <span className="text-xs text-blue-500 mr-1.5 font-semibold">CS{team.seed}</span>
+                                    )}
+                                    {team.name}
+                                    {(team as any).registration_source === 'partner_match' && (
+                                      <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-violet-100 text-violet-700 rounded-full font-medium align-middle">Via parceiro</span>
+                                    )}
+                                  </p>
                                   <p className="text-sm text-gray-600">
                                     {team.player1?.name}
                                     {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
@@ -7529,7 +7542,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           className="flex items-center justify-between bg-white border rounded-lg p-4 hover:shadow-md transition"
                         >
                           <div>
-                            <p className="font-semibold text-gray-900">{team.name}</p>
+                            <p className="font-semibold text-gray-900">
+                              {team.seed != null && Number(team.seed) > 0 && (
+                                <span className="text-xs text-blue-500 mr-1.5 font-semibold">CS{team.seed}</span>
+                              )}
+                              {team.name}
+                              {(team as any).registration_source === 'partner_match' && (
+                                <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-violet-100 text-violet-700 rounded-full font-medium align-middle">Via parceiro</span>
+                              )}
+                            </p>
                             <p className="text-sm text-gray-600">
                               {team.player1?.name}
                               {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
@@ -8058,7 +8079,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                       alert('Necessário pelo menos 2 equipas por grupo.');
                                     }
                                   } else if (knockoutStage === 'quarterfinals' && quarterFinals.length >= 4 && groupNames.length >= 2) {
-                                    // Quartos com 2 grupos: A1 vs B4, A2 vs B3, B1 vs A4, B2 vs A3
+                                    // Quartos: A1-B4, A3-B2, A2-B3, A4-B1
+                                    // (se favoritos ganharem → SF: A1 vs B2 e A2 vs B1)
                                     const A = byGroup[groupNames[0]] || [];
                                     const B = byGroup[groupNames[1]] || [];
                                     
@@ -8069,18 +8091,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                       }).eq('id', quarterFinals[0].id);
                                       
                                       await supabase.from('super_team_confrontations').update({
-                                        super_team_1_id: A[1].super_team_id,
-                                        super_team_2_id: B[2].super_team_id,
+                                        super_team_1_id: A[2].super_team_id,
+                                        super_team_2_id: B[1].super_team_id,
                                       }).eq('id', quarterFinals[1].id);
                                       
                                       await supabase.from('super_team_confrontations').update({
-                                        super_team_1_id: B[0].super_team_id,
-                                        super_team_2_id: A[3].super_team_id,
+                                        super_team_1_id: A[1].super_team_id,
+                                        super_team_2_id: B[2].super_team_id,
                                       }).eq('id', quarterFinals[2].id);
                                       
                                       await supabase.from('super_team_confrontations').update({
-                                        super_team_1_id: B[1].super_team_id,
-                                        super_team_2_id: A[2].super_team_id,
+                                        super_team_1_id: A[3].super_team_id,
+                                        super_team_2_id: B[0].super_team_id,
                                       }).eq('id', quarterFinals[3].id);
                                       
                                       alert('Equipas atribuídas aos quartos de final!');
