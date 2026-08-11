@@ -8,6 +8,7 @@ import {
   ArrowUpDown, Award, Upload, CreditCard
 } from 'lucide-react';
 import ImportContactsModal from './ImportContactsModal';
+import OrganizerPlayersModal from './OrganizerPlayersModal';
 
 interface MembershipPlan {
   id: string;
@@ -47,7 +48,7 @@ interface TournamentHistory {
   payment_status: string | null;
 }
 
-type Tab = 'plans' | 'members';
+type Tab = 'players' | 'plans' | 'members';
 type StatusFilter = 'all' | 'active' | 'expired';
 type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
 type GenderFilter = 'all' | 'male' | 'female';
@@ -78,7 +79,7 @@ export default function OrganizerMembers() {
   const { t } = useI18n();
   const { user } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<Tab>('members');
+  const [activeTab, setActiveTab] = useState<Tab>('players');
   const [plans, setPlans] = useState<MembershipPlan[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
@@ -475,7 +476,18 @@ export default function OrganizerMembers() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1">
+      <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1">
+        <button
+          onClick={() => setActiveTab('players')}
+          className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+            activeTab === 'players'
+              ? 'bg-white text-blue-600 shadow-sm'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          {(t as any).organizerMembers?.players || 'Jogadores'}
+        </button>
         <button
           onClick={() => setActiveTab('members')}
           className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
@@ -499,6 +511,8 @@ export default function OrganizerMembers() {
           {(t as any).organizerMembers?.plans || 'Planos'}
         </button>
       </div>
+
+      {activeTab === 'players' && <OrganizerPlayersModal embedded />}
 
       {activeTab === 'plans' && (
         <div className="space-y-4">
