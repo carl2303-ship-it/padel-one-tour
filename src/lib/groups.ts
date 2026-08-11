@@ -2444,8 +2444,6 @@ async function populateTeamPlacementForCategory(
   const qfs = ko.filter(m => m.round === 'quarter_final' || m.round === 'quarterfinal').sort((a, b) => a.match_number - b.match_number);
   const ro16 = ko.filter(m => m.round === 'round_of_16').sort((a, b) => a.match_number - b.match_number);
 
-  const isEmpty = (m: any) => !m.team1_id || !m.team2_id;
-
   const buildCrossPairs = (teams: Stats[], n: number): Array<[Stats, Stats]> => {
     const pool = teams.slice(0, n);
     const pairs: Array<[Stats, Stats]> = [];
@@ -2470,27 +2468,29 @@ async function populateTeamPlacementForCategory(
   const applyKnockoutPairs = async (matches: typeof ko, pairs: Array<[Stats, Stats]>, label: string) => {
     for (let i = 0; i < matches.length && i < pairs.length; i++) {
       const m = matches[i];
-      if (!isEmpty(m)) continue;
+      // Reescrever slots sem resultado (corrige quadro antigo ou ordem errada).
+      if (hasRealScores(m)) continue;
       const [a, b] = pairs[i];
       if (!a || !b) continue;
+      if (m.team1_id === a.id && m.team2_id === b.id) continue;
       await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
       console.log(`[POPULATE_TEAM_PLACEMENT] ${label} ${m.match_number}: ${a.name} vs ${b.name}`);
     }
   };
 
-  if (ro16.length > 0 && ro16.some(isEmpty) && overallRanking.length >= 2) {
+  if (ro16.length > 0 && ro16.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
     const pairs = buildKnockoutPairs(ro16.length);
     await applyKnockoutPairs(ro16, pairs, 'RO16');
     return;
   }
 
-  if (qfs.length > 0 && qfs.some(isEmpty) && overallRanking.length >= 2) {
+  if (qfs.length > 0 && qfs.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
     const pairs = buildKnockoutPairs(qfs.length);
     await applyKnockoutPairs(qfs, pairs, 'QF');
     return;
   }
 
-  if (semis.length > 0 && semis.some(isEmpty) && overallRanking.length >= 2) {
+  if (semis.length > 0 && semis.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
     const pairs = buildKnockoutPairs(semis.length);
     await applyKnockoutPairs(semis, pairs, 'SF');
   }
