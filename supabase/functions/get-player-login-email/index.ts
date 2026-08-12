@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { normalizePhone } from '../_shared/phoneUtils.ts';
+import { isProtectedAuthUser } from '../_shared/protectedAuthUsers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -97,26 +98,39 @@ Deno.serve(async (req: Request) => {
 
     if (playerAccount.user_id) {
       console.log('[DEBUG] Player has user_id, getting email from auth system...');
-      const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(
-        playerAccount.user_id
-      );
-      
-      if (authUser?.user?.email) {
-        playerEmail = authUser.user.email;
-        console.log('[DEBUG] Got email from auth.users:', playerEmail);
-        
-        // Sync email to player_accounts if different
-        if (playerAccount.email !== playerEmail) {
-          console.log('[DEBUG] Syncing email to player_accounts (was:', playerAccount.email, ', now:', playerEmail, ')');
-          await supabaseAdmin
-            .from('player_accounts')
-            .update({ email: playerEmail })
-            .eq('id', playerAccount.id);
-        }
-      } else {
-        console.log('[DEBUG] Auth user not found or has no email:', authError?.message);
-        // Auth user might be deleted/corrupt - use player_accounts email or generate
+
+      const protection = await isProtectedAuthUser(supabaseAdmin, playerAccount.user_id);
+      if (protection.protected) {
+        console.error('[DEBUG] Clearing mis-linked protected auth user:', protection.reason);
+        await supabaseAdmin
+          .from('player_accounts')
+          .update({ user_id: null })
+          .eq('id', playerAccount.id);
+        playerAccount.user_id = null;
+        // Keep player_accounts.email only if it is not the organizer email
         playerEmail = playerAccount.email;
+      } else {
+        const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.getUserById(
+          playerAccount.user_id
+        );
+
+        if (authUser?.user?.email) {
+          playerEmail = authUser.user.email;
+          console.log('[DEBUG] Got email from auth.users:', playerEmail);
+
+          // Sync email to player_accounts if different
+          if (playerAccount.email !== playerEmail) {
+            console.log('[DEBUG] Syncing email to player_accounts (was:', playerAccount.email, ', now:', playerEmail, ')');
+            await supabaseAdmin
+              .from('player_accounts')
+              .update({ email: playerEmail })
+              .eq('id', playerAccount.id);
+          }
+        } else {
+          console.log('[DEBUG] Auth user not found or has no email:', authError?.message);
+          // Auth user might be deleted/corrupt - use player_accounts email or generate
+          playerEmail = playerAccount.email;
+        }
       }
     } else {
       // No user_id yet - use email from player_accounts
@@ -154,23 +168,38 @@ Deno.serve(async (req: Request) => {
       const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
       const existingUser = existingUsers?.users?.find(u => u.email === playerEmail);
 
-      if (existingUser) {
+      const existingProtection = existingUser
+        ? await isProtectedAuthUser(supabaseAdmin, existingUser.id)
+        : { protected: false };
+
+      if (existingUser && !existingProtection.protected) {
         console.log('[DEBUG] Auth user already exists with this email:', existingUser.id);
-        
+
         // Link the existing user
         await supabaseAdmin
           .from('player_accounts')
           .update({ user_id: existingUser.id })
           .eq('id', playerAccount.id);
-        
+
         // Reset password to standard format
         await supabaseAdmin.auth.admin.updateUserById(
           existingUser.id,
           { password: defaultPassword }
         );
-        
+
         console.log('[DEBUG] Linked existing auth user and reset password');
       } else {
+        if (existingProtection.protected) {
+          // Do not hijack club-owner emails — create a phone-based auth email instead
+          const phoneDigits = accountPhone.replace(/[^\d]/g, '');
+          playerEmail = `${phoneDigits}@boostpadel.app`;
+          console.log('[DEBUG] Email belongs to protected user, using generated email:', playerEmail);
+          await supabaseAdmin
+            .from('player_accounts')
+            .update({ email: playerEmail })
+            .eq('id', playerAccount.id);
+        }
+
         const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
           email: playerEmail,
           password: defaultPassword,
