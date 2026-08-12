@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { normalizePhone } from '../_shared/phoneUtils.ts';
-import { isProtectedAuthUser } from '../_shared/protectedAuthUsers.ts';
+import { findPlayerAccountUsingAuthUser, isProtectedAuthUser } from '../_shared/protectedAuthUsers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -171,8 +171,15 @@ Deno.serve(async (req: Request) => {
       const existingProtection = existingUser
         ? await isProtectedAuthUser(supabaseAdmin, existingUser.id)
         : { protected: false };
+      const existingOwner = existingUser
+        ? await findPlayerAccountUsingAuthUser(
+          supabaseAdmin,
+          existingUser.id,
+          playerAccount.id,
+        )
+        : null;
 
-      if (existingUser && !existingProtection.protected) {
+      if (existingUser && !existingProtection.protected && !existingOwner) {
         console.log('[DEBUG] Auth user already exists with this email:', existingUser.id);
 
         // Link the existing user
@@ -189,11 +196,18 @@ Deno.serve(async (req: Request) => {
 
         console.log('[DEBUG] Linked existing auth user and reset password');
       } else {
-        if (existingProtection.protected) {
-          // Do not hijack club-owner emails — create a phone-based auth email instead
+        if (existingProtection.protected || existingOwner) {
+          // Do not hijack club-owner emails or an auth user already tied to another player
           const phoneDigits = accountPhone.replace(/[^\d]/g, '');
           playerEmail = `${phoneDigits}@boostpadel.app`;
-          console.log('[DEBUG] Email belongs to protected user, using generated email:', playerEmail);
+          console.log(
+            '[DEBUG] Email/auth unavailable (protected=',
+            !!existingProtection.protected,
+            ' alreadyLinked=',
+            existingOwner?.id || null,
+            '), using generated email:',
+            playerEmail,
+          );
           await supabaseAdmin
             .from('player_accounts')
             .update({ email: playerEmail })

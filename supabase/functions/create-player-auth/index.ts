@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { isProtectedAuthUser } from "../_shared/protectedAuthUsers.ts";
+import { findPlayerAccountUsingAuthUser, isProtectedAuthUser } from "../_shared/protectedAuthUsers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -91,9 +91,13 @@ Deno.serve(async (req: Request) => {
 
     if (userWithEmail) {
       const protection = await isProtectedAuthUser(supabaseAdmin, userWithEmail.id);
-      if (protection.protected) {
-        // Never attach players to club-owner / organizer auth users.
-        // Create a dedicated phone-based auth identity instead.
+      const alreadyLinked = await findPlayerAccountUsingAuthUser(
+        supabaseAdmin,
+        userWithEmail.id,
+      );
+      if (protection.protected || alreadyLinked) {
+        // Never attach players to club-owner / organizer auth users,
+        // or to an auth identity already owned by another player_account.
         const phoneDigits = String(phone_number).replace(/[^\d]/g, "");
         const generatedEmail = `${phoneDigits}@boostpadel.app`;
         accountEmail = generatedEmail;

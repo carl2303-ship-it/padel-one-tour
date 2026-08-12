@@ -51,3 +51,28 @@ export async function isProtectedAuthUser(
 
   return { protected: false };
 }
+
+/**
+ * Each auth user_id must map to at most one player_accounts row.
+ * Returns the existing owner if this user_id is already taken by another account.
+ */
+export async function findPlayerAccountUsingAuthUser(
+  supabaseAdmin: SupabaseClient,
+  userId: string | null | undefined,
+  exceptPlayerAccountId?: string | null,
+): Promise<{ id: string; name: string | null } | null> {
+  if (!userId) return null;
+
+  let query = supabaseAdmin
+    .from("player_accounts")
+    .select("id, name")
+    .eq("user_id", userId)
+    .limit(1);
+
+  if (exceptPlayerAccountId) {
+    query = query.neq("id", exceptPlayerAccountId);
+  }
+
+  const { data } = await query.maybeSingle();
+  return data ?? null;
+}
