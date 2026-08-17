@@ -1,0 +1,44 @@
+From 70dd4eb6cc49c16094c1200a930218a8223fd332 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 12 Aug 2026 11:01:16 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?fix:=20standings=20tamb=C3=A9m=20n=C3=A3o?=
+ =?UTF-8?q?=20usam=20label=20de=20equipa=20como=20jogador?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ src/lib/playerDashboardData.ts | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/src/lib/playerDashboardData.ts b/src/lib/playerDashboardData.ts
+index d21016f..83f4f82 100644
+--- a/src/lib/playerDashboardData.ts
++++ b/src/lib/playerDashboardData.ts
+@@ -1202,11 +1202,19 @@ export async function fetchTournamentStandingsAndMatches(
+       let finalP1Name = t.player1_id ? playerNamesMap.get(t.player1_id) : undefined
+       let finalP2Name = t.player2_id ? playerNamesMap.get(t.player2_id) : undefined
+       
+-      // Fallback: parse do nome da equipa "Player1 / Player2"
++      // Fallback: só nomes de pessoas parseados (nunca o label da equipa inteiro)
+       if (!finalP1Name || !finalP2Name) {
+-        const parts = (t.name || '').split(/\s*[\/\\]\s*/)
+-        if (!finalP1Name && parts[0]?.trim()) finalP1Name = parts[0].trim()
+-        if (!finalP2Name && parts[1]?.trim()) finalP2Name = parts[1].trim()
++        const [a, b] = (() => {
++          const raw = (t.name || '').trim()
++          if (!raw) return [null, null] as [string | null, string | null]
++          const parts = raw.split(/\s*\/\s*|\s*&\s*|,\s*|\s+-\s+/).map((s: string) => s.trim()).filter(Boolean)
++          if (parts.length >= 2) return [parts[0], parts[1]] as [string, string]
++          const hyphen = raw.split(/-(?=[A-ZÀ-Ú])/).map((s: string) => s.trim()).filter(Boolean)
++          if (hyphen.length === 2) return [hyphen[0], hyphen[1]] as [string, string]
++          return [null, null] as [string | null, string | null]
++        })()
++        if (!finalP1Name && a) finalP1Name = a
++        if (!finalP2Name && b) finalP2Name = b
+       }
+       
+       standingsMap.set(t.id, {
+-- 
+2.43.0
+
