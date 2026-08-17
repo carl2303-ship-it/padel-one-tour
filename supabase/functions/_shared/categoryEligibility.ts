@@ -72,7 +72,10 @@ export function isPlayerEligibleForCategory(
     if (hasAcceptedLevels && !cat.accepted_levels!.includes(player.player_category || "")) {
       return false;
     }
-    if (hasLevelRange && player.level != null) {
+    if (hasLevelRange && player.level == null) {
+      return false;
+    }
+    if (hasLevelRange) {
       if (cat.min_level != null && player.level < cat.min_level) return false;
       if (cat.max_level != null && player.level > cat.max_level) return false;
     }

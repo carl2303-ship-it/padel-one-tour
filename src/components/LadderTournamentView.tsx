@@ -25,6 +25,8 @@ type TeamRow = {
   player1_id: string
   player2_id: string
   category_id?: string | null
+  registration_source?: 'partner_invite' | null
+  organizer_review_status?: 'pending' | 'confirmed' | null
   player1?: { id: string; name: string; user_id?: string | null; player_account_id?: string | null }
   player2?: { id: string; name: string; user_id?: string | null; player_account_id?: string | null }
 }
@@ -64,6 +66,7 @@ export default function LadderTournamentView({
   const [teamClubNames, setTeamClubNames] = useState<Map<string, string>>(new Map())
   const [resultModal, setResultModal] = useState<LadderChallenge | null>(null)
   const [busy, setBusy] = useState(false)
+  const [reviewSavingId, setReviewSavingId] = useState<string | null>(null)
 
   const isOrganizer = Boolean(user?.id && tournament.user_id === user.id)
 
@@ -104,7 +107,7 @@ export default function LadderTournamentView({
       supabase
         .from('teams')
         .select(
-          'id, name, player1_id, player2_id, category_id, seed, player1:players!teams_player1_id_fkey(id, name, email, phone_number, user_id, player_account_id), player2:players!teams_player2_id_fkey(id, name, email, phone_number, user_id, player_account_id)'
+          'id, name, player1_id, player2_id, category_id, seed, registration_source, organizer_review_status, player1:players!teams_player1_id_fkey(id, name, email, phone_number, user_id, player_account_id), player2:players!teams_player2_id_fkey(id, name, email, phone_number, user_id, player_account_id)'
         )
         .eq('tournament_id', tournament.id)
         .eq('category_id', resolved)
@@ -161,6 +164,54 @@ export default function LadderTournamentView({
   useEffect(() => {
     void load()
   }, [load])
+
+  const confirmPartnerTeamReview = async (teamId: string) => {
+    if (!isOrganizer) return
+    setReviewSavingId(teamId)
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ organizer_review_status: 'confirmed' })
+      .eq('id', teamId)
+      .eq('tournament_id', tournament.id)
+      .eq('registration_source', 'partner_invite')
+      .select('id')
+      .maybeSingle()
+    setReviewSavingId(null)
+    if (error || !data) {
+      alert(`Não foi possível verificar a equipa: ${error?.message || 'sem permissão'}`)
+      return
+    }
+    setTeams(prev => prev.map(team =>
+      team.id === teamId ? { ...team, organizer_review_status: 'confirmed' } : team
+    ))
+  }
+
+  const PartnerReviewBadges = ({ team }: { team: TeamRow }) => {
+    if (team.registration_source !== 'partner_invite') return null
+    const verified = team.organizer_review_status === 'confirmed'
+    return (
+      <span className="flex items-center gap-1 mt-1 flex-wrap">
+        <span className="px-1.5 py-0.5 text-[10px] bg-cyan-100 text-cyan-800 rounded-full">
+          Automática via parceiro
+        </span>
+        <span className={`px-1.5 py-0.5 text-[10px] rounded-full ${
+          verified ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+        }`}>
+          {verified ? 'Verificada' : 'Por verificar'}
+        </span>
+        {isOrganizer && !verified && (
+          <button
+            type="button"
+            disabled={reviewSavingId === team.id}
+            onClick={() => void confirmPartnerTeamReview(team.id)}
+            className="px-1.5 py-0.5 text-[10px] border border-green-300 text-green-700 rounded-full disabled:opacity-50"
+          >
+            {reviewSavingId === team.id ? 'A verificar…' : 'Marcar verificada'}
+          </button>
+        )}
+      </span>
+    )
+  }
 
   const myPlayerIds = useMemo(() => {
     const ids = new Set<string>()
@@ -605,6 +656,7 @@ export default function LadderTournamentView({
                         {(tm.player1?.name || '?') + ' / ' + (tm.player2?.name || '?')}
                       </span>
                     )}
+                    {tm && <PartnerReviewBadges team={tm} />}
                   </span>
                   <div className="flex gap-1">
                     {tm && (
@@ -706,6 +758,7 @@ export default function LadderTournamentView({
                         <div className="text-xs text-gray-500">
                           {tm ? `${tm.player1?.name || '?'} / ${tm.player2?.name || '?'}` : ''}
                         </div>
+                        {tm && <PartnerReviewBadges team={tm} />}
                       </td>
                       <td className="py-2 pr-4 text-xs text-gray-500">{teamClubNames.get(row.team_id) ?? '—'}</td>
                       <td className="py-2">

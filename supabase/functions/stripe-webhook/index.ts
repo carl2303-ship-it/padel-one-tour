@@ -109,6 +109,66 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // Partner confirmation creates the team before payment. Complete that
+      // existing registration instead of creating duplicate players/team.
+      if (metadata.existingTeamId && metadata.tournamentId) {
+        const { data: existingTeam, error: teamLookupError } = await supabase
+          .from('teams')
+          .select('id, tournament_id, partner_match_invite_id')
+          .eq('id', metadata.existingTeamId)
+          .eq('tournament_id', metadata.tournamentId)
+          .maybeSingle();
+        if (teamLookupError || !existingTeam?.partner_match_invite_id) {
+          throw new Error('Partner invite team not found');
+        }
+
+        const { data: existingPartnerTransaction } = await supabase
+          .from('payment_transactions')
+          .select('id')
+          .eq('stripe_checkout_session_id', session.id)
+          .maybeSingle();
+
+        let transactionId = existingPartnerTransaction?.id;
+        if (!transactionId) {
+          const { data: transaction, error: transactionError } = await supabase
+            .from('payment_transactions')
+            .insert({
+              tournament_id: metadata.tournamentId,
+              stripe_checkout_session_id: session.id,
+              stripe_payment_intent_id: session.payment_intent,
+              amount: session.amount_total / 100,
+              currency: session.currency || 'eur',
+              status: 'succeeded',
+              organizer_user_id: metadata.organizerUserId,
+              metadata: {
+                teamName: metadata.teamName,
+                categoryId: metadata.categoryId || null,
+                partnerMatchInviteId: existingTeam.partner_match_invite_id,
+              },
+            })
+            .select('id')
+            .single();
+          if (transactionError || !transaction) {
+            throw new Error(`Failed to create payment transaction: ${transactionError?.message}`);
+          }
+          transactionId = transaction.id;
+        }
+
+        const { error: updateTeamError } = await supabase
+          .from('teams')
+          .update({
+            payment_status: 'paid',
+            payment_transaction_id: transactionId,
+          })
+          .eq('id', existingTeam.id);
+        if (updateTeamError) throw updateTeamError;
+
+        return new Response(
+          JSON.stringify({ success: true, message: 'Partner registration payment completed' }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
       const { data: existingTransaction } = await supabase
         .from('payment_transactions')
         .select('*')
