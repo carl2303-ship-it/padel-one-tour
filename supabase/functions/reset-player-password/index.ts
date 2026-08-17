@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { normalizePhone } from '../_shared/phoneUtils.ts';
+import { isProtectedAuthUser } from '../_shared/protectedAuthUsers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -125,6 +126,29 @@ Deno.serve(async (req: Request) => {
     const authEmail = authUser.user.email;
     console.log('[DEBUG] Auth user email:', authEmail);
     console.log('[DEBUG] Player account email:', playerAccount.email);
+
+    // Never reset passwords for club owners / organizers / super-admins.
+    // Mis-linked player_accounts would otherwise overwrite the organizer login.
+    const protection = await isProtectedAuthUser(supabaseAdmin, playerAccount.user_id);
+    if (protection.protected) {
+      console.error('[DEBUG] Refusing password reset for protected auth user:', protection.reason);
+      await supabaseAdmin
+        .from('player_accounts')
+        .update({ user_id: null })
+        .eq('id', playerAccount.id);
+
+      return new Response(
+        JSON.stringify({
+          error: 'Player account was incorrectly linked to an organizer/club owner account. Link cleared — ask the player to log in again to create a separate auth user.',
+          reason: protection.reason,
+          hint: 'Do not reuse club-owner emails for player accounts.',
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
     // Sync email between player_accounts and auth if needed
     if (authEmail && playerAccount.email !== authEmail) {
