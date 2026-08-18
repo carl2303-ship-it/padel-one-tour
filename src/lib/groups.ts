@@ -1328,6 +1328,11 @@ export async function populatePlacementMatches(
     return;
   }
 
+  if (allRo16.length > 0) {
+    console.log('[POPULATE_PLACEMENT] Round of 16 already populated; later rounds come from winners, not group standings');
+    return;
+  }
+
   // ====================================================================
   // QUARTERFINALS POPULATION: If quarterfinals exist and are unpopulated
   // ====================================================================
@@ -1470,6 +1475,11 @@ export async function populatePlacementMatches(
     
     console.log('[POPULATE_PLACEMENT] Quarterfinal population done');
 
+    return;
+  }
+
+  if (allQuarterfinals.length > 0) {
+    console.log('[POPULATE_PLACEMENT] Quarterfinals already populated; semifinals come from QF winners, not group standings');
     return;
   }
 
@@ -2251,9 +2261,10 @@ function buildTwoGroupKnockoutPairs<T extends { id: string }>(
  *   • Sem categoria → processa todas as categorias do torneio.
  *   • Com categoria → processa apenas essa categoria.
  *
- * Só preenche matches que estejam VAZIOS (team1_id ou team2_id null) — nunca
- * sobrescreve atribuições manuais.  Só corre quando todos os jogos de grupos
- * dessa categoria estiverem completos.
+ * Só corre quando todos os jogos de grupos dessa categoria estiverem completos.
+ * A primeira ronda knockout vazia é preenchida pelo ranking dos grupos.
+ * Rondas seguintes (ex. meias após quartos) são preenchidas com os VENCEDORES
+ * da ronda anterior — nunca de novo com o ranking dos grupos.
  */
 export async function populateTeamPlacementMatches(
   tournamentId: string,
@@ -2478,15 +2489,58 @@ async function populateTeamPlacementForCategory(
     }
   };
 
-  if (ro16.length > 0 && ro16.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
-    const pairs = buildKnockoutPairs(ro16.length);
-    await applyKnockoutPairs(ro16, pairs, 'RO16');
+  const matchWinnerTeamId = (m: any): string | null => {
+    if (m.winner_id && (m.winner_id === m.team1_id || m.winner_id === m.team2_id)) {
+      return m.winner_id;
+    }
+    const t1g = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
+    const t2g = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
+    if (t1g === t2g) return null;
+    return t1g > t2g ? m.team1_id : m.team2_id;
+  };
+
+  // QF1/QF2 winners → SF1, QF3/QF4 winners → SF2 (same pairing as advanceKnockoutWinner).
+  // Overwrites stale group-seed teams on unplayed next-round matches so upsets stick.
+  const advanceWinnersToNextRound = async (
+    fromMatches: typeof ko,
+    toMatches: typeof ko,
+    label: string
+  ) => {
+    if (toMatches.length === 0) return;
+    for (let i = 0; i < fromMatches.length; i++) {
+      const src = fromMatches[i];
+      if (!hasRealScores(src)) continue;
+      const winnerId = matchWinnerTeamId(src);
+      if (!winnerId) continue;
+      const target = toMatches[Math.floor(i / 2)];
+      if (!target || hasRealScores(target)) continue;
+      const field = i % 2 === 0 ? 'team1_id' : 'team2_id';
+      if (target[field] === winnerId) continue;
+      await supabase.from('matches').update({ [field]: winnerId }).eq('id', target.id);
+      (target as any)[field] = winnerId;
+      console.log(`[POPULATE_TEAM_PLACEMENT] ${label}: winner of ${src.round} #${src.match_number} → ${target.round} #${target.match_number} ${field}`);
+    }
+  };
+
+  // When a later knockout round exists, NEVER fill it from group standings.
+  // That was putting group favourites (often the QF losers after an upset)
+  // into the semifinals after all quarterfinals had results.
+  if (ro16.length > 0) {
+    if (ro16.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
+      const pairs = buildKnockoutPairs(ro16.length);
+      await applyKnockoutPairs(ro16, pairs, 'RO16');
+    }
+    const nextRound = qfs.length > 0 ? qfs : semis;
+    await advanceWinnersToNextRound(ro16, nextRound, 'RO16→next');
     return;
   }
 
-  if (qfs.length > 0 && qfs.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
-    const pairs = buildKnockoutPairs(qfs.length);
-    await applyKnockoutPairs(qfs, pairs, 'QF');
+  if (qfs.length > 0) {
+    if (qfs.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
+      const pairs = buildKnockoutPairs(qfs.length);
+      await applyKnockoutPairs(qfs, pairs, 'QF');
+    }
+    await advanceWinnersToNextRound(qfs, semis, 'QF→SF');
     return;
   }
 

@@ -6,6 +6,21 @@ import { calculateIndividualFinalPositions, clearIndividualFinalPositions } from
 import { advanceKnockoutWinner, populatePlacementMatches, populateTeamPlacementMatches } from '../lib/groups';
 import { useI18n } from '../lib/i18nContext';
 
+const KNOCKOUT_ROUND_ALIASES: Record<string, string[]> = {
+  round_of_16: ['round_of_16'],
+  quarter_final: ['quarter_final', 'quarterfinal'],
+  semi_final: ['semi_final', 'semifinal'],
+  final: ['final'],
+};
+const KNOCKOUT_ROUND_ORDER = ['round_of_16', 'quarter_final', 'semi_final', 'final'];
+
+function canonicalKnockoutRound(round: string): string | null {
+  if (KNOCKOUT_ROUND_ORDER.includes(round)) return round;
+  if (round === 'quarterfinal') return 'quarter_final';
+  if (round === 'semifinal') return 'semi_final';
+  return null;
+}
+
 async function advanceWinnerToNextRound(
   tournamentId: string,
   currentRound: string,
@@ -13,20 +28,22 @@ async function advanceWinnerToNextRound(
   winnerId: string,
   categoryId: string | null
 ) {
-  const roundOrder = ['round_of_16', 'quarter_final', 'semi_final', 'final'];
-  const currentRoundIndex = roundOrder.indexOf(currentRound);
+  const canonical = canonicalKnockoutRound(currentRound);
+  const currentRoundIndex = canonical ? KNOCKOUT_ROUND_ORDER.indexOf(canonical) : -1;
 
-  if (currentRoundIndex === -1 || currentRoundIndex === roundOrder.length - 1) {
+  if (currentRoundIndex === -1 || currentRoundIndex === KNOCKOUT_ROUND_ORDER.length - 1) {
     return;
   }
 
-  const nextRound = roundOrder[currentRoundIndex + 1];
+  const nextCanonical = KNOCKOUT_ROUND_ORDER[currentRoundIndex + 1];
+  const currentAliases = KNOCKOUT_ROUND_ALIASES[canonical!];
+  const nextAliases = KNOCKOUT_ROUND_ALIASES[nextCanonical];
 
   let currentRoundQuery = supabase
     .from('matches')
     .select('id, match_number')
     .eq('tournament_id', tournamentId)
-    .eq('round', currentRound)
+    .in('round', currentAliases)
     .order('match_number', { ascending: true });
 
   if (categoryId) {
@@ -52,7 +69,7 @@ async function advanceWinnerToNextRound(
     .from('matches')
     .select('*')
     .eq('tournament_id', tournamentId)
-    .eq('round', nextRound)
+    .in('round', nextAliases)
     .order('match_number', { ascending: true });
 
   if (categoryId) {
@@ -957,6 +974,17 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             winner,
             currentMatch.category_id
           );
+
+          const teamKnockoutRounds = [
+            'round_of_16', 'quarterfinal', 'quarter_final', 'semifinal', 'semi_final'
+          ];
+          if (teamKnockoutRounds.includes(currentMatch.round) && theMatchId) {
+            await advanceKnockoutWinner(
+              tournamentId,
+              theMatchId,
+              currentMatch.category_id
+            );
+          }
 
           await advanceLoserToClassificationRound(
             tournamentId,
