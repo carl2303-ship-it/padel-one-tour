@@ -107,7 +107,7 @@ export default function LadderTournamentView({
       supabase
         .from('teams')
         .select(
-          'id, name, player1_id, player2_id, category_id, seed, registration_source, organizer_review_status, player1:players!teams_player1_id_fkey(id, name, email, phone_number, user_id, player_account_id), player2:players!teams_player2_id_fkey(id, name, email, phone_number, user_id, player_account_id)'
+          'id, name, player1_id, player2_id, category_id, seed, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, user_id, player_account_id), player2:players!teams_player2_id_fkey(id, name, email, phone_number, user_id, player_account_id)'
         )
         .eq('tournament_id', tournament.id)
         .eq('category_id', resolved)
