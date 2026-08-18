@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { deliverWebPushNotifications } from "../_shared/deliverPush.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,7 +26,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: invite } = await admin
       .from("partner_match_invites")
-      .select("id, invitee_user_id, invitee_player_account_id, status")
+      .select("id, tournament_id, requester_user_id, invitee_user_id, invitee_player_account_id, status, tournament:tournaments(name)")
       .eq("id", inviteId)
       .maybeSingle();
     if (!invite) throw new Error("Invite not found");
@@ -40,15 +41,36 @@ Deno.serve(async (req: Request) => {
     }
     if (invite.status !== "pending") throw new Error("Invite is not pending");
 
-    const { error } = await admin
+    const { data: declined, error } = await admin
       .from("partner_match_invites")
       .update({
         status: "declined",
         declined_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
-      .eq("id", inviteId);
+      .eq("id", inviteId)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
     if (error) throw error;
+    if (!declined) throw new Error("Invite is no longer pending");
+
+    const vapidPublicKey = Deno.env.get("VAPID_PUBLIC_KEY");
+    const vapidPrivateKey = Deno.env.get("VAPID_PRIVATE_KEY");
+    if (vapidPublicKey && vapidPrivateKey) {
+      await deliverWebPushNotifications(admin, {
+        vapidPublicKey,
+        vapidPrivateKey,
+        userId: invite.requester_user_id,
+        appSource: "player",
+        payload: {
+          title: "Convite recusado",
+          body: `O jogador convidado recusou o convite para ${invite.tournament?.name || "o torneio"}.`,
+          url: `/?screen=compete&tournament=${invite.tournament_id}`,
+          tag: `partner-declined-${invite.id}`,
+        },
+      });
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

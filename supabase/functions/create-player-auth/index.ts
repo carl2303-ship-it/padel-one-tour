@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { findPlayerAccountUsingAuthUser, isProtectedAuthUser } from "../_shared/protectedAuthUsers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -86,16 +87,53 @@ Deno.serve(async (req: Request) => {
     const userWithEmail = existingUser?.users?.find((u) => u.email === email);
 
     let userId: string | null = null;
+    let accountEmail = email.includes("@temp.player.com") ? null : email;
 
     if (userWithEmail) {
-      userId = userWithEmail.id;
-      await supabaseAdmin.auth.admin.updateUserById(userId, {
-        phone: phone_number,
-        user_metadata: {
-          display_name: name,
-          phone_number: phone_number,
-        },
-      });
+      const protection = await isProtectedAuthUser(supabaseAdmin, userWithEmail.id);
+      const alreadyLinked = await findPlayerAccountUsingAuthUser(
+        supabaseAdmin,
+        userWithEmail.id,
+      );
+      if (protection.protected || alreadyLinked) {
+        // Never attach players to club-owner / organizer auth users,
+        // or to an auth identity already owned by another player_account.
+        const phoneDigits = String(phone_number).replace(/[^\d]/g, "");
+        const generatedEmail = `${phoneDigits}@boostpadel.app`;
+        accountEmail = generatedEmail;
+
+        const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
+          email: generatedEmail,
+          password,
+          phone: phone_number,
+          email_confirm: true,
+          user_metadata: {
+            display_name: name,
+            phone_number: phone_number,
+          },
+        });
+
+        if (createError) {
+          return new Response(
+            JSON.stringify({ success: false, error: createError.message }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        userId = newUser?.user?.id || null;
+      } else {
+        userId = userWithEmail.id;
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+          phone: phone_number,
+          user_metadata: {
+            display_name: name,
+            phone_number: phone_number,
+          },
+        });
+      }
     } else {
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email,
@@ -127,7 +165,7 @@ Deno.serve(async (req: Request) => {
         phone_number,
         user_id: userId,
         name,
-        email: email.includes("@temp.player.com") ? null : email,
+        email: accountEmail,
         player_category: player_category ?? null,
         level: level ?? null,
         level_reliability_percent: level_reliability_percent ?? null,

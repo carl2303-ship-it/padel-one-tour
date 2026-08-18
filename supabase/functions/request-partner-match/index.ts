@@ -6,6 +6,7 @@ import {
   isPlayerEligibleForCategory,
   type TournamentCategoryEligibility,
 } from "../_shared/categoryEligibility.ts";
+import { isValidPhone, normalizePhone } from "../_shared/phoneUtils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,8 +14,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-type SidePreference = "right" | "left";
+type SidePreference = "right" | "left" | "both";
 type TargetMode = "any" | "following" | "direct";
+
+function parseOptionalLevel(value: unknown, field: string): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative number`);
+  }
+  return value;
+}
 
 function isTeamTournament(format: string | null, roundRobinType: string | null): boolean {
   if (!format) return false;
@@ -119,7 +128,14 @@ Deno.serve(async (req: Request) => {
     const sidePreference = (body.sidePreference as SidePreference) ?? "right";
     const targetMode = (body.targetMode as TargetMode) ?? "any";
     const inviteePhone = (body.inviteePhone as string | null) ?? null;
+    const minLevel = parseOptionalLevel(body.minLevel, "minLevel");
+    const maxLevel = parseOptionalLevel(body.maxLevel, "maxLevel");
     if (!tournamentId) throw new Error("Missing tournamentId");
+    if (!["right", "left", "both"].includes(sidePreference)) throw new Error("Invalid sidePreference");
+    if (!["any", "following", "direct"].includes(targetMode)) throw new Error("Invalid targetMode");
+    if (minLevel != null && maxLevel != null && minLevel > maxLevel) {
+      throw new Error("minLevel cannot be greater than maxLevel");
+    }
     if (targetMode === "direct" && !inviteePhone) throw new Error("Missing inviteePhone for direct invite");
 
     const userId = authData.user.id;
@@ -145,12 +161,18 @@ Deno.serve(async (req: Request) => {
     if (!effectiveCategoryId) {
       const { data: categories } = await admin
         .from("tournament_categories")
-        .select("id, accepted_levels")
+        .select("id, name, accepted_levels, min_level, max_level")
         .eq("tournament_id", tournamentId);
-      const byProfile = (categories || []).find((c: any) =>
-        requester.player_category && Array.isArray(c.accepted_levels) && c.accepted_levels.includes(requester.player_category)
+      const eligibleCategory = (categories || []).find((c: TournamentCategoryEligibility & { id: string }) =>
+        isPlayerEligibleForCategory(c, {
+          player_category: requester.player_category,
+          level: requester.level,
+        })
       );
-      effectiveCategoryId = byProfile?.id ?? categories?.[0]?.id ?? null;
+      effectiveCategoryId = eligibleCategory?.id ?? null;
+      if ((categories || []).length > 0 && !effectiveCategoryId) {
+        throw new Error("Não existe uma categoria do torneio elegível para o teu perfil");
+      }
     }
 
     let categoryForInvitees: TournamentCategoryEligibility | null = null;
@@ -175,7 +197,8 @@ Deno.serve(async (req: Request) => {
 
     // --- Direct invite mode: single player by phone ---
     if (targetMode === "direct" && inviteePhone) {
-      const normalizedPhone = inviteePhone.replace(/\s+/g, "").trim();
+      if (!isValidPhone(inviteePhone)) throw new Error("Número de telefone inválido.");
+      const normalizedPhone = normalizePhone(inviteePhone);
       const { data: inviteeAccount, error: inviteeErr } = await admin
         .from("player_accounts")
         .select("id, user_id, name, player_category, level, court_position")
@@ -187,6 +210,12 @@ Deno.serve(async (req: Request) => {
       if (!inviteeAccount) throw new Error("Nenhum jogador encontrado com este número de telefone.");
       if (!inviteeAccount.user_id) throw new Error("Este jogador ainda não está registado na app.");
       if (inviteeAccount.user_id === requester.user_id) throw new Error("Não podes convidar-te a ti mesmo.");
+      if (minLevel != null && (inviteeAccount.level == null || inviteeAccount.level < minLevel)) {
+        throw new Error(`${inviteeAccount.name} não cumpre o nível mínimo pedido.`);
+      }
+      if (maxLevel != null && (inviteeAccount.level == null || inviteeAccount.level > maxLevel)) {
+        throw new Error(`${inviteeAccount.name} não cumpre o nível máximo pedido.`);
+      }
 
       if (categoryForInvitees) {
         if (!isPlayerEligibleForCategory(categoryForInvitees, {
@@ -214,6 +243,8 @@ Deno.serve(async (req: Request) => {
           requester_player_account_id: requester.id,
           side_preference: sidePreference,
           target_mode: "direct",
+          min_level: minLevel,
+          max_level: maxLevel,
         })
         .select("id")
         .single();
@@ -277,11 +308,17 @@ Deno.serve(async (req: Request) => {
 
     // `sidePreference` represents requester's side.
     // Partner should be complementary side (right <-> left), with `both` always compatible.
-    const desiredPartnerSide = sidePreference === "right" ? "left" : "right";
+    const desiredPartnerSide = sidePreference === "right"
+      ? "left"
+      : sidePreference === "left"
+      ? "right"
+      : null;
     const compatible = (candidates || []).filter((c: any) => {
       if (!c.user_id || c.user_id === requester.user_id) return false;
       const pos = (c.court_position || "both") as string;
-      if (!(pos === "both" || pos === desiredPartnerSide)) return false;
+      if (desiredPartnerSide && !(pos === "both" || pos === desiredPartnerSide)) return false;
+      if (minLevel != null && (c.level == null || c.level < minLevel)) return false;
+      if (maxLevel != null && (c.level == null || c.level > maxLevel)) return false;
       if (categoryForInvitees) {
         if (
           !isPlayerEligibleForCategory(categoryForInvitees, {
@@ -326,6 +363,8 @@ Deno.serve(async (req: Request) => {
         requester_player_account_id: requester.id,
         side_preference: sidePreference,
         target_mode: targetMode,
+        min_level: minLevel,
+        max_level: maxLevel,
       })
       .select("id")
       .single();

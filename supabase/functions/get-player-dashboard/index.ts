@@ -6,6 +6,39 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
+/**
+ * Parse team display names into up to 2 person-like parts.
+ * Never returns the raw team label as a single "player" name.
+ */
+function parsePersonNamesFromTeamLabel(teamName: string | null | undefined): [string | null, string | null] {
+  if (!teamName?.trim()) return [null, null];
+  const raw = teamName.trim();
+
+  const parts = raw
+    .split(/\s*\/\s*|\s*&\s*|,\s*|\s+-\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  let candidates = parts.length >= 2 ? parts.slice(0, 2) : null;
+
+  if (!candidates) {
+    const hyphenParts = raw.split(/-(?=[A-ZÀ-Ú])/).map((s) => s.trim()).filter(Boolean);
+    if (hyphenParts.length === 2) candidates = hyphenParts;
+  }
+
+  if (!candidates || candidates.length < 2) return [null, null];
+
+  const looksLikePerson = (c: string) => {
+    if (!c || c.length < 2) return false;
+    if (/^[A-ZÁÉÍÓÚ]{1,3}$/.test(c)) return false;
+    if (/\b(lda|ltd|sa|team|equipa)\b/i.test(c)) return false;
+    if (/^jogador\s*\d*$/i.test(c) || /^player\s*\d*$/i.test(c)) return false;
+    return true;
+  };
+  if (!candidates.every(looksLikePerson)) return [null, null];
+  return [candidates[0], candidates[1]];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -201,16 +234,16 @@ Deno.serve(async (req: Request) => {
             p2Name = m.team1?.player2_id ? teamPlayerNamesMap.get(m.team1.player2_id) : undefined;
             p3Name = m.team2?.player1_id ? teamPlayerNamesMap.get(m.team2.player1_id) : undefined;
             p4Name = m.team2?.player2_id ? teamPlayerNamesMap.get(m.team2.player2_id) : undefined;
-            // Fallback: parse do nome da equipa "Player1 / Player2" (torneios antigos sem player IDs)
+            // Fallback: só aceitar nomes de pessoas parseados do label (nunca o nome da equipa inteiro numa bolinha)
             if (!p1Name || !p2Name) {
-              const parts = (m.team1?.name || '').split(/\s*[\/\\]\s*/);
-              if (!p1Name && parts[0]?.trim()) p1Name = parts[0].trim();
-              if (!p2Name && parts[1]?.trim()) p2Name = parts[1].trim();
+              const [a, b] = parsePersonNamesFromTeamLabel(m.team1?.name);
+              if (!p1Name && a) p1Name = a;
+              if (!p2Name && b) p2Name = b;
             }
             if (!p3Name || !p4Name) {
-              const parts = (m.team2?.name || '').split(/\s*[\/\\]\s*/);
-              if (!p3Name && parts[0]?.trim()) p3Name = parts[0].trim();
-              if (!p4Name && parts[1]?.trim()) p4Name = parts[1].trim();
+              const [a, b] = parsePersonNamesFromTeamLabel(m.team2?.name);
+              if (!p3Name && a) p3Name = a;
+              if (!p4Name && b) p4Name = b;
             }
           }
 
@@ -826,16 +859,16 @@ Deno.serve(async (req: Request) => {
               p2Name = m.team1?.player2_id ? playerNamesMap.get(m.team1.player2_id) : undefined;
               p3Name = m.team2?.player1_id ? playerNamesMap.get(m.team2.player1_id) : undefined;
               p4Name = m.team2?.player2_id ? playerNamesMap.get(m.team2.player2_id) : undefined;
-              // Fallback: parse do nome da equipa "Player1 / Player2"
+              // Fallback: só nomes de pessoas (nunca meter o label da equipa numa bolinha)
               if (!p1Name || !p2Name) {
-                const parts = (m.team1?.name || '').split(/\s*[\/\\]\s*/);
-                if (!p1Name && parts[0]?.trim()) p1Name = parts[0].trim();
-                if (!p2Name && parts[1]?.trim()) p2Name = parts[1].trim();
+                const [a, b] = parsePersonNamesFromTeamLabel(m.team1?.name);
+                if (!p1Name && a) p1Name = a;
+                if (!p2Name && b) p2Name = b;
               }
               if (!p3Name || !p4Name) {
-                const parts = (m.team2?.name || '').split(/\s*[\/\\]\s*/);
-                if (!p3Name && parts[0]?.trim()) p3Name = parts[0].trim();
-                if (!p4Name && parts[1]?.trim()) p4Name = parts[1].trim();
+                const [a, b] = parsePersonNamesFromTeamLabel(m.team2?.name);
+                if (!p3Name && a) p3Name = a;
+                if (!p4Name && b) p4Name = b;
               }
             }
 

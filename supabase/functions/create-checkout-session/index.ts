@@ -22,7 +22,17 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { tournamentId, categoryId, isIndividual, teamName, player1, player2, organizerUserId } = await req.json();
+    const {
+      tournamentId,
+      categoryId,
+      isIndividual,
+      teamName,
+      player1,
+      player2,
+      organizerUserId,
+      existingTeamId,
+      checkoutIdempotencyKey,
+    } = await req.json();
 
     if (!tournamentId || !organizerUserId) {
       throw new Error("Missing required fields");
@@ -173,8 +183,9 @@ Deno.serve(async (req: Request) => {
         player2Email: player2?.email || "",
         player2Phone: player2?.phone || "",
         organizerUserId,
+        existingTeamId: existingTeamId || "",
       },
-    });
+    }, checkoutIdempotencyKey ? { idempotencyKey: checkoutIdempotencyKey } : undefined);
 
     return new Response(
       JSON.stringify({ 

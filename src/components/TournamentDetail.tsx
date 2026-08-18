@@ -48,6 +48,11 @@ type TeamWithPlayers = Team & {
   player2: Player;
 };
 
+// partner_match_invite_id / organizer_review_status are not deployed yet;
+// selecting them makes PostgREST fail and the teams list renders empty.
+const TEAMS_WITH_PLAYERS_SELECT =
+  'id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)';
+
 type MatchWithTeams = Match & {
   team1: TeamWithPlayers | null;
   team2: TeamWithPlayers | null;
@@ -126,6 +131,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [paymentSavingId, setPaymentSavingId] = useState<string | null>(null);
+  const [reviewSavingId, setReviewSavingId] = useState<string | null>(null);
   const [memberPriceLookup, setMemberPriceLookup] = useState<Map<string, MemberPriceInfo>>(new Map());
   const [activeTab, setActiveTab] = useState<'teams' | 'matches' | 'standings' | 'knockout'>('teams');
   const [isMatchGridView, setIsMatchGridView] = useState(false);
@@ -1348,7 +1354,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select(TEAMS_WITH_PLAYERS_SELECT)
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1357,7 +1363,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);
-      if (teamsResult.data) setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
+      if (teamsResult.error) {
+        console.error('[FETCH] Teams error:', teamsResult.error);
+        setTeams([]);
+      } else if (teamsResult.data) setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
       else setTeams([]);
       if (categoriesResult.data) setCategories(categoriesResult.data);
       else setCategories([]);
@@ -1698,7 +1707,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select(TEAMS_WITH_PLAYERS_SELECT)
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1723,7 +1732,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('name')
       ]);
 
-      if (teamsResult.data) {
+      if (teamsResult.error) {
+        console.error('[FETCH] Teams error:', teamsResult.error);
+      } else if (teamsResult.data) {
         console.log('[FETCH] Loaded', teamsResult.data.length, 'teams');
         setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
       }
@@ -4647,6 +4658,54 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
+  const handleConfirmPartnerTeamReview = async (teamId: string) => {
+    setReviewSavingId(teamId);
+    const { data, error } = await supabase
+      .from('teams')
+      .update({ organizer_review_status: 'confirmed' })
+      .eq('id', teamId)
+      .eq('tournament_id', currentTournament.id)
+      .eq('registration_source', 'partner_invite')
+      .select('id')
+      .maybeSingle();
+    setReviewSavingId(null);
+
+    if (error || !data) {
+      alert(`Não foi possível verificar a equipa: ${error?.message || 'sem permissão'}`);
+      return;
+    }
+    setTeams(prev => prev.map(team =>
+      team.id === teamId ? { ...team, organizer_review_status: 'confirmed' } : team
+    ));
+  };
+
+  const PartnerTeamReviewBadges = ({ team }: { team: TeamWithPlayers }) => {
+    if (team.registration_source !== 'partner_invite') return null;
+    const verified = team.organizer_review_status === 'confirmed';
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+        <span className="px-2 py-0.5 text-xs bg-cyan-100 text-cyan-800 rounded-full font-medium">
+          Automática via parceiro
+        </span>
+        <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+          verified ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+        }`}>
+          {verified ? 'Verificada' : 'Por verificar'}
+        </span>
+        {!verified && (
+          <button
+            type="button"
+            disabled={reviewSavingId === team.id}
+            onClick={() => void handleConfirmPartnerTeamReview(team.id)}
+            className="px-2 py-0.5 text-xs border border-green-300 text-green-700 rounded-full hover:bg-green-50 disabled:opacity-50"
+          >
+            {reviewSavingId === team.id ? 'A verificar…' : 'Marcar verificada'}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const handleDeleteTeam = async (teamId: string) => {
     if (!confirm(t.tournament.confirmDeleteTeam)) return;
     
@@ -7508,6 +7567,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                     {team.player2?.name}
                                     {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                   </p>
+                                  <PartnerTeamReviewBadges team={team} />
                                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                                     <div className="flex items-center gap-1">
                                       <PlayerPriceBadge player={team.player1} />
@@ -7560,6 +7620,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
+                            <PartnerTeamReviewBadges team={team} />
                             <div className="flex items-center gap-2 flex-wrap mt-1">
                               {team.group_name && (
                                 <span className="text-xs text-blue-600">Grupo {team.group_name}</span>
