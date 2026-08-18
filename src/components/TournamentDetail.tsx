@@ -48,6 +48,11 @@ type TeamWithPlayers = Team & {
   player2: Player;
 };
 
+// partner_match_invite_id / organizer_review_status are not deployed yet;
+// selecting them makes PostgREST fail and the teams list renders empty.
+const TEAMS_WITH_PLAYERS_SELECT =
+  'id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)';
+
 type MatchWithTeams = Match & {
   team1: TeamWithPlayers | null;
   team2: TeamWithPlayers | null;
@@ -1349,7 +1354,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, partner_match_invite_id, organizer_review_status, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select(TEAMS_WITH_PLAYERS_SELECT)
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1358,7 +1363,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);
-      if (teamsResult.data) setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
+      if (teamsResult.error) {
+        console.error('[FETCH] Teams error:', teamsResult.error);
+        setTeams([]);
+      } else if (teamsResult.data) setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
       else setTeams([]);
       if (categoriesResult.data) setCategories(categoriesResult.data);
       else setCategories([]);
@@ -1699,7 +1707,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [teamsResult, playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('teams')
-          .select('id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, partner_match_invite_id, organizer_review_status, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)')
+          .select(TEAMS_WITH_PLAYERS_SELECT)
           .eq('tournament_id', tournament.id)
           .order('seed', { ascending: true }),
         supabase
@@ -1724,7 +1732,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('name')
       ]);
 
-      if (teamsResult.data) {
+      if (teamsResult.error) {
+        console.error('[FETCH] Teams error:', teamsResult.error);
+      } else if (teamsResult.data) {
         console.log('[FETCH] Loaded', teamsResult.data.length, 'teams');
         setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
       }
