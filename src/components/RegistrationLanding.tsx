@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
 import { normalizePhone } from '../lib/phoneUtils';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
 
 const sendWelcomeEmail = async (
@@ -880,6 +881,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
         if (playerError) throw playerError;
 
+        await recalculateSeedsByLevel(tournament.id);
+
         if (formData.player1Email) {
           await sendWelcomeEmail(
             formData.player1Email,
@@ -960,6 +963,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           ]);
 
         if (teamError) throw teamError;
+
+        await recalculateSeedsByLevel(tournament.id);
 
         if (formData.player1Email) {
           await sendWelcomeEmail(

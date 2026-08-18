@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase, TournamentCategory } from '../lib/supabase';
 import { X, Trash2 } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 
 type IndividualPlayer = {
   id: string;
@@ -91,6 +92,7 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
         setError(updateError.message);
         setLoading(false);
       } else {
+        await recalculateSeedsByLevel(tournamentId);
         onSuccess();
       }
     } catch (err) {
@@ -182,6 +184,7 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
         setLoading(false);
       } else {
         console.log(`[DELETE-PLAYER] ✅ Jogador ${player.name} removido com sucesso`);
+        await recalculateSeedsByLevel(tournamentId);
         onSuccess();
       }
     } catch (err: unknown) {

@@ -9,6 +9,7 @@ import {
 import { normalizePhone } from '../lib/phoneUtils';
 import { X, Plus, Search } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
@@ -376,6 +377,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
         setError(submitError.message);
         setLoading(false);
       } else {
+        await recalculateSeedsByLevel(tournamentId);
         onSuccess();
         onClose();
       }

@@ -9,6 +9,7 @@ import {
 import { normalizePhone } from '../lib/phoneUtils';
 import { X, Trash2, Search } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 
 type Player = {
   id: string;
@@ -282,7 +283,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
       } else {
         console.log('[EDIT-TEAM] Team updated successfully');
 
-        // Atualizar lista de jogadores disponíveis
+        await recalculateSeedsByLevel(tournamentId);
         await fetchPlayers();
 
         console.log('[EDIT-TEAM] Calling onSuccess');
@@ -336,6 +337,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
         await supabase.from('players').delete().eq('id', pid);
       }
 
+      await recalculateSeedsByLevel(tournamentId);
       onSuccess();
     } catch {
       setError('An unexpected error occurred');

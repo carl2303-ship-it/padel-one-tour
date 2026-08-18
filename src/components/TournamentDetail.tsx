@@ -28,6 +28,7 @@ import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
 import { generateMixedAmericanSchedule, MixedPlayer } from '../lib/mixedAmericanScheduler';
 import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner } from '../lib/groups';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
@@ -509,11 +510,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     return calculateQualificationConfig(numberOfGroups, knockoutStage, isIndividual).qualifiedPerGroup;
   };
 
-  const filteredTeams = selectedCategory === 'no-category'
+  const filteredTeams = (selectedCategory === 'no-category'
     ? teams.filter(t => !t.category_id)
     : selectedCategory
     ? teams.filter(t => t.category_id === selectedCategory)
-    : teams;
+    : teams
+  ).slice().sort((a, b) => (a.seed ?? 9999) - (b.seed ?? 9999) || a.name.localeCompare(b.name));
 
   const filteredMatches = selectedCategory === 'no-category'
     ? matches.filter(m => !m.category_id)
@@ -521,11 +523,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     ? matches.filter(m => m.category_id === selectedCategory)
     : matches;
 
-  const filteredIndividualPlayers = selectedCategory === 'no-category'
+  const filteredIndividualPlayers = (selectedCategory === 'no-category'
     ? individualPlayers.filter(p => !p.category_id)
     : selectedCategory
     ? individualPlayers.filter(p => p.category_id === selectedCategory)
-    : individualPlayers;
+    : individualPlayers
+  ).slice().sort((a, b) => ((a as any).seed ?? 9999) - ((b as any).seed ?? 9999) || a.name.localeCompare(b.name));
 
   const getMemberInfoForPlayer = (player: Player): MemberPriceInfo => {
     const phoneKey = normalizePhoneKey(player.phone_number || (player as any).phone);
@@ -1277,6 +1280,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const fetchDepthRef = useRef(0);
   const autoPopulateAttemptedRef = useRef(false);
   const gkSyncFingerprintRef = useRef<Map<string, string>>(new Map());
+  const seedSyncRef = useRef<string | null>(null);
   const fetchTournamentData = async (silent = false) => {
     if (fetchDepthRef.current >= 3) {
       console.warn('[FETCH] Max recursive depth reached, aborting');
@@ -1289,6 +1293,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     try {
     console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
     if (!silent) setLoading(true);
+
+    if (seedSyncRef.current !== tournament.id) {
+      seedSyncRef.current = tournament.id;
+      try {
+        await recalculateSeedsByLevel(tournament.id);
+      } catch (err) {
+        console.error('[FETCH] Level seeding failed:', err);
+      }
+    }
 
     // Prefer currentTournament (estado local atualizado) e fazer fallback para prop inicial.
     const effectiveFormat = currentTournament?.format || tournament.format;
@@ -2430,6 +2443,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     setLoading(true);
 
     try {
+      const { teamSeeds, playerSeeds } = await recalculateSeedsByLevel(tournament.id);
+      const teamsForDraw = teams.map(t => ({ ...t, seed: teamSeeds.get(t.id) ?? t.seed }));
+      const playersForDraw = individualPlayers.map(p => ({ ...p, seed: playerSeeds.get(p.id) ?? p.seed }));
+
       const { data: latestTournament } = await supabase
         .from('tournaments')
         .select('*')
@@ -2469,7 +2486,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             
             // Para playoffs cruzados de equipas, usar teams em vez de players
             if (currentTournament.format === 'crossed_playoffs_teams') {
-              const categoryTeams = teams.filter(t => t.category_id === category.id);
+              const categoryTeams = teamsForDraw.filter(t => t.category_id === category.id);
               // Se é playoffs cruzados, forçar 1 grupo por categoria
               const numberOfGroups = isCrossedPlayoffs ? 1 : ((category as any).number_of_groups || tournamentNumberOfGroups);
               const minTeams = numberOfGroups * 2;
@@ -2508,7 +2525,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               }
             } else {
               // Lógica original para jogadores individuais
-            const categoryPlayers = individualPlayers.filter(p => p.category_id === category.id);
+            const categoryPlayers = playersForDraw.filter(p => p.category_id === category.id);
             // Se é playoffs cruzados, forçar 1 grupo por categoria
             const numberOfGroups = isCrossedPlayoffs ? 1 : ((category as any).number_of_groups || tournamentNumberOfGroups);
             const minPlayers = numberOfGroups * 4;
@@ -2545,13 +2562,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           console.log('[ASSIGN GROUPS] Using number_of_groups:', numberOfGroups);
 
-          if (individualPlayers.length < minPlayers) {
+          if (playersForDraw.length < minPlayers) {
             alert(`You need at least ${minPlayers} players for ${numberOfGroups} groups (minimum 4 per group for American format)`);
             setLoading(false);
             return;
           }
 
-          const playersWithGroups = assignPlayersToGroups(individualPlayers, numberOfGroups);
+          const playersWithGroups = assignPlayersToGroups(playersForDraw, numberOfGroups);
           await savePlayerGroupAssignments(playersWithGroups);
         }
 
@@ -2569,7 +2586,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             : allTeamCategories;
 
           for (const category of sortedTeamCategories) {
-            const categoryTeams = teams.filter(t => t.category_id === category.id);
+            const categoryTeams = teamsForDraw.filter(t => t.category_id === category.id);
             const numberOfGroups = (category as any).number_of_groups || tournamentNumberOfGroups;
             const minTeams = numberOfGroups * 2;
 
@@ -2601,13 +2618,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           console.log('[ASSIGN GROUPS] Using number_of_groups:', numberOfGroups);
 
-          if (teams.length < minTeams) {
+          if (teamsForDraw.length < minTeams) {
             alert(`You need at least ${minTeams} teams for ${numberOfGroups} groups`);
             setLoading(false);
             return;
           }
 
-          const teamsWithGroups = assignTeamsToGroups(teams, numberOfGroups);
+          const teamsWithGroups = assignTeamsToGroups(teamsForDraw, numberOfGroups);
           await saveGroupAssignments(tournament.id, teamsWithGroups);
         }
 

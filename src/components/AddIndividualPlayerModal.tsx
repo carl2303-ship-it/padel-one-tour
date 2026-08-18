@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
 import { normalizePhone } from '../lib/phoneUtils';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 
 const sendWelcomeEmail = async (
   playerEmail: string,
@@ -319,6 +320,7 @@ export default function AddIndividualPlayerModal({
         setError(submitError.message);
         setLoading(false);
       } else {
+        await recalculateSeedsByLevel(tournamentId);
         onSuccess();
         onClose();
       }
@@ -405,6 +407,7 @@ export default function AddIndividualPlayerModal({
           );
         }
 
+        await recalculateSeedsByLevel(tournamentId);
         onSuccess();
         onClose();
       }
