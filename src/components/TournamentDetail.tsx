@@ -27,7 +27,7 @@ import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
 import { generateMixedAmericanSchedule, MixedPlayer } from '../lib/mixedAmericanScheduler';
-import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner } from '../lib/groups';
+import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner, calculateTeamQualificationConfig } from '../lib/groups';
 import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
@@ -219,7 +219,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // Avançar quarterfinals → semifinals
             console.log('[REALTIME] Quarterfinal completed, advancing winner to semifinal');
             setTimeout(async () => {
-              await advanceKnockoutWinner(tournament.id, newRecord.id);
+              await advanceKnockoutWinner(tournament.id, newRecord.id, newRecord.category_id || undefined);
               fetchTournamentData();
             }, 500);
           } else if (newRecord.round === 'semifinal') {
@@ -1922,10 +1922,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         let knockoutStageLocal = (localCats[0] as any)?.knockout_stage;
         
         if (!qualifiedPerGroupLocal || qualifiedPerGroupLocal <= 0) {
-          // Auto-calcular: número máximo de equipas numa categoria
-          const maxTeamsPerCat = Math.max(...localCats.map(c => (teamsResult.data || []).filter((t: any) => t.category_id === c.id).length));
-          qualifiedPerGroupLocal = maxTeamsPerCat || 2;
-          console.log(`[FETCH-CHECK-TEAMS] WARNING: qualified_per_group not in DB, auto-calculated to ${qualifiedPerGroupLocal}`);
+          const ksGuess =
+            knockoutStageLocal ||
+            (localCats[0] as any)?.knockout_stage ||
+            (currentTournament as any)?.knockout_stage ||
+            'semifinals';
+          qualifiedPerGroupLocal = calculateTeamQualificationConfig(localCats.length, ksGuess).qualifiedPerGroup;
+          console.log(`[FETCH-CHECK-TEAMS] WARNING: qualified_per_group not in DB, derived ${qualifiedPerGroupLocal} from knockout_stage=${ksGuess}`);
         }
         if (!knockoutStageLocal) {
           const tournamentKS = (currentTournament as any)?.knockout_stage;
@@ -2174,7 +2177,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 // Ler configurações das categorias para determinar quantas equipas qualificam
                 let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
                 if (!qualifiedPerGroup || qualifiedPerGroup <= 0) {
-                  qualifiedPerGroup = Math.max(rankA.length, rankB.length, rankC.length);
+                  const ksGuess =
+                    (sortedCats[0] as any).knockout_stage ||
+                    (currentTournament as any)?.knockout_stage ||
+                    'semifinals';
+                  qualifiedPerGroup = calculateTeamQualificationConfig(sortedCats.length, ksGuess).qualifiedPerGroup;
                 }
                 
                 // Encontrar todos os jogos R1 (usar allMatchesLocal do scope pai)
@@ -2247,7 +2254,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 // Ler configurações das categorias para determinar quantas equipas qualificam
                 let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
                 if (!qualifiedPerGroup || qualifiedPerGroup <= 0) {
-                  qualifiedPerGroup = Math.max(rankA.length, rankB.length);
+                  const ksGuess =
+                    (sortedCats[0] as any).knockout_stage ||
+                    (currentTournament as any)?.knockout_stage ||
+                    'semifinals';
+                  qualifiedPerGroup = calculateTeamQualificationConfig(sortedCats.length, ksGuess).qualifiedPerGroup;
                 }
                 
                 // Encontrar todos os jogos R1
@@ -5857,10 +5868,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           if (catQPG != null && catQPG > 0) {
             qualifiedPerGroup = catQPG;
           } else {
-            // Se não está definido na categoria, calcular baseado no número de equipas
-            const maxTeamsPerGroup = Math.max(...categories.map(c => teams.filter(t => t.category_id === c.id).length));
-            qualifiedPerGroup = maxTeamsPerGroup; // Todas as equipas qualificam
-            console.log(`[SCHEDULE] WARNING: qualified_per_group not set in category, auto-calculated to ${qualifiedPerGroup}. Please re-save categories!`);
+            const ksGuess = catKS || tournamentKS || 'semifinals';
+            qualifiedPerGroup = calculateTeamQualificationConfig(categories.length, ksGuess).qualifiedPerGroup;
+            console.log(`[SCHEDULE] WARNING: qualified_per_group not set, derived ${qualifiedPerGroup} from knockout_stage=${ksGuess}. Please re-save categories!`);
           }
           
           if (catKS && catKS !== 'null') {

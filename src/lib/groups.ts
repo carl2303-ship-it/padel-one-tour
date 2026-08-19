@@ -2220,6 +2220,51 @@ export async function advanceKnockoutWinner(
   console.log('[ADVANCE_WINNER] Done processing advancement');
 }
 
+export type TeamQualificationConfig = {
+  qualifiedPerGroup: number;
+  extraBestNeeded: number;
+  totalQualified: number;
+  knockoutStage: string;
+  extraFromPosition: number;
+  entryRoundMatchCount: number;
+};
+
+/** Quantas equipas passam por grupo consoante a fase eliminatória (formato equipas). */
+export function calculateTeamQualificationConfig(
+  numberOfGroups: number,
+  knockoutStage: string,
+  qualifiedPerGroupOverride?: number | null
+): TeamQualificationConfig {
+  const teamKnockoutSizes: Record<string, number> = {
+    none: 0,
+    final: 2,
+    semifinals: 4,
+    quarterfinals: 8,
+    round_of_16: 16,
+  };
+
+  const safeGroups = Math.max(1, numberOfGroups);
+  const stageQualified = teamKnockoutSizes[knockoutStage] ?? 4;
+  const qualifiedPerGroup =
+    qualifiedPerGroupOverride != null && qualifiedPerGroupOverride > 0
+      ? qualifiedPerGroupOverride
+      : Math.max(1, Math.floor(stageQualified / safeGroups));
+  const totalQualified =
+    qualifiedPerGroupOverride != null && qualifiedPerGroupOverride > 0
+      ? safeGroups * qualifiedPerGroup
+      : stageQualified;
+  const extraBestNeeded = Math.max(0, totalQualified - qualifiedPerGroup * safeGroups);
+
+  return {
+    qualifiedPerGroup,
+    extraBestNeeded,
+    totalQualified,
+    knockoutStage,
+    extraFromPosition: qualifiedPerGroup + 1,
+    entryRoundMatchCount: Math.max(1, Math.floor(totalQualified / 2)),
+  };
+}
+
 /**
  * Emparelha equipas de 2 grupos para eliminatórias, colocando os vencedores
  * de cada grupo em lados opostos do quadro (só se encontram na final se
@@ -2442,18 +2487,70 @@ async function populateTeamPlacementForCategory(
     console.log(`[POPULATE_TEAM_PLACEMENT] Cat ${categoryId} group ${g}:`, arr.map((t, i) => `${i + 1}° ${t.name} (W${t.wins}/GD${t.gd})`));
   });
 
-  const overallRanking: Stats[] = [];
-  const maxLen = Math.max(...Array.from(rankedByGroup.values()).map(a => a.length));
-  for (let pos = 0; pos < maxLen; pos++) {
-    for (const g of sortedGroupNames) {
-      const arr = rankedByGroup.get(g)!;
-      if (pos < arr.length) overallRanking.push(arr[pos]);
+  const { data: categoryRow } = await supabase
+    .from('tournament_categories')
+    .select('qualified_per_group, knockout_stage, number_of_groups, format')
+    .eq('id', categoryId)
+    .maybeSingle();
+
+  const configuredGroupCount =
+    categoryRow?.number_of_groups && categoryRow.number_of_groups > 0
+      ? categoryRow.number_of_groups
+      : sortedGroupNames.length;
+
+  const qualConfig = calculateTeamQualificationConfig(
+    configuredGroupCount,
+    categoryRow?.knockout_stage || 'semifinals',
+    categoryRow?.qualified_per_group
+  );
+
+  console.log(
+    `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: ${qualConfig.qualifiedPerGroup}/grupo, ` +
+    `total=${qualConfig.totalQualified}, 1ª eliminatória=${qualConfig.entryRoundMatchCount} jogos`
+  );
+
+  const qualifiedByGroup = new Map<string, Stats[]>();
+  sortedGroupNames.forEach(g => {
+    qualifiedByGroup.set(g, (rankedByGroup.get(g) || []).slice(0, qualConfig.qualifiedPerGroup));
+  });
+
+  const extraQualified: Stats[] = [];
+  if (qualConfig.extraBestNeeded > 0) {
+    const extraCandidates: Stats[] = [];
+    sortedGroupNames.forEach(g => {
+      const full = rankedByGroup.get(g) || [];
+      if (full.length > qualConfig.qualifiedPerGroup) {
+        extraCandidates.push(full[qualConfig.qualifiedPerGroup]);
+      }
+    });
+    extraCandidates.sort((a, b) => {
+      if (a.wins !== b.wins) return b.wins - a.wins;
+      if (a.gd !== b.gd) return b.gd - a.gd;
+      return b.gf - a.gf;
+    });
+    extraQualified.push(...extraCandidates.slice(0, qualConfig.extraBestNeeded));
+    if (extraQualified.length > 0) {
+      console.log(
+        `[POPULATE_TEAM_PLACEMENT] Melhores ${qualConfig.extraFromPosition}°:`,
+        extraQualified.map(t => t.name)
+      );
     }
   }
+
+  const overallQualified: Stats[] = [];
+  const maxQualLen = Math.max(...Array.from(qualifiedByGroup.values()).map(a => a.length), 0);
+  for (let pos = 0; pos < maxQualLen; pos++) {
+    for (const g of sortedGroupNames) {
+      const arr = qualifiedByGroup.get(g)!;
+      if (pos < arr.length) overallQualified.push(arr[pos]);
+    }
+  }
+  overallQualified.push(...extraQualified);
 
   const semis = ko.filter(m => m.round === 'semi_final' || m.round === 'semifinal').sort((a, b) => a.match_number - b.match_number);
   const qfs = ko.filter(m => m.round === 'quarter_final' || m.round === 'quarterfinal').sort((a, b) => a.match_number - b.match_number);
   const ro16 = ko.filter(m => m.round === 'round_of_16').sort((a, b) => a.match_number - b.match_number);
+  const finals = ko.filter(m => m.round === 'final').sort((a, b) => a.match_number - b.match_number);
 
   const buildCrossPairs = (teams: Stats[], n: number): Array<[Stats, Stats]> => {
     const pool = teams.slice(0, n);
@@ -2468,12 +2565,24 @@ async function populateTeamPlacementForCategory(
 
   const buildKnockoutPairs = (numMatches: number): Array<[Stats, Stats]> => {
     if (sortedGroupNames.length === 2) {
-      const rankA = rankedByGroup.get(sortedGroupNames[0])!;
-      const rankB = rankedByGroup.get(sortedGroupNames[1])!;
+      const rankA = qualifiedByGroup.get(sortedGroupNames[0])!;
+      const rankB = qualifiedByGroup.get(sortedGroupNames[1])!;
       return buildTwoGroupKnockoutPairs(rankA, rankB, numMatches);
     }
     const need = numMatches * 2;
-    return buildCrossPairs(overallRanking, Math.min(need, overallRanking.length));
+    return buildCrossPairs(overallQualified, Math.min(need, overallQualified.length));
+  };
+
+  const clearUnplayedKnockoutSlots = async (matches: typeof ko, label: string) => {
+    for (const m of matches) {
+      if (hasRealScores(m)) continue;
+      if (!m.team1_id && !m.team2_id) continue;
+      await supabase
+        .from('matches')
+        .update({ team1_id: null, team2_id: null, winner_id: null, status: 'scheduled' })
+        .eq('id', m.id);
+      console.log(`[POPULATE_TEAM_PLACEMENT] Cleared stale ${label} #${m.match_number}`);
+    }
   };
 
   const applyKnockoutPairs = async (matches: typeof ko, pairs: Array<[Stats, Stats]>, label: string) => {
@@ -2522,31 +2631,88 @@ async function populateTeamPlacementForCategory(
     }
   };
 
-  // When a later knockout round exists, NEVER fill it from group standings.
-  // That was putting group favourites (often the QF losers after an upset)
-  // into the semifinals after all quarterfinals had results.
-  if (ro16.length > 0) {
-    if (ro16.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
-      const pairs = buildKnockoutPairs(ro16.length);
-      await applyKnockoutPairs(ro16, pairs, 'RO16');
-    }
-    const nextRound = qfs.length > 0 ? qfs : semis;
-    await advanceWinnersToNextRound(ro16, nextRound, 'RO16→next');
+  // The entry round must be derived from config (groups + qualified/group),
+  // never inferred by "how many matches currently exist", otherwise seeding can
+  // drift (e.g. A1 vs B3 when only 3 QFs were found).
+  const entryCount = qualConfig.entryRoundMatchCount;
+  const minQualifiedTeams = Math.max(2, entryCount * 2);
+
+  if (overallQualified.length < minQualifiedTeams) {
+    console.log(
+      `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: only ${overallQualified.length} qualified, need ${minQualifiedTeams} — skip knockout fill`
+    );
     return;
   }
 
-  if (qfs.length > 0) {
-    if (qfs.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
-      const pairs = buildKnockoutPairs(qfs.length);
-      await applyKnockoutPairs(qfs, pairs, 'QF');
+  type EntryRound = { matches: typeof ko; label: string; nextRound: typeof ko; staleRounds: Array<{ matches: typeof ko; label: string }> };
+  const resolveEntryRound = (): EntryRound | null => {
+    const isGroupsKnockoutCategory =
+      categoryRow?.format === 'groups_knockout' || categoryRow?.format == null;
+    if (!isGroupsKnockoutCategory) return null;
+
+    if (entryCount >= 8) {
+      if (ro16.length !== entryCount) return null;
+      return {
+        matches: ro16,
+        label: 'RO16',
+        nextRound: qfs,
+        staleRounds: [
+          { matches: qfs.slice(Math.ceil(entryCount / 2)), label: 'QF-extra' },
+          { matches: semis.slice(Math.ceil(entryCount / 4)), label: 'SF-extra' },
+        ],
+      };
     }
-    await advanceWinnersToNextRound(qfs, semis, 'QF→SF');
+    if (entryCount === 4) {
+      if (qfs.length !== entryCount) return null;
+      return {
+        matches: qfs,
+        label: 'QF',
+        nextRound: semis,
+        staleRounds: [{ matches: ro16, label: 'RO16' }],
+      };
+    }
+    if (entryCount === 2) {
+      if (semis.length !== entryCount) return null;
+      return {
+        matches: semis,
+        label: 'SF',
+        nextRound: finals,
+        staleRounds: [{ matches: qfs, label: 'QF' }, { matches: ro16, label: 'RO16' }],
+      };
+    }
+    if (entryCount === 1) {
+      if (finals.length !== entryCount) return null;
+      return {
+        matches: finals,
+        label: 'F',
+        nextRound: [],
+        staleRounds: [{ matches: semis, label: 'SF' }, { matches: qfs, label: 'QF' }, { matches: ro16, label: 'RO16' }],
+      };
+    }
+    return null;
+  };
+
+  const entry = resolveEntryRound();
+  if (!entry) {
+    console.log(
+      `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: bracket mismatch — ` +
+      `format=${categoryRow?.format || 'n/a'}, cfgGroups=${configuredGroupCount}, ` +
+      `entry=${entryCount}, RO16=${ro16.length}, QF=${qfs.length}, SF=${semis.length}, F=${finals.length}`
+    );
     return;
   }
 
-  if (semis.length > 0 && semis.some(m => !hasRealScores(m)) && overallRanking.length >= 2) {
-    const pairs = buildKnockoutPairs(semis.length);
-    await applyKnockoutPairs(semis, pairs, 'SF');
+  for (const stale of entry.staleRounds) {
+    await clearUnplayedKnockoutSlots(stale.matches, stale.label);
+  }
+
+  if (entry.matches.some(m => !hasRealScores(m))) {
+    const pairs = buildKnockoutPairs(entry.matches.length);
+    await applyKnockoutPairs(entry.matches, pairs, entry.label);
+  }
+
+  if (entry.nextRound.length > 0) {
+    await advanceWinnersToNextRound(entry.matches, entry.nextRound, `${entry.label}→next`);
   }
 }
 
