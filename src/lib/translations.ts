@@ -137,6 +137,7 @@ export const translations = {
       newPlayersMonth: 'New Players (month)',
       activeMembers: 'Active Members',
       monthlyRevenue: 'Monthly Revenue',
+      periodRevenue: 'Period Revenue',
       revenue: 'Revenue',
       upcomingTournaments: 'Upcoming Tournaments',
       playerEvolution: 'Player Evolution (6 months)',
@@ -947,6 +948,7 @@ export const translations = {
       newPlayersMonth: 'Novos Jogadores (mês)',
       activeMembers: 'Membros Ativos',
       monthlyRevenue: 'Receita Mensal',
+      periodRevenue: 'Receita do Período',
       revenue: 'Receita',
       upcomingTournaments: 'Próximos Torneios',
       playerEvolution: 'Evolução de Jogadores (6 meses)',
@@ -1743,7 +1745,7 @@ export const translations = {
     organizerDashboard: {
       title: 'Panel', totalTournaments: 'Total Torneos', uniquePlayers: 'Jugadores Únicos',
       newPlayersMonth: 'Nuevos Jugadores (mes)', activeMembers: 'Miembros Activos',
-      monthlyRevenue: 'Ingresos Mensuales', upcomingTournaments: 'Próximos Torneos',
+      monthlyRevenue: 'Ingresos Mensuales', periodRevenue: 'Ingresos del Período', upcomingTournaments: 'Próximos Torneos',
       playerEvolution: 'Evolución de Jugadores (6 meses)', memberAlerts: 'Alertas de Miembros',
       expiringNextMonth: 'Expiran el próximo mes', alreadyExpired: 'Ya expirados',
       noUpcoming: 'Sin torneos próximos', viewAll: 'Ver todos',
@@ -2452,7 +2454,7 @@ export const translations = {
     organizerDashboard: {
       title: 'Tableau de Bord', totalTournaments: 'Total Tournois', uniquePlayers: 'Joueurs Uniques',
       newPlayersMonth: 'Nouveaux Joueurs (mois)', activeMembers: 'Membres Actifs',
-      monthlyRevenue: 'Revenus Mensuels', upcomingTournaments: 'Prochains Tournois',
+      monthlyRevenue: 'Revenus Mensuels', periodRevenue: 'Revenus de la Période', upcomingTournaments: 'Prochains Tournois',
       playerEvolution: 'Évolution des Joueurs (6 mois)', memberAlerts: 'Alertes Membres',
       expiringNextMonth: 'Expirent le mois prochain', alreadyExpired: 'Déjà expirés',
       noUpcoming: 'Aucun tournoi à venir', viewAll: 'Voir tout',
@@ -3162,7 +3164,7 @@ export const translations = {
     organizerDashboard: {
       title: 'Pannello', totalTournaments: 'Totale Tornei', uniquePlayers: 'Giocatori Unici',
       newPlayersMonth: 'Nuovi Giocatori (mese)', activeMembers: 'Membri Attivi',
-      monthlyRevenue: 'Entrate Mensili', upcomingTournaments: 'Prossimi Tornei',
+      monthlyRevenue: 'Entrate Mensili', periodRevenue: 'Entrate del Periodo', upcomingTournaments: 'Prossimi Tornei',
       playerEvolution: 'Evoluzione Giocatori (6 mesi)', memberAlerts: 'Avvisi Membri',
       expiringNextMonth: 'In scadenza il mese prossimo', alreadyExpired: 'Già scaduti',
       noUpcoming: 'Nessun torneo in programma', viewAll: 'Vedi tutti',

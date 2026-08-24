@@ -79,6 +79,10 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
   const [dateRange, setDateRange] = useState<DateRange>('all');
   const [revenue, setRevenue] = useState(0);
   const [registrationCounts, setRegistrationCounts] = useState<Record<string, number>>({});
+  const [revenueLoading, setRevenueLoading] = useState(false);
+
+  const rangeStart = getDateRangeStart(dateRange);
+  const metricsRange = useMemo(() => dashboardRangeToMetrics(dateRange), [dateRange]);
 
   useEffect(() => {
     if (user) fetchDashboardData();
@@ -88,16 +92,18 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
     if (!user) return;
     let cancelled = false;
     (async () => {
-      // Card "Receita Mensal": sempre o mês civil actual (datas locais)
+      setRevenueLoading(true);
       try {
-        const period = await loadOrganizerPeriodRevenue(user.id, getDateRange('month'));
+        const period = await loadOrganizerPeriodRevenue(user.id, metricsRange);
         if (!cancelled) setRevenue(period.total);
       } catch (err) {
-        console.error('Error loading dashboard revenue:', err);
+        console.error('Error loading period revenue:', err);
+      } finally {
+        if (!cancelled) setRevenueLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [user]);
+  }, [user, metricsRange]);
 
   async function fetchDashboardData() {
     setLoading(true);
@@ -134,9 +140,6 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
       setLoading(false);
     }
   }
-
-  const rangeStart = getDateRangeStart(dateRange);
-  const metricsRange = useMemo(() => dashboardRangeToMetrics(dateRange), [dateRange]);
 
   const filteredTournaments = useMemo(() => {
     if (!rangeStart) return tournaments;
@@ -313,8 +316,8 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
         />
         <StatCard
           icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
-          label={td.monthlyRevenue || 'Receita Mensal'}
-          value={`${stats.revenue.toFixed(0)}€`}
+          label={td.periodRevenue || 'Receita do Período'}
+          value={revenueLoading ? '…' : `${stats.revenue.toFixed(0)}€`}
           bgColor="bg-emerald-50"
           onClick={() => onNavigate('metrics')}
         />

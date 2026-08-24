@@ -33,6 +33,7 @@ import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
+import { deleteTeamAndPlayers } from '../lib/deleteTeamRegistration';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
@@ -602,7 +603,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (newStatus === 'paid') {
         const rpcParams: Record<string, unknown> = {
           p_club_owner_id: ownerId,
-          p_player_name: player.name,
+          p_player_name: (player.name || '').trim(),
           p_player_phone: normalizedPhone || 'unknown',
           p_transaction_type: 'tournament',
           p_amount: priceInfo.amount,
@@ -611,14 +612,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           p_notes: `Torneio: ${currentTournament.name} (${priceInfo.label}, pagamento no local)`,
         };
         if (playerAccountId) rpcParams.p_player_account_id = playerAccountId;
-        await supabase.rpc('insert_player_transaction', rpcParams);
+        const { error: insertTxError } = await supabase.rpc('insert_player_transaction', rpcParams);
+        if (insertTxError) throw insertTxError;
       } else {
-        await supabase.rpc('delete_player_transaction', {
+        const { error: deleteTxError } = await supabase.rpc('delete_player_transaction', {
           p_club_owner_id: ownerId,
           p_reference_id: currentTournament.id,
           p_reference_type: 'tournament',
-          p_player_name: player.name,
+          p_player_name: (player.name || '').trim(),
+          p_player_phone: normalizedPhone,
         });
+        if (deleteTxError) throw deleteTxError;
       }
 
       setIndividualPlayers(prev =>
@@ -4738,38 +4742,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     if (!confirm(t.tournament.confirmDeleteTeam)) return;
     
     try {
-      const { data: team } = await supabase
-        .from('teams')
-        .select('player1_id, player2_id')
-        .eq('id', teamId)
-        .single();
-
-      const [m1, m2] = await Promise.all([
-        supabase.from('matches').select('id').eq('team1_id', teamId),
-        supabase.from('matches').select('id').eq('team2_id', teamId),
-      ]);
-      const matchIds = [...new Set([
-        ...(m1.data || []).map(m => m.id),
-        ...(m2.data || []).map(m => m.id),
-      ])];
-
-      if (matchIds.length > 0) {
-        await supabase.from('court_bookings').delete().in('tournament_match_id', matchIds);
-        for (const matchId of matchIds) {
-          await supabase.from('matches').delete().eq('id', matchId);
-        }
-      }
-
-      const { error } = await supabase.from('teams').delete().eq('id', teamId);
-      if (error) throw error;
-
-      if (team) {
-        const playerIds = [team.player1_id, team.player2_id].filter(Boolean);
-        for (const pid of playerIds) {
-          await supabase.from('players').delete().eq('id', pid);
-        }
-      }
-
+      await deleteTeamAndPlayers(teamId);
       await fetchTournamentData();
     } catch (error) {
       console.error('Error deleting team:', error);

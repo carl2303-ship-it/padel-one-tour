@@ -1,6 +1,6 @@
 import { supabase, Tournament } from './supabase';
 
-const INDIVIDUAL_FORMATS = ['individual_groups_knockout', 'mixed_american'];
+const INDIVIDUAL_FORMATS = ['individual_groups_knockout', 'mixed_american', 'mixed_gender'];
 
 export function isIndividualTournament(
   tournament: Pick<Tournament, 'format' | 'round_robin_type'>
@@ -11,6 +11,11 @@ export function isIndividualTournament(
   );
 }
 
+/**
+ * Contagens para cards de lista / capacidade:
+ * - individual / super_teams → jogadores
+ * - resto (equipas) → número de equipas (alinhado com max_teams)
+ */
 export async function fetchTournamentRegistrationCounts(
   tournamentsList: Pick<Tournament, 'id' | 'format' | 'round_robin_type'>[]
 ): Promise<Record<string, number>> {

@@ -5,6 +5,7 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from './playerTournamentPrice';
+import { isIndividualTournament } from './tournamentRegistrationCounts';
 
 export type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 
@@ -186,6 +187,7 @@ export async function fetchOrganizerPlayerRegistrations(
 async function fetchPlayersForTournaments(tournamentIds: string[]) {
   if (!tournamentIds.length) return [];
   const all: Array<{
+    id: string;
     tournament_id: string;
     name: string | null;
     phone_number: string | null;
@@ -200,7 +202,7 @@ async function fetchPlayersForTournaments(tournamentIds: string[]) {
     while (true) {
       const { data, error } = await supabase
         .from('players')
-        .select('tournament_id, name, phone_number, category_id, payment_status')
+        .select('id, tournament_id, name, phone_number, category_id, payment_status')
         .in('tournament_id', batchIds)
         .range(from, from + PAGE_SIZE - 1);
       if (error) {
@@ -215,6 +217,36 @@ async function fetchPlayersForTournaments(tournamentIds: string[]) {
   }
 
   return all;
+}
+
+async function fetchTeamLinkedPlayerIds(tournamentIds: string[]): Promise<Set<string>> {
+  const linked = new Set<string>();
+  if (!tournamentIds.length) return linked;
+
+  for (let i = 0; i < tournamentIds.length; i += 50) {
+    const batchIds = tournamentIds.slice(i, i + 50);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('teams')
+        .select('player1_id, player2_id')
+        .in('tournament_id', batchIds)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        console.error('[organizerMetrics] teams fetch:', error);
+        break;
+      }
+      if (!data?.length) break;
+      for (const team of data) {
+        if (team.player1_id) linked.add(team.player1_id);
+        if (team.player2_id) linked.add(team.player2_id);
+      }
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+
+  return linked;
 }
 
 async function fetchRegistrationCounts(
@@ -240,12 +272,26 @@ async function fetchRegistrationCounts(
         return;
       }
 
-      // Equipas e individual: contar jogadores (2 por equipa), não equipas
-      const { count } = await supabase
-        .from('players')
-        .select('id', { count: 'exact', head: true })
+      if (isIndividualTournament(t)) {
+        const { count } = await supabase
+          .from('players')
+          .select('id', { count: 'exact', head: true })
+          .eq('tournament_id', t.id);
+        counts.set(t.id, count ?? 0);
+        return;
+      }
+
+      // Equipas: só jogadores ainda ligados a uma equipa (evita órfãos após deletes)
+      const { data: teams } = await supabase
+        .from('teams')
+        .select('player1_id, player2_id')
         .eq('tournament_id', t.id);
-      counts.set(t.id, count ?? 0);
+      const ids = new Set<string>();
+      (teams || []).forEach(team => {
+        if (team.player1_id) ids.add(team.player1_id);
+        if (team.player2_id) ids.add(team.player2_id);
+      });
+      counts.set(t.id, ids.size);
     }),
   );
   return counts;
@@ -294,21 +340,31 @@ export async function loadOrganizerTournamentMetrics(
   if (!tournaments?.length) return [];
 
   const tournamentIds = tournaments.map(t => t.id);
+  const teamFormatIds = tournaments
+    .filter(t => t.format !== 'super_teams' && !isIndividualTournament(t))
+    .map(t => t.id);
 
-  const [allPlayers, categoriesResult, membersResult, registrationCounts] = await Promise.all([
-    fetchPlayersForTournaments(tournamentIds),
-    supabase
-      .from('tournament_categories')
-      .select('id, tournament_id, registration_fee, member_price, non_member_price')
-      .in('tournament_id', tournamentIds),
-    supabase
-      .from('member_subscriptions')
-      .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
-      .eq('club_owner_id', organizerId)
-      .eq('status', 'active')
-      .gte('end_date', new Date().toISOString().split('T')[0]),
-    fetchRegistrationCounts(tournaments),
-  ]);
+  const [allPlayersRaw, categoriesResult, membersResult, registrationCounts, linkedPlayerIds] =
+    await Promise.all([
+      fetchPlayersForTournaments(tournamentIds),
+      supabase
+        .from('tournament_categories')
+        .select('id, tournament_id, registration_fee, member_price, non_member_price')
+        .in('tournament_id', tournamentIds),
+      supabase
+        .from('member_subscriptions')
+        .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
+        .eq('club_owner_id', organizerId)
+        .eq('status', 'active')
+        .gte('end_date', new Date().toISOString().split('T')[0]),
+      fetchRegistrationCounts(tournaments),
+      fetchTeamLinkedPlayerIds(teamFormatIds),
+    ]);
+
+  const allPlayers = allPlayersRaw.filter(p => {
+    if (!teamFormatIds.includes(p.tournament_id)) return true;
+    return linkedPlayerIds.has(p.id);
+  });
 
   const allCategories = categoriesResult.data || [];
   const memberLookup = buildMemberLookup((membersResult.data || []) as any[]);
@@ -425,41 +481,26 @@ export async function loadOrganizerMembershipMetrics(
   };
 }
 
-/** Receita real do período: transações de torneio + memberships criados no intervalo. */
+/**
+ * Receita do período alinhada com o toggle de pagamento no torneio:
+ * torneios = soma das métricas por payment_status='paid' (mesma fonte da tabela).
+ * memberships = amount_paid das subscrições no intervalo.
+ */
 export async function loadOrganizerPeriodRevenue(
   organizerId: string,
   range: DateRange,
 ): Promise<{ tournamentRevenue: number; membershipRevenue: number; total: number }> {
-  let txQuery = supabase
-    .from('player_transactions')
-    .select('amount, transaction_type, reference_type, transaction_date')
-    .eq('club_owner_id', organizerId);
-
-  if (range.startDate !== '2000-01-01') {
-    txQuery = txQuery.gte('transaction_date', range.startDate).lte('transaction_date', range.endDate);
-  }
-
-  const [txResult, membershipMetrics] = await Promise.all([
-    txQuery,
+  const [tournamentMetrics, membershipMetrics] = await Promise.all([
+    loadOrganizerTournamentMetrics(organizerId, range),
     loadOrganizerMembershipMetrics(organizerId, range),
   ]);
 
-  const tournamentRevenue = (txResult.data || [])
-    .filter(tx => tx.transaction_type === 'tournament' || tx.reference_type === 'tournament')
-    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
-
-  // Fallback: se ainda não há transações, usar métricas estimadas por jogadores pagos
-  let resolvedTournamentRevenue = tournamentRevenue;
-  if (tournamentRevenue === 0) {
-    const tournamentMetrics = await loadOrganizerTournamentMetrics(organizerId, range);
-    resolvedTournamentRevenue = tournamentMetrics.reduce((sum, m) => sum + (m.revenue || 0), 0);
-  }
-
+  const tournamentRevenue = tournamentMetrics.reduce((sum, m) => sum + (m.revenue || 0), 0);
   const membershipRevenue = membershipMetrics.totalRevenue;
   return {
-    tournamentRevenue: resolvedTournamentRevenue,
+    tournamentRevenue,
     membershipRevenue,
-    total: resolvedTournamentRevenue + membershipRevenue,
+    total: tournamentRevenue + membershipRevenue,
   };
 }
 
@@ -523,6 +564,9 @@ export async function loadOrganizerPlayerSpending(
   }
 
   const { data: transactions } = await txQuery;
+  const hasTournamentTx = (transactions || []).some(
+    tx => tx.transaction_type === 'tournament' || tx.reference_type === 'tournament',
+  );
 
   (transactions || []).forEach(tx => {
     const isTournament = tx.transaction_type === 'tournament' || tx.reference_type === 'tournament';
@@ -538,7 +582,9 @@ export async function loadOrganizerPlayerSpending(
     addSpending(sub.member_name, sub.member_phone, 0, paid);
   });
 
-  if (!transactions?.length) {
+  // Prefer ledger when present; otherwise estimate from currently paid players
+  // so spending stays consistent with payment toggles / tournament metrics.
+  if (!hasTournamentTx) {
     const metrics = await loadOrganizerTournamentMetrics(organizerId, range);
     if (metrics.some(m => m.revenue > 0)) {
       const tournamentIds = metrics.map(m => m.tournamentId);

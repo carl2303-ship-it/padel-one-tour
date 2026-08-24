@@ -18,6 +18,7 @@ import {
   type LadderPosition,
 } from '../lib/ladderTournament'
 import { notifyTournamentPlayers } from '../lib/notifyTournament'
+import { deleteTeamAndPlayers } from '../lib/deleteTeamRegistration'
 
 type TeamRow = {
   id: string
@@ -309,15 +310,7 @@ export default function LadderTournamentView({
           .eq('tournament_id', tournament.id)
           .eq('category_id', activeCategoryId)
       }
-      // Delete team and associated players
-      const team = teams.find((t) => t.id === teamId)
-      if (team) {
-        const playerIds = [team.player1_id, team.player2_id].filter(Boolean)
-        await supabase.from('teams').delete().eq('id', teamId)
-        if (playerIds.length > 0) {
-          await supabase.from('players').delete().in('id', playerIds)
-        }
-      }
+      await deleteTeamAndPlayers(teamId)
       await load()
     } finally {
       setBusy(false)
