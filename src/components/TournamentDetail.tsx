@@ -45,6 +45,8 @@ import {
   orderTeamsForRound1,
   pairRound1,
   pairSwissRound,
+  pairSwissFinalsRound,
+  isSwissFinalsRound,
   parseSwissRoundNumber,
 } from '../lib/swissTeamsScheduler';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
@@ -5008,6 +5010,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         if (nextRound === 1) {
           const ordered = orderTeamsForRound1(swissTeams, `${currentTournament.id}:${bucket.categoryId || 'all'}`);
           pairings = pairRound1(ordered);
+        } else if (isSwissFinalsRound(nextRound, bucket.maxRounds)) {
+          // Última ronda = finais de posição (1ºvs2º, 3ºvs4º…); rematches permitidos
+          const standings = computeSwissStandings(swissTeams, catMatches);
+          pairings = pairSwissFinalsRound(standings);
         } else {
           const standings = computeSwissStandings(swissTeams, catMatches);
           const opponents = buildOpponentMap(catMatches);
@@ -8107,10 +8113,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       const canGenerate =
                         highest < maxRounds &&
                         (highest === 0 || isSwissRoundComplete(matches, highest));
+                      const nextIsFinals = highest + 1 === maxRounds && highest > 0;
                       const label =
                         highest === 0
                           ? t.tournament.generateSwissRound1
-                          : t.tournament.generateSwissNextRound;
+                          : nextIsFinals
+                            ? t.tournament.generateSwissFinals
+                            : t.tournament.generateSwissNextRound;
                       return (
                         <button
                           onClick={handleGenerateSwissRound}
@@ -8184,6 +8193,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   onSortByChange={setMatchViewSortBy}
                   matchDurationMinutes={currentTournament.match_duration_minutes || 30}
                   dayStartTime={currentTournament.start_time || '09:00'}
+                  swissMaxRounds={
+                    isSwissTeams
+                      ? clampSwissRounds(
+                          (categories[0] as any)?.swiss_rounds ??
+                            (currentTournament as any).swiss_rounds
+                        )
+                      : undefined
+                  }
                 />
               ) : (
                 <div className="text-center py-12 text-gray-500">

@@ -30,6 +30,7 @@ type MatchScheduleViewProps = {
   onSortByChange?: (sortBy: SortOption) => void;
   matchDurationMinutes?: number;
   dayStartTime?: string;
+  swissMaxRounds?: number;
 };
 
 export default function MatchScheduleView({
@@ -46,6 +47,7 @@ export default function MatchScheduleView({
   onSortByChange,
   matchDurationMinutes = 30,
   dayStartTime = '09:00',
+  swissMaxRounds,
 }: MatchScheduleViewProps) {
   const { t } = useI18n();
   const [internalSortBy, setInternalSortBy] = useState<SortOption>('time');
@@ -357,8 +359,11 @@ export default function MatchScheduleView({
 
   const getKnockoutRoundLabel = (round: string): string => {
     if (round?.startsWith('swiss_r')) {
-      const n = round.replace('swiss_r', '');
-      return `Suíço R${n}`;
+      const n = parseInt(round.replace('swiss_r', ''), 10);
+      if (swissMaxRounds && n === swissMaxRounds) {
+        return t.tournament.swissFinalsLabel || 'Finais';
+      }
+      return (t.tournament.swissRoundLabel || 'Suíço R{n}').replace('{n}', String(n));
     }
     const roundLabels: { [key: string]: string } = {
       'final': t.bracket?.final || 'Final',
@@ -1083,7 +1088,11 @@ export default function MatchScheduleView({
     // Check if it's a knockout round
     if (!round || round.startsWith('group_') || round === 'round_robin') return null;
     if (round.startsWith('swiss_r')) {
-      return `Suíço R${round.replace('swiss_r', '')}`;
+      const n = parseInt(round.replace('swiss_r', ''), 10);
+      if (swissMaxRounds && n === swissMaxRounds) {
+        return t.tournament.swissFinalsLabel || 'Finais';
+      }
+      return (t.tournament.swissRoundLabel || 'Suíço R{n}').replace('{n}', String(n));
     }
     
     const roundLabels: { [key: string]: string } = {

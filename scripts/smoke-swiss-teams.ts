@@ -6,8 +6,10 @@ import {
   buildOpponentMap,
   buildSwissRoundMatches,
   computeSwissStandings,
+  isSwissFinalsRound,
   orderTeamsForRound1,
   pairRound1,
+  pairSwissFinalsRound,
   pairSwissRound,
   type SwissMatchLike,
   type SwissTeam,
@@ -22,11 +24,15 @@ const teams: SwissTeam[] = Array.from({ length: 10 }, (_, i) => ({
 const courts = ['C1', 'C2', 'C3', 'C4', 'C5'];
 const allMatches: SwissMatchLike[] = [];
 let rematchCount = 0;
+const MAX_ROUNDS = 5;
 
-for (let round = 1; round <= 4; round++) {
+for (let round = 1; round <= MAX_ROUNDS; round++) {
   let pairings;
   if (round === 1) {
     pairings = pairRound1(orderTeamsForRound1(teams, 'smoke-test'));
+  } else if (isSwissFinalsRound(round, MAX_ROUNDS)) {
+    const standings = computeSwissStandings(teams, allMatches);
+    pairings = pairSwissFinalsRound(standings);
   } else {
     const standings = computeSwissStandings(teams, allMatches);
     const opponents = buildOpponentMap(allMatches);
@@ -47,11 +53,27 @@ for (let round = 1; round <= 4; round++) {
     process.exit(1);
   }
 
-  const opponents = buildOpponentMap(allMatches);
-  for (const m of playable) {
-    if (m.team1_id && m.team2_id && opponents.get(m.team1_id)?.has(m.team2_id)) {
-      rematchCount += 1;
-      console.error(`REMATCH R${round}: ${m.team1_id} vs ${m.team2_id}`);
+  const isFinals = isSwissFinalsRound(round, MAX_ROUNDS);
+  if (isFinals) {
+    const standings = computeSwissStandings(teams, allMatches);
+    for (let i = 0; i < playable.length; i++) {
+      const m = playable[i];
+      const expected1 = standings[i * 2]?.teamId;
+      const expected2 = standings[i * 2 + 1]?.teamId;
+      if (m.team1_id !== expected1 || m.team2_id !== expected2) {
+        console.error(
+          `FAIL finals pairing #${i}: got ${m.team1_id}-${m.team2_id}, expected ${expected1}-${expected2}`
+        );
+        process.exit(1);
+      }
+    }
+  } else {
+    const opponents = buildOpponentMap(allMatches);
+    for (const m of playable) {
+      if (m.team1_id && m.team2_id && opponents.get(m.team1_id)?.has(m.team2_id)) {
+        rematchCount += 1;
+        console.error(`REMATCH R${round}: ${m.team1_id} vs ${m.team2_id}`);
+      }
     }
   }
 
@@ -73,7 +95,7 @@ for (let round = 1; round <= 4; round++) {
   }
 
   console.log(
-    `R${round}:`,
+    `${isFinals ? 'FINALS' : `R${round}`}:`,
     playable.map((m) => `${m.team1_id}-${m.team2_id}@${m.court}`).join(' | ')
   );
 }
@@ -85,7 +107,7 @@ finalStandings.forEach((s, i) => {
 });
 
 if (rematchCount > 0) {
-  console.error(`\nFAIL: ${rematchCount} rematch(es)`);
+  console.error(`\nFAIL: ${rematchCount} rematch(es) in Swiss rounds`);
   process.exit(1);
 }
-console.log('\nPASS: 10 teams × 4 rounds, zero rematches');
+console.log('\nPASS: 10 teams × 4 Swiss + finals (1v2…), zero rematches in Swiss rounds');

@@ -283,6 +283,34 @@ export function pairSwissRound(
   return resolveRematches(pairings, previousOpponents);
 }
 
+/**
+ * Last Swiss round = placement finals: 1º vs 2º, 3º vs 4º, …
+ * Rematches are allowed (no anti-rematch).
+ */
+export function pairSwissFinalsRound(standings: SwissStanding[]): SwissPairing[] {
+  const pool = [...standings];
+  const pairings: SwissPairing[] = [];
+
+  if (pool.length % 2 === 1) {
+    const byeTeam = pool.pop()!;
+    pairings.push({ team1Id: byeTeam.teamId, team2Id: null, isBye: true });
+  }
+
+  for (let i = 0; i + 1 < pool.length; i += 2) {
+    pairings.push({
+      team1Id: pool[i].teamId,
+      team2Id: pool[i + 1].teamId,
+      isBye: false,
+    });
+  }
+
+  return pairings;
+}
+
+export function isSwissFinalsRound(roundNumber: number, maxRounds: number): boolean {
+  return roundNumber > 0 && maxRounds > 0 && roundNumber === maxRounds;
+}
+
 export function pairRound1(teamsOrdered: SwissTeam[]): SwissPairing[] {
   const ids = teamsOrdered.map(t => t.id);
   const pairings: SwissPairing[] = [];
