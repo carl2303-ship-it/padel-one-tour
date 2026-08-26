@@ -2631,16 +2631,12 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
-                    {!swissCriteria && (
-                      <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
-                    )}
+                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
-                    {!swissCriteria && (
-                      <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
-                    )}
+                    <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -2661,18 +2657,14 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                         </td>
                         <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
                         <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
-                        {!swissCriteria && (
-                          <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
-                        )}
+                        <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
                         <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
                         <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
                         <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
                         <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
                           {gameDiff > 0 ? '+' : ''}{gameDiff}
                         </td>
-                        {!swissCriteria && (
-                          <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
-                        )}
+                        <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
                       </tr>
                     );
                   })}
@@ -2683,7 +2675,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                 <p className="text-xs text-gray-500">
                   <strong>Critérios:</strong>{' '}
                   {swissCriteria
-                    ? '1. Vitórias, 2. Diferença de jogos (+/-), 3. Jogos ganhos'
+                    ? '1. Pontos (V=2, E=1), 2. Vitórias, 3. Diferença de jogos (+/-), 4. Jogos ganhos'
                     : '1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos'}
                 </p>
               </div>
