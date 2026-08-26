@@ -175,6 +175,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [matchViewSortBy, setMatchViewSortBy] = useState<'time' | 'court' | 'group' | 'courts_grid'>('time');
+  const [outdoorCourtKeys, setOutdoorCourtKeys] = useState<string[]>([]);
   const [showManualGroupAssignment, setShowManualGroupAssignment] = useState(false);
   const [showGroupDropdown, setShowGroupDropdown] = useState(false);
   // Super Teams (format === 'super_teams')
@@ -356,6 +357,45 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     void loadMembers();
   }, [currentTournament, user?.id]);
+
+  useEffect(() => {
+    const loadOutdoorCourts = async () => {
+      const clubId = (currentTournament as any)?.club_id;
+      const courtNames: string[] = (currentTournament as any)?.court_names || [];
+      if (!clubId || courtNames.length === 0) {
+        setOutdoorCourtKeys([]);
+        return;
+      }
+      const { data: clubData } = await supabase
+        .from('clubs')
+        .select('owner_id')
+        .eq('id', clubId)
+        .maybeSingle();
+      if (!clubData?.owner_id) {
+        setOutdoorCourtKeys([]);
+        return;
+      }
+      const { data: courtData } = await supabase
+        .from('club_courts')
+        .select('name, type')
+        .eq('user_id', clubData.owner_id)
+        .eq('is_active', true);
+      if (!courtData || courtData.length === 0) {
+        setOutdoorCourtKeys([]);
+        return;
+      }
+      const typeByName = new Map(courtData.map((c) => [c.name, c.type || 'indoor']));
+      const keys: string[] = [];
+      courtNames.forEach((name, idx) => {
+        if (typeByName.get(name) === 'outdoor') {
+          keys.push(name);
+          keys.push(String(idx + 1));
+        }
+      });
+      setOutdoorCourtKeys(keys);
+    };
+    void loadOutdoorCourts();
+  }, [currentTournament?.club_id, (currentTournament as any)?.court_names]);
 
   useEffect(() => {
     const handleClickOutside = () => setShowGroupDropdown(false);
@@ -8276,6 +8316,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                         )
                       : undefined
                   }
+                  outdoorCourtKeys={outdoorCourtKeys}
+                  outdoorCountMatches={matches as MatchWithTeams[]}
                 />
               ) : (
                 <div className="text-center py-12 text-gray-500">

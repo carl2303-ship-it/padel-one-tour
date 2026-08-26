@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Match, Team, Player, IndividualPlayer, TournamentCategory, supabase } from '../lib/supabase';
-import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2, LayoutGrid } from 'lucide-react';
+import { ArrowUpDown, Printer, Calendar, Users, Clock, Edit2, LayoutGrid, Sun } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import EditMatchScheduleModal from './EditMatchScheduleModal';
 
@@ -32,6 +32,10 @@ type MatchScheduleViewProps = {
   dayStartTime?: string;
   swissMaxRounds?: number;
   swissLastRoundMode?: 'finals' | 'swiss' | 'placement';
+  /** Court keys (name and/or "1","2"…) that are outdoor. Empty = hide outdoor badges. */
+  outdoorCourtKeys?: string[];
+  /** Prefer full match list for outdoor counts when `matches` is filtered. */
+  outdoorCountMatches?: MatchWithTeams[];
 };
 
 export default function MatchScheduleView({
@@ -50,6 +54,8 @@ export default function MatchScheduleView({
   dayStartTime = '09:00',
   swissMaxRounds,
   swissLastRoundMode = 'finals',
+  outdoorCourtKeys = [],
+  outdoorCountMatches,
 }: MatchScheduleViewProps) {
   const { t } = useI18n();
   const [internalSortBy, setInternalSortBy] = useState<SortOption>('time');
@@ -70,6 +76,61 @@ export default function MatchScheduleView({
     }
     setLocalMatches(matches);
   }, [matches]);
+
+  const outdoorKeySet = new Set(
+    (outdoorCourtKeys || []).map((k) => k.trim()).filter(Boolean)
+  );
+  const showOutdoorBadges = outdoorKeySet.size > 0;
+
+  const isOutdoorCourt = (court: string | null | undefined): boolean => {
+    if (!court || !showOutdoorBadges) return false;
+    return outdoorKeySet.has(court.trim());
+  };
+
+  /** teamId or playerId → outdoor match count (all scheduled/completed, excl. bye/cancelled) */
+  const outdoorGamesById = (() => {
+    const counts = new Map<string, number>();
+    if (!showOutdoorBadges) return counts;
+    const source = outdoorCountMatches && outdoorCountMatches.length > 0
+      ? outdoorCountMatches
+      : localMatches;
+    const bump = (id: string | null | undefined) => {
+      if (!id) return;
+      counts.set(id, (counts.get(id) || 0) + 1);
+    };
+    for (const m of source) {
+      if (m.status === 'cancelled') continue;
+      if (!isOutdoorCourt(m.court)) continue;
+      if (m.court === 'BYE') continue;
+      if (isIndividualRoundRobin) {
+        bump((m as any).player1_individual_id);
+        bump((m as any).player2_individual_id);
+        bump((m as any).player3_individual_id);
+        bump((m as any).player4_individual_id);
+      } else {
+        if (m.team1_id && m.team2_id) {
+          bump(m.team1_id);
+          bump(m.team2_id);
+        }
+      }
+    }
+    return counts;
+  })();
+
+  const OutdoorBadge = ({ id }: { id: string | null | undefined }) => {
+    if (!showOutdoorBadges || !id) return null;
+    const n = outdoorGamesById.get(id) || 0;
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-900 align-middle whitespace-nowrap"
+        title={`${n} jogo${n === 1 ? '' : 's'} em campo outdoor`}
+      >
+        <Sun className="w-3 h-3 print:hidden" />
+        <span className="print:inline hidden print:mr-0.5">☀</span>
+        {n}
+      </span>
+    );
+  };
 
   useEffect(() => {
     onViewModeChange?.(sortBy === 'courts_grid');
@@ -971,9 +1032,15 @@ export default function MatchScheduleView({
             )}
           </div>
         </div>
-        <p className="font-semibold text-gray-900 truncate" title={side1}>{side1}</p>
+        <p className="font-semibold text-gray-900 truncate" title={side1}>
+          {side1}
+          {!isIndividualRoundRobin && <OutdoorBadge id={match.team1_id} />}
+        </p>
         <p className="text-center text-gray-400 text-[10px] my-0.5">vs</p>
-        <p className="font-semibold text-gray-900 truncate" title={side2}>{side2}</p>
+        <p className="font-semibold text-gray-900 truncate" title={side2}>
+          {side2}
+          {!isIndividualRoundRobin && <OutdoorBadge id={match.team2_id} />}
+        </p>
         {(groupLabel || isCompleted) && (
           <div className="flex items-center gap-1 mt-1">
             {groupLabel && (
@@ -1220,15 +1287,18 @@ export default function MatchScheduleView({
               <div className="space-y-0.5">
                 <p className="font-semibold text-sm text-gray-900">
                   {getPlayerName((match as any).player1_individual_id)}
+                  <OutdoorBadge id={(match as any).player1_individual_id} />
                 </p>
                 <p className="font-semibold text-sm text-gray-900">
                   {getPlayerName((match as any).player2_individual_id)}
+                  <OutdoorBadge id={(match as any).player2_individual_id} />
                 </p>
               </div>
             ) : match.team1 ? (
               <div>
                 <p className="font-bold text-gray-900">
                   {match.team1.name}
+                  <OutdoorBadge id={match.team1_id} />
                 </p>
                 {match.team1.player1 && match.team1.player2 && (
                   <p className="text-xs text-gray-600">
@@ -1257,15 +1327,18 @@ export default function MatchScheduleView({
               <div className="space-y-0.5">
                 <p className="font-semibold text-sm text-gray-900">
                   {getPlayerName((match as any).player3_individual_id)}
+                  <OutdoorBadge id={(match as any).player3_individual_id} />
                 </p>
                 <p className="font-semibold text-sm text-gray-900">
                   {getPlayerName((match as any).player4_individual_id)}
+                  <OutdoorBadge id={(match as any).player4_individual_id} />
                 </p>
               </div>
             ) : match.team2 ? (
               <div>
                 <p className="font-bold text-gray-900">
                   {match.team2.name}
+                  <OutdoorBadge id={match.team2_id} />
                 </p>
                 {match.team2.player1 && match.team2.player2 && (
                   <p className="text-xs text-gray-600">
