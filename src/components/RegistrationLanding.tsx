@@ -4,6 +4,7 @@ import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
 import { normalizePhone } from '../lib/phoneUtils';
+import { levelFromCategory } from '../lib/playerLevelCategory';
 import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
 
@@ -130,15 +131,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
   const [player2IsMember, setPlayer2IsMember] = useState<boolean | null>(null);
   const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
-
-  const levelFromCategory = (cat: string): number | null => {
-    const m = cat.toUpperCase().trim().match(/^[MF](\d+)$/);
-    if (!m) return null;
-    const n = parseInt(m[1]);
-    // M1/F1=7.0, M2/F2=6.0, M3/F3=5.0, M4/F4=4.0, M5/F5=3.0, M6/F6=2.0
-    const map: Record<number, number> = { 1: 7.0, 2: 6.0, 3: 5.0, 4: 4.0, 5: 3.0, 6: 2.0 };
-    return map[n] ?? null;
-  };
 
   const getCategoryDefaults = (category: TournamentCategory | undefined): { playerCategory: string | null; level: number | null; levelReliability: number } => {
     if (!category) return { playerCategory: null, level: null, levelReliability: 0 };

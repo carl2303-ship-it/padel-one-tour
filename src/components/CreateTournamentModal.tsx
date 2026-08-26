@@ -36,6 +36,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     round_robin_type: 'teams' as string | null,
     gender: '' as string,
     challenge_limit: 5,
+    swiss_rounds: 5,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -314,6 +315,9 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         daily_end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
         format: formData.format,
         round_robin_type: isLadderFmt ? null : formData.round_robin_type,
+        swiss_rounds: formData.format === 'swiss_teams'
+          ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
+          : null,
         max_teams: 999,
         number_of_courts: isLadderFmt ? 1 : effectiveCourtNames.length,
         match_duration_minutes: 30,
@@ -517,6 +521,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               <optgroup label={t.tournament.formatOptgroupTeams}>
                 <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
                 <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                <option value="swiss_teams">{t.tournament.formatOption_swiss_teams}</option>
                 <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
                 <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
                 <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
@@ -524,6 +529,28 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               </optgroup>
             </select>
           </div>
+
+          {formData.format === 'swiss_teams' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t.tournament.swissRoundsLabel}
+              </label>
+              <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
+              <input
+                type="number"
+                min={3}
+                max={9}
+                value={formData.swiss_rounds}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                  })
+                }
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          )}
 
           {formData.format === 'ladder' && (
             <div className="space-y-4">

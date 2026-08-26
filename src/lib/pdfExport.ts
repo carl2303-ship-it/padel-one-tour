@@ -278,6 +278,7 @@ export async function exportTournamentPDF(
     crossed_playoffs_teams: 'Playoffs Cruzados por Equipas',
     round_robin: roundRobinType === 'individual' || roundRobinType === 'american' ? 'Americano Individual - Todos contra Todos' : roundRobinType === 'teams' ? 'Americano Equipas - Todos contra Todos' : 'Torneio Non Stop (Round Robin)',
     groups_knockout: 'Equipas - Grupos + Eliminatórias',
+    swiss_teams: 'Equipas - Sistema Suíço',
     single_elimination: 'Equipas - Eliminatória Direta (Cuadros)',
     super_teams: 'Super Teams'
   };

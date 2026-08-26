@@ -18,11 +18,12 @@ export type Tournament = {
   start_time?: string;
   end_time?: string;
   status: 'draft' | 'active' | 'completed' | 'cancelled';
-  format: 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs_teams' | 'mixed_american' | 'ladder';
+  format: 'single_elimination' | 'round_robin' | 'groups_knockout' | 'individual_groups_knockout' | 'super_teams' | 'crossed_playoffs_teams' | 'mixed_american' | 'ladder' | 'swiss_teams';
   round_robin_type?: 'teams' | 'individual';
   max_teams: number;
   number_of_courts?: number;
   number_of_groups?: number;
+  swiss_rounds?: number | null;
   category?: string;
   match_duration_minutes?: number;
   image_url?: string;
@@ -95,6 +96,7 @@ export type TournamentCategory = {
   non_member_price?: number;
   knockout_stage?: 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final';
   qualified_per_group?: number;
+  swiss_rounds?: number | null;
   game_format?: '1set' | '3sets'; // Formato dos jogos: 1 set ou melhor de 3
   court_names?: string[] | null;
   category_schedule?: CategoryScheduleEntry[] | null; // Schedule per category (day/time)

@@ -3,6 +3,7 @@ import { supabase, Team, Player } from '../lib/supabase';
 import { Trophy, Award, Medal } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import { sortTeamsByTiebreaker, MatchData, TeamStats } from '../lib/groups';
+import { computeSwissStandings, isSwissRound } from '../lib/swissTeamsScheduler';
 
 type StandingsProps = {
   tournamentId: string;
@@ -1408,6 +1409,101 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       return;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // SWISS TEAMS: single table sorted by W → GD → GF (byes count as wins)
+    // ═══════════════════════════════════════════════════════════════
+    if (format === 'swiss_teams') {
+      let teamsQuery = supabase
+        .from('teams')
+        .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)')
+        .eq('tournament_id', tournamentId);
+      if (categoryId) teamsQuery = teamsQuery.eq('category_id', categoryId);
+      const { data: teamsData } = await teamsQuery;
+      if (!teamsData) {
+        setLoading(false);
+        return;
+      }
+
+      let matchesQuery = supabase
+        .from('matches')
+        .select('*')
+        .eq('tournament_id', tournamentId);
+      if (categoryId) matchesQuery = matchesQuery.eq('category_id', categoryId);
+      const { data: allMatches } = await matchesQuery;
+      const swissMatches = (allMatches || []).filter(m => isSwissRound(m.round));
+
+      const swissTeams = (teamsData as unknown as TeamWithPlayers[]).map(t => ({
+        id: t.id,
+        name: t.name,
+        seed: (t as any).seed ?? null,
+        category_id: (t as any).category_id ?? null,
+      }));
+
+      const standings = computeSwissStandings(swissTeams, swissMatches);
+      const byId = new Map((teamsData as unknown as TeamWithPlayers[]).map(t => [t.id, t]));
+
+      // Group by category when multiple categories and no filter
+      const hasMultiCat =
+        !categoryId &&
+        (teamsData as any[]).some(t => t.category_id) &&
+        new Set((teamsData as any[]).map(t => t.category_id).filter(Boolean)).size > 1;
+
+      if (hasMultiCat) {
+        const { data: cats } = await supabase
+          .from('tournament_categories')
+          .select('id, name')
+          .eq('tournament_id', tournamentId);
+        const nameById = new Map((cats || []).map((c: any) => [c.id, c.name]));
+        const grouped = new Map<string, TeamWithPlayers[]>();
+
+        for (const catId of new Set((teamsData as any[]).map(t => t.category_id).filter(Boolean))) {
+          const catTeamIds = new Set(
+            (teamsData as any[]).filter(t => t.category_id === catId).map(t => t.id)
+          );
+          const catStandings = computeSwissStandings(
+            swissTeams.filter(t => catTeamIds.has(t.id)),
+            swissMatches.filter(m => (m as any).category_id === catId),
+          );
+          const rows = catStandings.map(s => {
+            const team = byId.get(s.teamId)!;
+            return {
+              ...team,
+              wins: s.wins,
+              losses: s.losses,
+              draws: 0,
+              matchesPlayed: s.played,
+              setsWon: 0,
+              setsLost: 0,
+              gamesWon: s.gamesFor,
+              gamesLost: s.gamesAgainst,
+            } as TeamWithPlayers;
+          });
+          grouped.set(nameById.get(catId) || catId, rows);
+        }
+        setCategoryGroupedTeams(grouped);
+        setTeams([]);
+      } else {
+        const rows = standings.map(s => {
+          const team = byId.get(s.teamId)!;
+          return {
+            ...team,
+            wins: s.wins,
+            losses: s.losses,
+            draws: 0,
+            matchesPlayed: s.played,
+            setsWon: 0,
+            setsLost: 0,
+            gamesWon: s.gamesFor,
+            gamesLost: s.gamesAgainst,
+          } as TeamWithPlayers;
+        });
+        setTeams(rows);
+        setCategoryGroupedTeams(new Map());
+      }
+      setLoading(false);
+      return;
+    }
+
     // Original team-based logic
     // Add a timestamp to prevent caching
     const timestamp = Date.now();
@@ -2509,9 +2605,10 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     );
   }
 
-  // Round Robin por Categorias (ex: Pai-Filho, Pai-Filha)
+  // Round Robin por Categorias (ex: Pai-Filho, Pai-Filha) / Swiss por categoria
   if (categoryGroupedTeams.size > 0) {
     const sortedCategoryNames = Array.from(categoryGroupedTeams.keys()).sort();
+    const swissCriteria = format === 'swiss_teams';
     
     return (
       <div className="space-y-6">
@@ -2533,12 +2630,16 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                     <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
-                    <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                    {!swissCriteria && (
+                      <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
+                    )}
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
                     <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
-                    <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                    {!swissCriteria && (
+                      <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -2559,14 +2660,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                         </td>
                         <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
                         <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
-                        <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                        {!swissCriteria && (
+                          <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
+                        )}
                         <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
                         <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
                         <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
                         <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
                           {gameDiff > 0 ? '+' : ''}{gameDiff}
                         </td>
-                        <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                        {!swissCriteria && (
+                          <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
+                        )}
                       </tr>
                     );
                   })}
@@ -2575,12 +2680,76 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
               <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
                 <p className="text-xs text-gray-500">
-                  <strong>Critérios:</strong> 1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos
+                  <strong>Critérios:</strong>{' '}
+                  {swissCriteria
+                    ? '1. Vitórias, 2. Diferença de jogos (+/-), 3. Jogos ganhos'
+                    : '1. Vitórias, 2. Pontos (V=2, E=1), 3. Confronto direto, 4. Diferença de jogos (+/-), 5. Jogos ganhos'}
                 </p>
               </div>
             </div>
           );
         })}
+      </div>
+    );
+  }
+
+  if (format === 'swiss_teams') {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5" />
+            Classificação Suíça
+          </h2>
+        </div>
+
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="pl-3 pr-1 py-2 text-left text-xs font-medium text-gray-500 w-8">#</th>
+              <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
+              <th className="pl-1 pr-3 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {teams.map((team, index) => {
+              const gameDiff = team.gamesWon - team.gamesLost;
+              return (
+                <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
+                  <td className="pl-3 pr-1 py-2">
+                    <div className="flex items-center gap-1">
+                      {getMedalIcon(index + 1)}
+                      <span className="font-bold text-gray-700">{index + 1}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2">
+                    <div className="font-medium text-gray-900 leading-tight">{team.name}</div>
+                    <div className="text-xs text-gray-500 leading-tight">{team.player1?.name} / {team.player2?.name}</div>
+                  </td>
+                  <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
+                  <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                  <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
+                  <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
+                  <td className={`pl-1 pr-3 py-2 text-center text-xs font-semibold ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                    {gameDiff > 0 ? '+' : ''}{gameDiff}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+          <p className="text-xs text-gray-500">
+            <strong>Critérios:</strong> 1. Vitórias, 2. Diferença de jogos (+/-), 3. Jogos ganhos (bye = vitória)
+          </p>
+        </div>
       </div>
     );
   }

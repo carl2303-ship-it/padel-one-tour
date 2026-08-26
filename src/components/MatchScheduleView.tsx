@@ -356,6 +356,10 @@ export default function MatchScheduleView({
   };
 
   const getKnockoutRoundLabel = (round: string): string => {
+    if (round?.startsWith('swiss_r')) {
+      const n = round.replace('swiss_r', '');
+      return `Suíço R${n}`;
+    }
     const roundLabels: { [key: string]: string } = {
       'final': t.bracket?.final || 'Final',
       'semi_final': t.bracket?.semiFinal || 'Semi-Final',
@@ -1077,7 +1081,10 @@ export default function MatchScheduleView({
   const getRoundLabel = (match: MatchWithTeams): string | null => {
     const round = match.round;
     // Check if it's a knockout round
-    if (round.startsWith('group_') || round === 'round_robin') return null;
+    if (!round || round.startsWith('group_') || round === 'round_robin') return null;
+    if (round.startsWith('swiss_r')) {
+      return `Suíço R${round.replace('swiss_r', '')}`;
+    }
     
     const roundLabels: { [key: string]: string } = {
       'final': 'Final',

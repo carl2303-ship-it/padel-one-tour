@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
+import { normalizePhoneKey } from '../lib/phoneUtils';
+import { categoryFromLevel, levelFromCategory } from '../lib/playerLevelCategory';
 import {
   X,
   Download,
@@ -47,6 +49,7 @@ interface PlayerRecord {
   level: number | null;
   level_reliability_percent: number | null;
   player_account_id: string | null;
+  gender: string | null;
   tournaments: { id: string; name: string; date: string }[];
   organizerPlayerId: string | null;
 }
@@ -69,27 +72,10 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-function normalizePhoneForRPC(phone: string | null): string | null {
-  if (!phone) return null;
-  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
-  let hadPrefix = false;
-  if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true; }
-  else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true; }
-  else if (cleaned.startsWith('00')) { cleaned = cleaned.slice(2); hadPrefix = true; }
-  
-  if (hadPrefix) {
-    cleaned = cleaned.replace(/^(351|352|353|354|355|356|357|358|359|370|371|372|373|374|375|376|377|378|380|381|382|383|385|386|387|389|420|421|423|212|213|216|244|245|258|297|298|299|852|853|855|856|880|886|960|961|962|963|964|965|966|967|968|971|972|973|974|975|976|977|992|993|994|995|996|997|998)(?=\d{7,})/, '');
-    cleaned = cleaned.replace(/^(20|27|30|31|32|33|34|36|39|40|41|43|44|45|46|47|48|49|51|52|53|54|55|56|57|58|60|61|62|63|64|65|66|81|82|84|86|90|91|92|93|94|95|98)(?=\d{7,})/, '');
-    cleaned = cleaned.replace(/^[17](?=\d{9,})/, '');
-  } else {
-    cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '');
-  }
-  
-  if (cleaned.startsWith('0') && cleaned.length >= 9) {
-    cleaned = cleaned.slice(1);
-  }
-  
-  return cleaned;
+/** Phone key for RPC / lookups (national digits, no country-code false positives). */
+function phoneLookupKey(phone: string | null | undefined): string | null {
+  const key = normalizePhoneKey(phone);
+  return key.length >= 6 ? key : null;
 }
 
 export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded = false }: OrganizerPlayersModalProps) {
@@ -151,7 +137,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       // Fetch ALL player_accounts to get level and reliability data
       supabase
         .from('player_accounts')
-        .select('id, name, phone_number, player_category, level, level_reliability_percent'),
+        .select('id, name, phone_number, player_category, level, level_reliability_percent, gender'),
     ]);
 
     const playersData = playersResult.data;
@@ -159,12 +145,17 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     const organizerPlayersData = organizerPlayersResult.data || [];
     const playerAccountsData = playerAccountsResult.data || [];
 
-    // Build player_accounts lookup maps (by phone and by name)
+    // Build player_accounts lookup maps (by national phone key and by name)
     const accountsByPhone = new Map<string, any>();
     const accountsByName = new Map<string, any>();
     playerAccountsData.forEach((pa: any) => {
-      if (pa.phone_number) {
-        accountsByPhone.set(pa.phone_number.replace(/\s+/g, '').toLowerCase(), pa);
+      const phoneKey = phoneLookupKey(pa.phone_number);
+      if (phoneKey) {
+        accountsByPhone.set(phoneKey, pa);
+        // Also index last 9 digits for suffix matching
+        if (phoneKey.length >= 9) {
+          accountsByPhone.set(phoneKey.slice(-9), pa);
+        }
       }
       if (pa.name) {
         accountsByName.set(normalizeName(pa.name), pa);
@@ -172,9 +163,11 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     });
 
     const findPlayerAccount = (phone: string | null, name: string): any => {
-      if (phone) {
-        const normalized = phone.replace(/\s+/g, '').toLowerCase();
-        const match = accountsByPhone.get(normalized);
+      const phoneKey = phoneLookupKey(phone);
+      if (phoneKey) {
+        const match =
+          accountsByPhone.get(phoneKey) ||
+          (phoneKey.length >= 9 ? accountsByPhone.get(phoneKey.slice(-9)) : null);
         if (match) return match;
       }
       return accountsByName.get(normalizeName(name)) || null;
@@ -216,6 +209,10 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           existing.player_account_id = playerAccount.id;
           existing.level = playerAccount.level;
           existing.level_reliability_percent = playerAccount.level_reliability_percent;
+          existing.gender = playerAccount.gender || existing.gender;
+          if (!existing.player_category && playerAccount.player_category) {
+            existing.player_category = playerAccount.player_category;
+          }
         }
       } else {
         playerMap.set(normalizedName, {
@@ -228,6 +225,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           level: playerAccount?.level || null,
           level_reliability_percent: playerAccount?.level_reliability_percent || null,
           player_account_id: playerAccount?.id || null,
+          gender: playerAccount?.gender || null,
           tournaments: [{ id: tournament.id, name: tournament.name, date: tournament.start_date }],
           organizerPlayerId: organizerPlayer?.id || null,
         });
@@ -278,6 +276,9 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     setSavingCategory(player.id);
 
     try {
+      // Keep numeric level aligned with M1–M6 / F1–F6 bands
+      const derivedLevel = category ? levelFromCategory(category) : null;
+
       // 1. Update organizer_players (local contact list)
       if (player.organizerPlayerId) {
         await supabase
@@ -304,7 +305,12 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           setPlayers(prev =>
             prev.map(p =>
               p.id === player.id
-                ? { ...p, organizerPlayerId: data.id, player_category: category }
+                ? {
+                    ...p,
+                    organizerPlayerId: data.id,
+                    player_category: category,
+                    level: derivedLevel ?? p.level,
+                  }
                 : p
             )
           );
@@ -312,58 +318,44 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       }
 
       // 2. Update player_accounts (global profile) via RPC
-      // This propagates to ALL players records and league_standings
-      if (player.phone_number) {
-        const normalizedPhone = normalizePhoneForRPC(player.phone_number);
-        if (!normalizedPhone) {
-          console.warn('Could not normalize phone number:', player.phone_number);
-          if (player.playerAccountId) {
-            await supabase
-              .from('player_accounts')
-              .update({
-                player_category: category,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', player.playerAccountId);
-          }
-          setSavingCategory(null);
-          return;
-        }
-        
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
+      const normalizedPhone = phoneLookupKey(player.phone_number);
+      if (normalizedPhone || player.player_account_id) {
+        const rpcPayload: Record<string, unknown> = {
           p_phone_number: normalizedPhone,
+          p_player_account_id: player.player_account_id,
           p_player_category: category,
-        });
-
-        if (rpcError) {
-          console.error('RPC update_player_account_level error:', rpcError);
-          // Fallback: try direct update to player_accounts
-          if (player.playerAccountId) {
-            await supabase
-              .from('player_accounts')
-              .update({
-                player_category: category,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', player.playerAccountId);
-          }
-        } else if (rpcResult && !rpcResult.success) {
-          console.warn('RPC update_player_account_level: player not found', rpcResult);
+        };
+        if (derivedLevel != null) {
+          rpcPayload.p_level = derivedLevel;
         }
-      } else if (player.playerAccountId) {
-        // No phone number but has playerAccountId - direct update
-        await supabase
-          .from('player_accounts')
-          .update({
-            player_category: category,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', player.playerAccountId);
+
+        const { data: rpcResult, error: rpcError } = await supabase.rpc(
+          'update_player_account_level',
+          rpcPayload
+        );
+
+        if (rpcError || (rpcResult && !rpcResult.success)) {
+          console.warn('RPC update_player_account_level (category):', rpcError || rpcResult);
+          if (player.player_account_id) {
+            const patch: Record<string, unknown> = {
+              player_category: category,
+              updated_at: new Date().toISOString(),
+            };
+            if (derivedLevel != null) patch.level = derivedLevel;
+            await supabase.from('player_accounts').update(patch).eq('id', player.player_account_id);
+          }
+        }
       }
 
       setPlayers(prev =>
         prev.map(p =>
-          p.id === player.id ? { ...p, player_category: category } : p
+          p.id === player.id
+            ? {
+                ...p,
+                player_category: category,
+                level: derivedLevel ?? p.level,
+              }
+            : p
         )
       );
     } catch (error) {
@@ -375,7 +367,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
   };
 
   const updatePlayerLevel = async (player: PlayerRecord) => {
-    if (!player.phone_number && !player.playerAccountId) {
+    if (!player.phone_number && !player.player_account_id) {
       alert('Este jogador não tem telefone nem conta associada. Não é possível atualizar o nível.');
       return;
     }
@@ -386,49 +378,72 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       const level = editLevelValue ? parseFloat(editLevelValue) : null;
       const reliability = editReliabilityValue ? parseFloat(editReliabilityValue) : null;
 
+      // Fill M#/F# from numeric level when gender is known (existing category or gender field)
+      const derivedCategory = categoryFromLevel(level, player.gender, player.player_category) as PlayerCategory;
+
       let updated = false;
+      const normalizedPhone = phoneLookupKey(player.phone_number);
 
-      // Try RPC first (propagates to players + league_standings)
-      if (player.phone_number) {
-        const normalizedPhone = normalizePhoneForRPC(player.phone_number);
-        if (!normalizedPhone) {
-          console.warn('Could not normalize phone number:', player.phone_number);
-          // Fall through to direct update if we have playerAccountId
+      if (normalizedPhone || player.player_account_id) {
+        const rpcPayload: Record<string, unknown> = {
+          p_phone_number: normalizedPhone,
+          p_player_account_id: player.player_account_id,
+          p_level: level,
+          p_level_reliability_percent: reliability,
+        };
+        if (derivedCategory) {
+          rpcPayload.p_player_category = derivedCategory;
+        }
+
+        const { data: rpcResult, error: rpcError } = await supabase.rpc(
+          'update_player_account_level',
+          rpcPayload
+        );
+
+        if (!rpcError && rpcResult?.success) {
+          updated = true;
         } else {
-          const { data: rpcResult, error: rpcError } = await supabase.rpc('update_player_account_level', {
-            p_phone_number: normalizedPhone,
-            p_level: level,
-            p_level_reliability_percent: reliability,
-          });
-
-          if (!rpcError && rpcResult?.success) {
-            updated = true;
-          } else {
-            console.warn('RPC failed, trying direct update:', rpcError || rpcResult);
-          }
+          console.warn('RPC failed, trying direct update:', rpcError || rpcResult);
         }
       }
 
-      // Fallback: direct update to player_accounts
-      if (!updated && player.playerAccountId) {
+      if (!updated && player.player_account_id) {
+        const patch: Record<string, unknown> = {
+          level: level,
+          level_reliability_percent: reliability,
+          updated_at: new Date().toISOString(),
+        };
+        if (derivedCategory) patch.player_category = derivedCategory;
         const { error } = await supabase
           .from('player_accounts')
-          .update({
-            level: level,
-            level_reliability_percent: reliability,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', player.playerAccountId);
+          .update(patch)
+          .eq('id', player.player_account_id);
         
         if (!error) updated = true;
         else console.error('Direct update failed:', error);
+      }
+
+      // Keep organizer_players category in sync when we derived one
+      if (updated && derivedCategory && player.organizerPlayerId) {
+        await supabase
+          .from('organizer_players')
+          .update({
+            player_category: derivedCategory,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', player.organizerPlayerId);
       }
 
       if (updated) {
         setPlayers(prev =>
           prev.map(p =>
             p.id === player.id
-              ? { ...p, level: level, level_reliability_percent: reliability }
+              ? {
+                  ...p,
+                  level: level,
+                  level_reliability_percent: reliability,
+                  player_category: derivedCategory ?? p.player_category,
+                }
               : p
           )
         );
@@ -888,7 +903,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
                             ) : (
                               <span className="text-gray-400 text-[10px]">-</span>
                             )}
-                            {player.phone_number && (
+                            {(player.phone_number || player.player_account_id) && (
                               <button
                                 onClick={() => {
                                   setEditingLevel(player.id);

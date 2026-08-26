@@ -34,6 +34,18 @@ import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/mu
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
 import { deleteTeamAndPlayers } from '../lib/deleteTeamRegistration';
+import {
+  buildOpponentMap,
+  buildSwissRoundMatches,
+  clampSwissRounds,
+  computeSwissStandings,
+  getHighestSwissRound,
+  isSwissRoundComplete,
+  orderTeamsForRound1,
+  pairRound1,
+  pairSwissRound,
+  swissRoundName,
+} from '../lib/swissTeamsScheduler';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
@@ -351,6 +363,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const isIndividualGroupsKnockout = resolvedFormat === 'individual_groups_knockout' ||
     resolvedFormat === 'mixed_american';
   const isSuperTeams = resolvedFormat === 'super_teams';
+  const isSwissTeams = resolvedFormat === 'swiss_teams';
 
   // Early return if tournament is not loaded
   if (!currentTournament) {
@@ -4886,6 +4899,162 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
   };
 
+  const handleGenerateSwissRound = async () => {
+    if (!currentTournament || currentTournament.format !== 'swiss_teams') return;
+
+    const tournamentMaxRounds = clampSwissRounds((currentTournament as any).swiss_rounds);
+    const numberOfCourts = currentTournament.number_of_courts || 2;
+    const courtNames: string[] = (currentTournament as any).court_names || [];
+    const matchDuration = currentTournament.match_duration_minutes || 30;
+    const startDate = currentTournament.start_date || new Date().toISOString().split('T')[0];
+    const startTime = currentTournament.daily_start_time || currentTournament.start_time || '09:00';
+
+    setLoading(true);
+    try {
+      const { data: existingMatches, error: matchesError } = await supabase
+        .from('matches')
+        .select('id, round, team1_id, team2_id, status, winner_id, match_number, scheduled_time, category_id, team1_score_set1, team2_score_set1, team1_score_set2, team2_score_set2, team1_score_set3, team2_score_set3')
+        .eq('tournament_id', currentTournament.id);
+      if (matchesError) throw matchesError;
+
+      const allMatches = existingMatches || [];
+
+      const categoryBuckets: Array<{ categoryId: string | null; teamList: typeof teams; maxRounds: number }> =
+        categories.length > 0 && teams.some(t => t.category_id)
+          ? categories.map(c => ({
+              categoryId: c.id,
+              teamList: teams.filter(t => t.category_id === c.id),
+              maxRounds: clampSwissRounds((c as any).swiss_rounds ?? tournamentMaxRounds),
+            })).filter(b => b.teamList.length >= 2)
+          : [{
+              categoryId: categories.length === 1 ? categories[0].id : null,
+              teamList: teams,
+              maxRounds: clampSwissRounds(
+                (categories[0] as any)?.swiss_rounds ?? tournamentMaxRounds
+              ),
+            }];
+
+      if (categoryBuckets.length === 0 || categoryBuckets.every(b => b.teamList.length < 2)) {
+        alert('É necessário pelo menos 2 equipas para gerar uma ronda suíça.');
+        return;
+      }
+
+      // Schedule time: after latest match, else tournament start
+      let scheduledTime = `${startDate}T${startTime}:00`;
+      const timed = allMatches.filter(m => m.scheduled_time);
+      if (timed.length > 0) {
+        const latestMs = Math.max(...timed.map(m => new Date(m.scheduled_time!).getTime()));
+        const next = new Date(latestMs + matchDuration * 60000);
+        const y = next.getFullYear();
+        const mo = String(next.getMonth() + 1).padStart(2, '0');
+        const d = String(next.getDate()).padStart(2, '0');
+        const h = String(next.getHours()).padStart(2, '0');
+        const mi = String(next.getMinutes()).padStart(2, '0');
+        scheduledTime = `${y}-${mo}-${d}T${h}:${mi}:00`;
+      }
+
+      const maxMatchNumber = allMatches.reduce((max, m) => Math.max(max, m.match_number || 0), 0);
+      let matchNumberOffset = maxMatchNumber;
+      const rowsToInsert: any[] = [];
+      const generatedRounds: number[] = [];
+      const blockers: string[] = [];
+
+      for (const bucket of categoryBuckets) {
+        const catMatches = bucket.categoryId
+          ? allMatches.filter(m => m.category_id === bucket.categoryId)
+          : allMatches;
+        const highest = getHighestSwissRound(catMatches);
+        const nextRound = highest + 1;
+
+        if (nextRound > bucket.maxRounds) {
+          blockers.push('max');
+          continue;
+        }
+        if (highest > 0 && !isSwissRoundComplete(catMatches, highest)) {
+          blockers.push('incomplete');
+          continue;
+        }
+
+        const swissTeams = bucket.teamList.map(t => ({
+          id: t.id,
+          name: t.name,
+          seed: (t as any).seed ?? null,
+          category_id: bucket.categoryId,
+        }));
+
+        let pairings;
+        if (nextRound === 1) {
+          const ordered = orderTeamsForRound1(swissTeams, `${currentTournament.id}:${bucket.categoryId || 'all'}`);
+          pairings = pairRound1(ordered);
+        } else {
+          const standings = computeSwissStandings(swissTeams, catMatches);
+          const opponents = buildOpponentMap(catMatches);
+          pairings = pairSwissRound(standings, opponents);
+        }
+
+        const built = buildSwissRoundMatches({
+          pairings,
+          roundNumber: nextRound,
+          matchNumberOffset,
+          numberOfCourts,
+          courtNames,
+          scheduledTime,
+        });
+        matchNumberOffset += built.length;
+        generatedRounds.push(nextRound);
+
+        for (const m of built) {
+          const isBye = !m.team2_id;
+          rowsToInsert.push({
+            tournament_id: currentTournament.id,
+            category_id: bucket.categoryId,
+            round: m.round,
+            match_number: m.match_number,
+            team1_id: m.team1_id,
+            team2_id: m.team2_id,
+            scheduled_time: m.scheduled_time,
+            court: m.court,
+            status: isBye ? 'completed' : 'scheduled',
+            winner_id: isBye ? m.team1_id : null,
+          });
+        }
+      }
+
+      if (rowsToInsert.length === 0) {
+        if (blockers.includes('incomplete')) {
+          alert(t.tournament.swissRoundCompleteHint);
+        } else if (blockers.includes('max')) {
+          alert(t.tournament.swissMaxRoundsReached);
+        } else {
+          alert('Não foi possível gerar confrontos para esta ronda.');
+        }
+        return;
+      }
+
+      const { data: inserted, error: insertError } = await supabase
+        .from('matches')
+        .insert(rowsToInsert)
+        .select('id, scheduled_time, court');
+      if (insertError) throw insertError;
+
+      if (inserted && inserted.length > 0) {
+        await createCourtBookingsForMatches(
+          inserted.filter((m: any) => m.court && m.court !== 'BYE' && m.scheduled_time),
+          currentTournament
+        );
+      }
+
+      await fetchTournamentData(true);
+      const roundLabel = [...new Set(generatedRounds)].join(', ');
+      alert(`Ronda ${roundLabel} gerada (${rowsToInsert.filter(r => r.team2_id).length} jogos).`);
+    } catch (error: any) {
+      console.error('[SWISS] Error generating round:', error);
+      alert(error?.message || 'Erro ao gerar ronda suíça');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGenerateSchedule = async () => {
     if (!confirm(t.tournament.confirmGenerateSchedule)) return;
     
@@ -7907,13 +8076,51 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={handleGenerateSchedule}
-                    className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-                  >
-                    <Calendar className="w-4 h-4" />
-                    Gerar Calendário
-                  </button>
+                  {isSwissTeams ? (
+                    (() => {
+                      const maxRounds = clampSwissRounds(
+                        (categories[0] as any)?.swiss_rounds ?? (currentTournament as any).swiss_rounds
+                      );
+                      const highest = getHighestSwissRound(matches);
+                      const canGenerate =
+                        highest < maxRounds &&
+                        (highest === 0 || isSwissRoundComplete(matches, highest));
+                      const label =
+                        highest === 0
+                          ? t.tournament.generateSwissRound1
+                          : t.tournament.generateSwissNextRound;
+                      return (
+                        <button
+                          onClick={handleGenerateSwissRound}
+                          disabled={loading || !canGenerate}
+                          title={
+                            highest >= maxRounds
+                              ? t.tournament.swissMaxRoundsReached
+                              : highest > 0 && !isSwissRoundComplete(matches, highest)
+                                ? t.tournament.swissRoundCompleteHint
+                                : undefined
+                          }
+                          className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                        >
+                          <Calendar className="w-4 h-4" />
+                          {label}
+                          {highest > 0 && (
+                            <span className="text-xs opacity-80">
+                              ({highest}/{maxRounds})
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })()
+                  ) : (
+                    <button
+                      onClick={handleGenerateSchedule}
+                      className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      Gerar Calendário
+                    </button>
+                  )}
                   
                   {filteredMatches.length > 0 && (
                     <>
@@ -7960,7 +8167,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 <div className="text-center py-12 text-gray-500">
                   <CalendarClock className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>Ainda não há jogos agendados</p>
-                  <p className="text-sm mt-2">Clique em "Gerar Calendário" para criar os jogos automaticamente</p>
+                  <p className="text-sm mt-2">
+                    {isSwissTeams
+                      ? 'Clique em "Gerar ronda 1" para criar os primeiros confrontos'
+                      : 'Clique em "Gerar Calendário" para criar os jogos automaticamente'}
+                  </p>
                 </div>
               )}
             </div>
