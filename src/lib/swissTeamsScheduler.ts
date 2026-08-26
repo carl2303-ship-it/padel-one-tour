@@ -198,21 +198,31 @@ function isRematch(
   return !!previousOpponents.get(a)?.has(b);
 }
 
-/** Try partner swaps between pairs to eliminate rematches (one-step cross). */
+/** Try partner swaps between pairs to eliminate rematches (one-step cross).
+ * Prefer nearby boards so a bottom rematch does not destroy 1º vs 2º. */
 function resolveRematches(
   pairings: SwissPairing[],
   previousOpponents: Map<string, Set<string>>,
 ): SwissPairing[] {
   const result = pairings.map(p => ({ ...p }));
 
-  for (let i = 0; i < result.length; i++) {
+  const neighborIndices = (i: number, n: number): number[] => {
+    const out: number[] = [];
+    for (let d = 1; d < n; d++) {
+      if (i - d >= 0) out.push(i - d);
+      if (i + d < n) out.push(i + d);
+    }
+    return out;
+  };
+
+  // Fix from bottom boards upward so float stays local
+  for (let i = result.length - 1; i >= 0; i--) {
     const p = result[i];
     if (p.isBye || !p.team1Id || !p.team2Id) continue;
     if (!isRematch(p.team1Id, p.team2Id, previousOpponents)) continue;
 
     let fixed = false;
-    for (let j = 0; j < result.length && !fixed; j++) {
-      if (i === j) continue;
+    for (const j of neighborIndices(i, result.length)) {
       const q = result[j];
       if (q.isBye || !q.team1Id || !q.team2Id) continue;
 
@@ -242,6 +252,7 @@ function resolveRematches(
           break;
         }
       }
+      if (fixed) break;
     }
   }
 
