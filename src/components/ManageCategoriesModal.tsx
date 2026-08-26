@@ -23,6 +23,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
     qualified_per_group: 2,
     swiss_rounds: 5,
+    swiss_last_round_mode: 'finals' as 'finals' | 'swiss',
     court_names: [] as string[],
     category_schedule: [] as CategoryScheduleEntry[],
     match_duration_minutes: null as number | null,
@@ -37,6 +38,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [tournamentFormat, setTournamentFormat] = useState<string>('groups_knockout');
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
   const [tournamentSwissRounds, setTournamentSwissRounds] = useState<number>(5);
+  const [tournamentSwissLastRoundMode, setTournamentSwissLastRoundMode] = useState<'finals' | 'swiss'>('finals');
 
   const individualFormats = ['individual_groups_knockout', 'mixed_american'];
   const isGroupsFormat = (fmt: string) => ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs_teams', 'mixed_american'].includes(fmt);
@@ -53,7 +55,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const fetchTournamentType = async () => {
     const { data } = await supabase
       .from('tournaments')
-      .select('format, round_robin_type, start_date, end_date, swiss_rounds')
+      .select('format, round_robin_type, start_date, end_date, swiss_rounds, swiss_last_round_mode')
       .eq('id', tournamentId)
       .single();
     if (data) {
@@ -61,6 +63,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
       setTournamentRoundRobinType((data as any).round_robin_type);
       setTournamentSwissRounds(
         Math.min(9, Math.max(3, Number((data as any).swiss_rounds) || 5))
+      );
+      setTournamentSwissLastRoundMode(
+        (data as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals'
       );
       setTournamentDates({
         start_date: (data as any).start_date || '',
@@ -155,6 +160,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         swiss_rounds: isSwissFormat(tournamentFormat)
           ? Math.min(9, Math.max(3, newCategory.swiss_rounds || tournamentSwissRounds || 5))
           : null,
+        swiss_last_round_mode: isSwissFormat(tournamentFormat)
+          ? newCategory.swiss_last_round_mode || tournamentSwissLastRoundMode || 'finals'
+          : null,
         court_names: newCategory.court_names.length > 0 ? newCategory.court_names : null,
         category_schedule: newCategory.category_schedule.length > 0 ? newCategory.category_schedule : null,
         match_duration_minutes: newCategory.match_duration_minutes || null,
@@ -177,6 +185,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         knockout_stage: 'quarterfinals',
         qualified_per_group: 2,
         swiss_rounds: tournamentSwissRounds || 5,
+        swiss_last_round_mode: tournamentSwissLastRoundMode || 'finals',
         court_names: [],
         category_schedule: [],
         match_duration_minutes: null,
@@ -212,6 +221,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         qualified_per_group: hasGroups ? (editingCategory.qualified_per_group || 2) : null,
         swiss_rounds: isSwissFormat(tournamentFormat)
           ? Math.min(9, Math.max(3, Number((editingCategory as any).swiss_rounds) || tournamentSwissRounds || 5))
+          : null,
+        swiss_last_round_mode: isSwissFormat(tournamentFormat)
+          ? ((editingCategory as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals')
           : null,
         court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
         category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
@@ -360,24 +372,45 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
               )}
 
               {isSwissFormat(tournamentFormat) && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.tournament.swissRoundsLabel}
-                  </label>
-                  <p className="text-xs text-gray-500 mb-1">{t.tournament.swissRoundsHelp}</p>
-                  <input
-                    type="number"
-                    min={3}
-                    max={9}
-                    value={newCategory.swiss_rounds}
-                    onChange={(e) =>
-                      setNewCategory({
-                        ...newCategory,
-                        swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t.tournament.swissRoundsLabel}
+                    </label>
+                    <p className="text-xs text-gray-500 mb-1">{t.tournament.swissRoundsHelp}</p>
+                    <input
+                      type="number"
+                      min={3}
+                      max={9}
+                      value={newCategory.swiss_rounds}
+                      onChange={(e) =>
+                        setNewCategory({
+                          ...newCategory,
+                          swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                        })
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t.tournament.swissLastRoundModeLabel}
+                    </label>
+                    <p className="text-xs text-gray-500 mb-1">{t.tournament.swissLastRoundModeHelp}</p>
+                    <select
+                      value={newCategory.swiss_last_round_mode}
+                      onChange={(e) =>
+                        setNewCategory({
+                          ...newCategory,
+                          swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                        })
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                      <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
+                    </select>
+                  </div>
                 </div>
               )}
 
@@ -711,24 +744,50 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                           )}
 
                           {isSwissFormat(tournamentFormat) && (
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                {t.tournament.swissRoundsLabel}
-                              </label>
-                              <p className="text-xs text-gray-500 mb-1">{t.tournament.swissRoundsHelp}</p>
-                              <input
-                                type="number"
-                                min={3}
-                                max={9}
-                                value={(editingCategory as any).swiss_rounds ?? tournamentSwissRounds ?? 5}
-                                onChange={(e) =>
-                                  setEditingCategory({
-                                    ...editingCategory,
-                                    swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
-                                  } as any)
-                                }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              />
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  {t.tournament.swissRoundsLabel}
+                                </label>
+                                <p className="text-xs text-gray-500 mb-1">{t.tournament.swissRoundsHelp}</p>
+                                <input
+                                  type="number"
+                                  min={3}
+                                  max={9}
+                                  value={(editingCategory as any).swiss_rounds ?? tournamentSwissRounds ?? 5}
+                                  onChange={(e) =>
+                                    setEditingCategory({
+                                      ...editingCategory,
+                                      swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                                    } as any)
+                                  }
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  {t.tournament.swissLastRoundModeLabel}
+                                </label>
+                                <p className="text-xs text-gray-500 mb-1">{t.tournament.swissLastRoundModeHelp}</p>
+                                <select
+                                  value={
+                                    (editingCategory as any).swiss_last_round_mode === 'swiss'
+                                      ? 'swiss'
+                                      : 'finals'
+                                  }
+                                  onChange={(e) =>
+                                    setEditingCategory({
+                                      ...editingCategory,
+                                      swiss_last_round_mode:
+                                        e.target.value === 'swiss' ? 'swiss' : 'finals',
+                                    } as any)
+                                  }
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                  <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                                  <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
+                                </select>
+                              </div>
                             </div>
                           )}
 

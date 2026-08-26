@@ -3,7 +3,7 @@ import { supabase, Team, Player } from '../lib/supabase';
 import { Trophy, Award, Medal } from 'lucide-react';
 import { useI18n } from '../lib/i18nContext';
 import { sortTeamsByTiebreaker, MatchData, TeamStats } from '../lib/groups';
-import { computeSwissStandings, isSwissRound } from '../lib/swissTeamsScheduler';
+import { computeSwissStandings, isSwissRound, clampSwissRounds, normalizeSwissLastRoundMode, filterSwissMatchesForStandings, getSwissFinalsMatches, computeSwissPlacementRanking, areSwissFinalsComplete } from '../lib/swissTeamsScheduler';
 
 type StandingsProps = {
   tournamentId: string;
@@ -1414,6 +1414,27 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     // SWISS TEAMS: single table sorted by W → GD → GF (byes count as wins)
     // ═══════════════════════════════════════════════════════════════
     if (format === 'swiss_teams') {
+      const { data: tournamentMeta } = await supabase
+        .from('tournaments')
+        .select('swiss_rounds, swiss_last_round_mode')
+        .eq('id', tournamentId)
+        .maybeSingle();
+
+      let maxRounds = clampSwissRounds(tournamentMeta?.swiss_rounds);
+      let lastRoundMode = normalizeSwissLastRoundMode(tournamentMeta?.swiss_last_round_mode);
+
+      if (categoryId) {
+        const { data: catMeta } = await supabase
+          .from('tournament_categories')
+          .select('swiss_rounds, swiss_last_round_mode')
+          .eq('id', categoryId)
+          .maybeSingle();
+        if (catMeta?.swiss_rounds != null) maxRounds = clampSwissRounds(catMeta.swiss_rounds);
+        if (catMeta?.swiss_last_round_mode) {
+          lastRoundMode = normalizeSwissLastRoundMode(catMeta.swiss_last_round_mode);
+        }
+      }
+
       let teamsQuery = supabase
         .from('teams')
         .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)')
@@ -1432,6 +1453,11 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       if (categoryId) matchesQuery = matchesQuery.eq('category_id', categoryId);
       const { data: allMatches } = await matchesQuery;
       const swissMatches = (allMatches || []).filter(m => isSwissRound(m.round));
+      const standingMatches = filterSwissMatchesForStandings(
+        swissMatches,
+        maxRounds,
+        lastRoundMode,
+      );
 
       const swissTeams = (teamsData as unknown as TeamWithPlayers[]).map(t => ({
         id: t.id,
@@ -1440,7 +1466,28 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         category_id: (t as any).category_id ?? null,
       }));
 
-      const standings = computeSwissStandings(swissTeams, swissMatches);
+      const applyRanking = (
+        standingsRows: ReturnType<typeof computeSwissStandings>,
+        matchPool: typeof swissMatches,
+      ) => {
+        let ordered = standingsRows;
+        let positions: Array<{ teamId: string; position: number }> | null = null;
+        if (
+          lastRoundMode === 'finals' &&
+          areSwissFinalsComplete(matchPool, maxRounds)
+        ) {
+          positions = computeSwissPlacementRanking(
+            standingsRows,
+            getSwissFinalsMatches(matchPool, maxRounds),
+          );
+          const posMap = new Map(positions.map(p => [p.teamId, p.position]));
+          ordered = [...standingsRows].sort(
+            (a, b) => (posMap.get(a.teamId) || 999) - (posMap.get(b.teamId) || 999)
+          );
+        }
+        return { ordered, positions };
+      };
+
       const byId = new Map((teamsData as unknown as TeamWithPlayers[]).map(t => [t.id, t]));
 
       // Group by category when multiple categories and no filter
@@ -1452,20 +1499,41 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       if (hasMultiCat) {
         const { data: cats } = await supabase
           .from('tournament_categories')
-          .select('id, name')
+          .select('id, name, swiss_rounds, swiss_last_round_mode')
           .eq('tournament_id', tournamentId);
         const nameById = new Map((cats || []).map((c: any) => [c.id, c.name]));
         const grouped = new Map<string, TeamWithPlayers[]>();
 
-        for (const catId of new Set((teamsData as any[]).map(t => t.category_id).filter(Boolean))) {
+        for (const cat of cats || []) {
+          const catId = cat.id;
+          const catMax = clampSwissRounds(cat.swiss_rounds ?? maxRounds);
+          const catMode = normalizeSwissLastRoundMode(
+            cat.swiss_last_round_mode ?? lastRoundMode
+          );
           const catTeamIds = new Set(
             (teamsData as any[]).filter(t => t.category_id === catId).map(t => t.id)
           );
+          const catAll = swissMatches.filter(m => (m as any).category_id === catId);
+          const catStandingMatches = filterSwissMatchesForStandings(catAll, catMax, catMode);
           const catStandings = computeSwissStandings(
             swissTeams.filter(t => catTeamIds.has(t.id)),
-            swissMatches.filter(m => (m as any).category_id === catId),
+            catStandingMatches,
           );
-          const rows = catStandings.map(s => {
+          let ordered = catStandings;
+          if (catMode === 'finals' && areSwissFinalsComplete(catAll, catMax)) {
+            const positions = computeSwissPlacementRanking(
+              catStandings,
+              getSwissFinalsMatches(catAll, catMax),
+            );
+            const posMap = new Map(positions.map(p => [p.teamId, p.position]));
+            ordered = [...catStandings].sort(
+              (a, b) => (posMap.get(a.teamId) || 999) - (posMap.get(b.teamId) || 999)
+            );
+            for (const p of positions) {
+              await supabase.from('teams').update({ final_position: p.position }).eq('id', p.teamId);
+            }
+          }
+          const rows = ordered.map(s => {
             const team = byId.get(s.teamId)!;
             return {
               ...team,
@@ -1484,7 +1552,14 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         setCategoryGroupedTeams(grouped);
         setTeams([]);
       } else {
-        const rows = standings.map(s => {
+        const standings = computeSwissStandings(swissTeams, standingMatches);
+        const { ordered, positions } = applyRanking(standings, swissMatches);
+        if (positions) {
+          for (const p of positions) {
+            await supabase.from('teams').update({ final_position: p.position }).eq('id', p.teamId);
+          }
+        }
+        const rows = ordered.map(s => {
           const team = byId.get(s.teamId)!;
           return {
             ...team,
@@ -2745,7 +2820,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
         <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
           <p className="text-xs text-gray-500">
-            <strong>Critérios:</strong> 1. Pontos (V=2, E=1), 2. Vitórias, 3. Diferença de jogos (+/-), 4. Jogos ganhos (bye = vitória)
+            <strong>Critérios:</strong> 1. Pontos (V=2, E=1), 2. Vitórias, 3. Diferença de jogos (+/-), 4. Jogos ganhos (bye = vitória).
+            {' '}Se a última ronda for finais, esses jogos não entram em J/V/E/D — só definem o ranking (#).
           </p>
         </div>
       </div>

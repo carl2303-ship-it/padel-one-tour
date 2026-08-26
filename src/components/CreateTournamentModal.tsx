@@ -37,6 +37,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     gender: '' as string,
     challenge_limit: 5,
     swiss_rounds: 5,
+    swiss_last_round_mode: 'finals' as 'finals' | 'swiss',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -318,6 +319,9 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         swiss_rounds: formData.format === 'swiss_teams'
           ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
           : null,
+        swiss_last_round_mode: formData.format === 'swiss_teams'
+          ? formData.swiss_last_round_mode || 'finals'
+          : null,
         max_teams: 999,
         number_of_courts: isLadderFmt ? 1 : effectiveCourtNames.length,
         match_duration_minutes: 30,
@@ -531,24 +535,45 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
           </div>
 
           {formData.format === 'swiss_teams' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t.tournament.swissRoundsLabel}
-              </label>
-              <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
-              <input
-                type="number"
-                min={3}
-                max={9}
-                value={formData.swiss_rounds}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
-                  })
-                }
-                className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
-              />
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t.tournament.swissRoundsLabel}
+                </label>
+                <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
+                <input
+                  type="number"
+                  min={3}
+                  max={9}
+                  value={formData.swiss_rounds}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                    })
+                  }
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t.tournament.swissLastRoundModeLabel}
+                </label>
+                <p className="text-xs text-gray-500 mb-2">{t.tournament.swissLastRoundModeHelp}</p>
+                <select
+                  value={formData.swiss_last_round_mode}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                    })
+                  }
+                  className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                  <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
+                </select>
+              </div>
             </div>
           )}
 

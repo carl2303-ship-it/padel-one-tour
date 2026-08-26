@@ -46,6 +46,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
     format: tournament.format || 'round_robin',
     round_robin_type: (tournament as any).round_robin_type || null,
     swiss_rounds: (tournament as any).swiss_rounds ?? 5,
+    swiss_last_round_mode: ((tournament as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals') as 'finals' | 'swiss',
   });
   const [loading, setLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
@@ -368,6 +369,9 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
         round_robin_type: isLadderFmt ? null : formData.round_robin_type,
         swiss_rounds: formData.format === 'swiss_teams'
           ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
+          : null,
+        swiss_last_round_mode: formData.format === 'swiss_teams'
+          ? formData.swiss_last_round_mode || 'finals'
           : null,
         club_id: primaryClubId || null,
         club_ids: isLadderFmt ? selectedClubIds : null,
@@ -1080,24 +1084,45 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                 </select>
               </div>
               {formData.format === 'swiss_teams' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t.tournament.swissRoundsLabel}
-                  </label>
-                  <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
-                  <input
-                    type="number"
-                    min={3}
-                    max={9}
-                    value={formData.swiss_rounds}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
-                      })
-                    }
-                    className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
-                  />
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t.tournament.swissRoundsLabel}
+                    </label>
+                    <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
+                    <input
+                      type="number"
+                      min={3}
+                      max={9}
+                      value={formData.swiss_rounds}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                        })
+                      }
+                      className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t.tournament.swissLastRoundModeLabel}
+                    </label>
+                    <p className="text-xs text-gray-500 mb-2">{t.tournament.swissLastRoundModeHelp}</p>
+                    <select
+                      value={formData.swiss_last_round_mode}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                        })
+                      }
+                      className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                      <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                      <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>

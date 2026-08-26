@@ -424,3 +424,115 @@ export function clampSwissRounds(n: number | null | undefined): number {
   if (n == null || !Number.isFinite(n)) return 5;
   return Math.min(9, Math.max(3, Math.round(n)));
 }
+
+/** Last round as placement finals (ranking only) vs normal Swiss (counts in standings). */
+export type SwissLastRoundMode = 'finals' | 'swiss';
+
+export function normalizeSwissLastRoundMode(value: unknown): SwissLastRoundMode {
+  return value === 'swiss' ? 'swiss' : 'finals';
+}
+
+/** Matches that feed W/D/L/J stats (excludes last round when mode is finals). */
+export function filterSwissMatchesForStandings(
+  matches: SwissMatchLike[],
+  maxRounds: number,
+  lastRoundMode: SwissLastRoundMode,
+): SwissMatchLike[] {
+  return matches.filter(m => {
+    const n = parseSwissRoundNumber(m.round || '');
+    if (n == null) return false;
+    if (lastRoundMode === 'finals' && n >= maxRounds) return false;
+    return true;
+  });
+}
+
+export function getSwissFinalsMatches(
+  matches: SwissMatchLike[],
+  maxRounds: number,
+): SwissMatchLike[] {
+  return matches.filter(m => parseSwissRoundNumber(m.round || '') === maxRounds);
+}
+
+/**
+ * Placement ranking from finals: 1ºvs2º → places 1–2, 3ºvs4º → 3–4, …
+ * Draw / incomplete: keep relative order from pre-final standings.
+ */
+export function computeSwissPlacementRanking(
+  standingsBeforeFinals: SwissStanding[],
+  finalsMatches: SwissMatchLike[],
+): Array<{ teamId: string; position: number }> {
+  const result: Array<{ teamId: string; position: number }> = [];
+  const used = new Set<string>();
+
+  const findMatch = (a: string, b: string | null) => {
+    if (!b) {
+      return finalsMatches.find(
+        m => (m.team1_id === a && !m.team2_id) || (m.team2_id === a && !m.team1_id)
+      );
+    }
+    return finalsMatches.find(
+      m =>
+        (m.team1_id === a && m.team2_id === b) ||
+        (m.team1_id === b && m.team2_id === a)
+    );
+  };
+
+  for (let i = 0; i < standingsBeforeFinals.length; i += 2) {
+    const higher = standingsBeforeFinals[i];
+    const lower = standingsBeforeFinals[i + 1] ?? null;
+    const placeTop = i + 1;
+    const placeBottom = i + 2;
+
+    if (!lower) {
+      result.push({ teamId: higher.teamId, position: placeTop });
+      used.add(higher.teamId);
+      continue;
+    }
+
+    const m = findMatch(higher.teamId, lower.teamId);
+    if (!m || !matchHasResult(m)) {
+      result.push({ teamId: higher.teamId, position: placeTop });
+      result.push({ teamId: lower.teamId, position: placeBottom });
+      used.add(higher.teamId);
+      used.add(lower.teamId);
+      continue;
+    }
+
+    const winner = matchWinnerId(m);
+    if (winner === higher.teamId) {
+      result.push({ teamId: higher.teamId, position: placeTop });
+      result.push({ teamId: lower.teamId, position: placeBottom });
+    } else if (winner === lower.teamId) {
+      result.push({ teamId: lower.teamId, position: placeTop });
+      result.push({ teamId: higher.teamId, position: placeBottom });
+    } else {
+      // Draw: keep standings order
+      result.push({ teamId: higher.teamId, position: placeTop });
+      result.push({ teamId: lower.teamId, position: placeBottom });
+    }
+    used.add(higher.teamId);
+    used.add(lower.teamId);
+  }
+
+  // Any leftover (should not happen)
+  let nextPos = result.length + 1;
+  for (const s of standingsBeforeFinals) {
+    if (used.has(s.teamId)) continue;
+    result.push({ teamId: s.teamId, position: nextPos++ });
+  }
+
+  return result.sort((a, b) => a.position - b.position);
+}
+
+export function areSwissFinalsComplete(
+  matches: SwissMatchLike[],
+  maxRounds: number,
+): boolean {
+  const finals = getSwissFinalsMatches(matches, maxRounds);
+  if (finals.length === 0) return false;
+  return finals.every(m => {
+    if (m.team1_id && !m.team2_id) return matchHasResult(m);
+    if (m.team1_id && m.team2_id) return matchHasResult(m);
+    return true;
+  });
+}
