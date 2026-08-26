@@ -31,7 +31,7 @@ type MatchScheduleViewProps = {
   matchDurationMinutes?: number;
   dayStartTime?: string;
   swissMaxRounds?: number;
-  swissLastRoundMode?: 'finals' | 'swiss';
+  swissLastRoundMode?: 'finals' | 'swiss' | 'placement';
 };
 
 export default function MatchScheduleView({
@@ -362,7 +362,11 @@ export default function MatchScheduleView({
   const getKnockoutRoundLabel = (round: string): string => {
     if (round?.startsWith('swiss_r')) {
       const n = parseInt(round.replace('swiss_r', ''), 10);
-      if (swissMaxRounds && n === swissMaxRounds && swissLastRoundMode === 'finals') {
+      if (
+        swissMaxRounds &&
+        n === swissMaxRounds &&
+        (swissLastRoundMode === 'finals' || swissLastRoundMode === 'placement')
+      ) {
         return t.tournament.swissFinalsLabel || 'Finais';
       }
       return (t.tournament.swissRoundLabel || 'Suíço R{n}').replace('{n}', String(n));
@@ -1091,7 +1095,11 @@ export default function MatchScheduleView({
     if (!round || round.startsWith('group_') || round === 'round_robin') return null;
     if (round.startsWith('swiss_r')) {
       const n = parseInt(round.replace('swiss_r', ''), 10);
-      if (swissMaxRounds && n === swissMaxRounds && swissLastRoundMode === 'finals') {
+      if (
+        swissMaxRounds &&
+        n === swissMaxRounds &&
+        (swissLastRoundMode === 'finals' || swissLastRoundMode === 'placement')
+      ) {
         return t.tournament.swissFinalsLabel || 'Finais';
       }
       return (t.tournament.swissRoundLabel || 'Suíço R{n}').replace('{n}', String(n));

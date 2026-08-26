@@ -37,7 +37,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     gender: '' as string,
     challenge_limit: 5,
     swiss_rounds: 5,
-    swiss_last_round_mode: 'finals' as 'finals' | 'swiss',
+    swiss_last_round_mode: 'finals' as 'finals' | 'swiss' | 'placement',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -565,12 +565,18 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                   onChange={(e) =>
                     setFormData({
                       ...formData,
-                      swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                      swiss_last_round_mode:
+                        e.target.value === 'swiss'
+                          ? 'swiss'
+                          : e.target.value === 'placement'
+                            ? 'placement'
+                            : 'finals',
                     })
                   }
                   className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg"
                 >
                   <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                  <option value="placement">{t.tournament.swissLastRoundModePlacement}</option>
                   <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
                 </select>
               </div>

@@ -23,7 +23,7 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
     knockout_stage: 'quarterfinals' as 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final',
     qualified_per_group: 2,
     swiss_rounds: 5,
-    swiss_last_round_mode: 'finals' as 'finals' | 'swiss',
+    swiss_last_round_mode: 'finals' as 'finals' | 'swiss' | 'placement',
     court_names: [] as string[],
     category_schedule: [] as CategoryScheduleEntry[],
     match_duration_minutes: null as number | null,
@@ -38,7 +38,9 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
   const [tournamentFormat, setTournamentFormat] = useState<string>('groups_knockout');
   const [tournamentRoundRobinType, setTournamentRoundRobinType] = useState<string | null>(null);
   const [tournamentSwissRounds, setTournamentSwissRounds] = useState<number>(5);
-  const [tournamentSwissLastRoundMode, setTournamentSwissLastRoundMode] = useState<'finals' | 'swiss'>('finals');
+  const [tournamentSwissLastRoundMode, setTournamentSwissLastRoundMode] = useState<
+    'finals' | 'swiss' | 'placement'
+  >('finals');
 
   const individualFormats = ['individual_groups_knockout', 'mixed_american'];
   const isGroupsFormat = (fmt: string) => ['groups_knockout', 'individual_groups_knockout', 'super_teams', 'crossed_playoffs_teams', 'mixed_american'].includes(fmt);
@@ -65,7 +67,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         Math.min(9, Math.max(3, Number((data as any).swiss_rounds) || 5))
       );
       setTournamentSwissLastRoundMode(
-        (data as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals'
+        (data as any).swiss_last_round_mode === 'swiss'
+          ? 'swiss'
+          : (data as any).swiss_last_round_mode === 'placement'
+            ? 'placement'
+            : 'finals'
       );
       setTournamentDates({
         start_date: (data as any).start_date || '',
@@ -223,7 +229,11 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
           ? Math.min(9, Math.max(3, Number((editingCategory as any).swiss_rounds) || tournamentSwissRounds || 5))
           : null,
         swiss_last_round_mode: isSwissFormat(tournamentFormat)
-          ? ((editingCategory as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals')
+          ? ((editingCategory as any).swiss_last_round_mode === 'swiss'
+              ? 'swiss'
+              : (editingCategory as any).swiss_last_round_mode === 'placement'
+                ? 'placement'
+                : 'finals')
           : null,
         court_names: editingCategory.court_names && editingCategory.court_names.length > 0 ? editingCategory.court_names : null,
         category_schedule: editingCategory.category_schedule && editingCategory.category_schedule.length > 0 ? editingCategory.category_schedule : null,
@@ -402,12 +412,18 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                       onChange={(e) =>
                         setNewCategory({
                           ...newCategory,
-                          swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                          swiss_last_round_mode:
+                            e.target.value === 'swiss'
+                              ? 'swiss'
+                              : e.target.value === 'placement'
+                                ? 'placement'
+                                : 'finals',
                         })
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                      <option value="placement">{t.tournament.swissLastRoundModePlacement}</option>
                       <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
                     </select>
                   </div>
@@ -773,18 +789,25 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
                                   value={
                                     (editingCategory as any).swiss_last_round_mode === 'swiss'
                                       ? 'swiss'
-                                      : 'finals'
+                                      : (editingCategory as any).swiss_last_round_mode === 'placement'
+                                        ? 'placement'
+                                        : 'finals'
                                   }
                                   onChange={(e) =>
                                     setEditingCategory({
                                       ...editingCategory,
                                       swiss_last_round_mode:
-                                        e.target.value === 'swiss' ? 'swiss' : 'finals',
+                                        e.target.value === 'swiss'
+                                          ? 'swiss'
+                                          : e.target.value === 'placement'
+                                            ? 'placement'
+                                            : 'finals',
                                     } as any)
                                   }
                                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 >
                                   <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                                  <option value="placement">{t.tournament.swissLastRoundModePlacement}</option>
                                   <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
                                 </select>
                               </div>

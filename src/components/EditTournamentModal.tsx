@@ -46,7 +46,13 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
     format: tournament.format || 'round_robin',
     round_robin_type: (tournament as any).round_robin_type || null,
     swiss_rounds: (tournament as any).swiss_rounds ?? 5,
-    swiss_last_round_mode: ((tournament as any).swiss_last_round_mode === 'swiss' ? 'swiss' : 'finals') as 'finals' | 'swiss',
+    swiss_last_round_mode: (
+      (tournament as any).swiss_last_round_mode === 'swiss'
+        ? 'swiss'
+        : (tournament as any).swiss_last_round_mode === 'placement'
+          ? 'placement'
+          : 'finals'
+    ) as 'finals' | 'swiss' | 'placement',
   });
   const [loading, setLoading] = useState(false);
   const [reprocessLoading, setReprocessLoading] = useState(false);
@@ -1114,12 +1120,18 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                       onChange={(e) =>
                         setFormData({
                           ...formData,
-                          swiss_last_round_mode: e.target.value === 'swiss' ? 'swiss' : 'finals',
+                          swiss_last_round_mode:
+                            e.target.value === 'swiss'
+                              ? 'swiss'
+                              : e.target.value === 'placement'
+                                ? 'placement'
+                                : 'finals',
                         })
                       }
                       className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg"
                     >
                       <option value="finals">{t.tournament.swissLastRoundModeFinals}</option>
+                      <option value="placement">{t.tournament.swissLastRoundModePlacement}</option>
                       <option value="swiss">{t.tournament.swissLastRoundModeSwiss}</option>
                     </select>
                   </div>

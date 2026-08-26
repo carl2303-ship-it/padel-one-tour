@@ -436,11 +436,22 @@ export function clampSwissRounds(n: number | null | undefined): number {
   return Math.min(9, Math.max(3, Math.round(n)));
 }
 
-/** Last round as placement finals (ranking only) vs normal Swiss (counts in standings). */
-export type SwissLastRoundMode = 'finals' | 'swiss';
+/** Last round behaviour:
+ * - finals: 1ºvs2º…, rematches OK, does NOT count in W/D/L (only sets ranking #)
+ * - placement: 1ºvs2º…, rematches OK, DOES count in standings (original)
+ * - swiss: normal Swiss pairing without rematches, counts in standings
+ */
+export type SwissLastRoundMode = 'finals' | 'swiss' | 'placement';
 
 export function normalizeSwissLastRoundMode(value: unknown): SwissLastRoundMode {
-  return value === 'swiss' ? 'swiss' : 'finals';
+  if (value === 'swiss') return 'swiss';
+  if (value === 'placement') return 'placement';
+  return 'finals';
+}
+
+/** Last round uses 1ºvs2º / 3ºvs4º pairing (rematches allowed). */
+export function usesSwissPlacementPairing(mode: SwissLastRoundMode): boolean {
+  return mode === 'finals' || mode === 'placement';
 }
 
 /** Matches that feed W/D/L/J stats (excludes last round when mode is finals). */

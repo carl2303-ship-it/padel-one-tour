@@ -25,7 +25,7 @@ export type Tournament = {
   number_of_groups?: number;
   swiss_rounds?: number | null;
   /** finals = última ronda define ranking (não conta na classificação); swiss = ronda normal que conta */
-  swiss_last_round_mode?: 'finals' | 'swiss' | null;
+  swiss_last_round_mode?: 'finals' | 'swiss' | 'placement' | null;
   category?: string;
   match_duration_minutes?: number;
   image_url?: string;
@@ -99,7 +99,7 @@ export type TournamentCategory = {
   knockout_stage?: 'round_of_16' | 'quarterfinals' | 'semifinals' | 'final';
   qualified_per_group?: number;
   swiss_rounds?: number | null;
-  swiss_last_round_mode?: 'finals' | 'swiss' | null;
+  swiss_last_round_mode?: 'finals' | 'swiss' | 'placement' | null;
   game_format?: '1set' | '3sets'; // Formato dos jogos: 1 set ou melhor de 3
   court_names?: string[] | null;
   category_schedule?: CategoryScheduleEntry[] | null; // Schedule per category (day/time)

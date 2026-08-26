@@ -48,6 +48,7 @@ import {
   pairSwissFinalsRound,
   isSwissFinalsRound,
   normalizeSwissLastRoundMode,
+  usesSwissPlacementPairing,
   parseSwissRoundNumber,
   type SwissLastRoundMode,
 } from '../lib/swissTeamsScheduler';
@@ -5026,9 +5027,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           pairings = pairRound1(ordered);
         } else if (
           isSwissFinalsRound(nextRound, bucket.maxRounds) &&
-          bucket.lastRoundMode === 'finals'
+          usesSwissPlacementPairing(bucket.lastRoundMode)
         ) {
-          // Finais de posição: 1ºvs2º…; rematches OK; não entram na classificação
+          // 1ºvs2º… (finals ou placement); rematches OK
           const standings = computeSwissStandings(swissTeams, catMatches);
           pairings = pairSwissFinalsRound(standings);
         } else {
@@ -8135,7 +8136,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                         highest < maxRounds &&
                         (highest === 0 || isSwissRoundComplete(matches, highest));
                       const nextIsFinals =
-                        highest + 1 === maxRounds && highest > 0 && lastRoundMode === 'finals';
+                        highest + 1 === maxRounds &&
+                        highest > 0 &&
+                        usesSwissPlacementPairing(lastRoundMode);
                       const label =
                         highest === 0
                           ? t.tournament.generateSwissRound1
@@ -8175,6 +8178,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             >
                               <option value="finals">
                                 {t.tournament.swissLastRoundModeFinals}
+                              </option>
+                              <option value="placement">
+                                {t.tournament.swissLastRoundModePlacement}
                               </option>
                               <option value="swiss">
                                 {t.tournament.swissLastRoundModeSwiss}
