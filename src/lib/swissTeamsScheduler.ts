@@ -27,6 +27,7 @@ export type SwissStanding = {
   seed: number | null;
   played: number;
   wins: number;
+  draws: number;
   losses: number;
   gamesFor: number;
   gamesAgainst: number;
@@ -105,6 +106,7 @@ export function computeSwissStandings(
       seed: t.seed ?? null,
       played: 0,
       wins: 0,
+      draws: 0,
       losses: 0,
       gamesFor: 0,
       gamesAgainst: 0,
@@ -145,10 +147,18 @@ export function computeSwissStandings(
     } else if (winner === m.team2_id) {
       s2.wins += 1;
       s1.losses += 1;
+    } else {
+      // Timed matches can end level (e.g. 5-5) with status completed and no winner
+      s1.draws += 1;
+      s2.draws += 1;
     }
   }
 
   return Array.from(stats.values()).sort((a, b) => {
+    // Points: win=2, draw=1 (aligned with other team formats in the app)
+    const ptsA = a.wins * 2 + a.draws;
+    const ptsB = b.wins * 2 + b.draws;
+    if (ptsB !== ptsA) return ptsB - ptsA;
     if (b.wins !== a.wins) return b.wins - a.wins;
     if (b.gameDiff !== a.gameDiff) return b.gameDiff - a.gameDiff;
     if (b.gamesFor !== a.gamesFor) return b.gamesFor - a.gamesFor;

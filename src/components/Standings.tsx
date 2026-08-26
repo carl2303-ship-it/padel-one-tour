@@ -46,6 +46,7 @@ type TeamWithPlayers = Team & {
   player2: Player;
   wins: number;
   losses: number;
+  draws?: number;
   matchesPlayed: number;
   setsWon: number;
   setsLost: number;
@@ -1470,7 +1471,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               ...team,
               wins: s.wins,
               losses: s.losses,
-              draws: 0,
+              draws: s.draws,
               matchesPlayed: s.played,
               setsWon: 0,
               setsLost: 0,
@@ -1489,7 +1490,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
             ...team,
             wins: s.wins,
             losses: s.losses,
-            draws: 0,
+            draws: s.draws,
             matchesPlayed: s.played,
             setsWon: 0,
             setsLost: 0,
@@ -2710,15 +2711,18 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               <th className="px-2 py-2 text-left text-xs font-medium text-gray-500">Equipa</th>
               <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">J</th>
               <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">V</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">E</th>
               <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-7">D</th>
               <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JG</th>
               <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">JP</th>
-              <th className="pl-1 pr-3 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+              <th className="px-1 py-2 text-center text-xs font-medium text-gray-500 w-9">+/-</th>
+              <th className="pl-1 pr-3 py-2 text-center text-xs font-semibold text-gray-600 w-8">Pts</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {teams.map((team, index) => {
               const gameDiff = team.gamesWon - team.gamesLost;
+              const pts = team.wins * 2 + (team.draws || 0);
               return (
                 <tr key={team.id} className={index < 3 ? 'bg-blue-50/30' : ''}>
                   <td className="pl-3 pr-1 py-2">
@@ -2733,12 +2737,14 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                   </td>
                   <td className="px-1 py-2 text-center text-gray-600">{team.matchesPlayed}</td>
                   <td className="px-1 py-2 text-center font-semibold text-green-600">{team.wins}</td>
+                  <td className="px-1 py-2 text-center text-yellow-600">{team.draws || 0}</td>
                   <td className="px-1 py-2 text-center text-red-500">{team.losses}</td>
                   <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesWon}</td>
                   <td className="px-1 py-2 text-center text-xs text-gray-700">{team.gamesLost}</td>
-                  <td className={`pl-1 pr-3 py-2 text-center text-xs font-semibold ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                  <td className={`px-1 py-2 text-center text-xs ${gameDiff > 0 ? 'text-green-600' : gameDiff < 0 ? 'text-red-500' : 'text-gray-400'}`}>
                     {gameDiff > 0 ? '+' : ''}{gameDiff}
                   </td>
+                  <td className="pl-1 pr-3 py-2 text-center font-bold">{pts}</td>
                 </tr>
               );
             })}
@@ -2747,7 +2753,7 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
         <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
           <p className="text-xs text-gray-500">
-            <strong>Critérios:</strong> 1. Vitórias, 2. Diferença de jogos (+/-), 3. Jogos ganhos (bye = vitória)
+            <strong>Critérios:</strong> 1. Pontos (V=2, E=1), 2. Vitórias, 3. Diferença de jogos (+/-), 4. Jogos ganhos (bye = vitória)
           </p>
         </div>
       </div>
