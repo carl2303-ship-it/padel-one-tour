@@ -40,11 +40,12 @@ import {
   clampSwissRounds,
   computeSwissStandings,
   getHighestSwissRound,
+  isSwissRound,
   isSwissRoundComplete,
   orderTeamsForRound1,
   pairRound1,
   pairSwissRound,
-  swissRoundName,
+  parseSwissRoundNumber,
 } from '../lib/swissTeamsScheduler';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
@@ -4939,18 +4940,39 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         return;
       }
 
-      // Schedule time: after latest match, else tournament start
-      let scheduledTime = `${startDate}T${startTime}:00`;
-      const timed = allMatches.filter(m => m.scheduled_time);
-      if (timed.length > 0) {
-        const latestMs = Math.max(...timed.map(m => new Date(m.scheduled_time!).getTime()));
-        const next = new Date(latestMs + matchDuration * 60000);
-        const y = next.getFullYear();
-        const mo = String(next.getMonth() + 1).padStart(2, '0');
-        const d = String(next.getDate()).padStart(2, '0');
-        const h = String(next.getHours()).padStart(2, '0');
-        const mi = String(next.getMinutes()).padStart(2, '0');
-        scheduledTime = `${y}-${mo}-${d}T${h}:${mi}:00`;
+      // Schedule time: after previous swiss round wall-clock (+ match duration), else tournament start.
+      // Use digit arithmetic (not Date#getHours) to avoid UTC↔local drift of ~1h per round.
+      const addMinutesPreservingWallClock = (scheduled: string, minutes: number): string => {
+        const m = scheduled.trim().match(
+          /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/
+        );
+        if (!m) {
+          const d = new Date(scheduled);
+          return new Date(d.getTime() + minutes * 60000).toISOString();
+        }
+        const next = new Date(
+          Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)) + minutes * 60000
+        );
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}T${pad(next.getUTCHours())}:${pad(next.getUTCMinutes())}:${pad(next.getUTCSeconds())}`;
+      };
+
+      let scheduledTime = `${startDate}T${startTime.length === 5 ? `${startTime}:00` : startTime}`;
+      const swissTimed = allMatches.filter(m => m.scheduled_time && isSwissRound(m.round));
+      if (swissTimed.length > 0) {
+        // Prefer the start of the latest swiss round (all games of a round share one slot)
+        const byRound = new Map<number, string[]>();
+        for (const m of swissTimed) {
+          const n = parseSwissRoundNumber(m.round);
+          if (n == null || !m.scheduled_time) continue;
+          if (!byRound.has(n)) byRound.set(n, []);
+          byRound.get(n)!.push(m.scheduled_time);
+        }
+        const latestRound = Math.max(...byRound.keys());
+        const roundTimes = byRound.get(latestRound) || [];
+        // Lexicographic max works for ISO-like timestamps with same format
+        const latestWall = roundTimes.reduce((a, b) => (a > b ? a : b));
+        scheduledTime = addMinutesPreservingWallClock(latestWall, matchDuration);
       }
 
       const maxMatchNumber = allMatches.reduce((max, m) => Math.max(max, m.match_number || 0), 0);
