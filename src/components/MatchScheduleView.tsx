@@ -141,16 +141,38 @@ export default function MatchScheduleView({
   const [dropTarget, setDropTarget] = useState<{ time: string; court: string } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const wasDraggedRef = useRef(false);
+  const dragMatchIdRef = useRef<string | null>(null);
+
+  /** Snap a timestamp to the grid slot (same logic as buildCourtsGridModel). */
+  const snapToGridSlot = useCallback((ts: number): number => {
+    const d = new Date(ts);
+    const [startH, startM] = (dayStartTime || '09:00').split(':').map(Number);
+    const anchorTs = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      startH || 0,
+      startM || 0,
+      0,
+      0
+    ).getTime();
+    const durationMs = Math.max(1, matchDurationMinutes) * 60 * 1000;
+    const offset = ts - anchorTs;
+    const slotIndex = Math.floor(offset / durationMs);
+    return anchorTs + slotIndex * durationMs;
+  }, [dayStartTime, matchDurationMinutes]);
 
   const handleDragStart = useCallback((e: React.DragEvent, matchId: string) => {
     e.dataTransfer.setData('text/plain', matchId);
     e.dataTransfer.effectAllowed = 'move';
+    dragMatchIdRef.current = matchId;
     setDragMatchId(matchId);
     setIsDragging(true);
     wasDraggedRef.current = true;
   }, []);
 
   const handleDragEnd = useCallback(() => {
+    dragMatchIdRef.current = null;
     setDragMatchId(null);
     setDropTarget(null);
     setIsDragging(false);
@@ -158,11 +180,15 @@ export default function MatchScheduleView({
 
   const handleDragOver = useCallback((e: React.DragEvent, time: string, court: string) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     setDropTarget({ time, court });
   }, []);
 
-  const handleDragLeave = useCallback(() => {
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Não limpar ao passar de célula → card filha (senão o drop falha)
+    const related = e.relatedTarget as Node | null;
+    if (related && (e.currentTarget as Node).contains(related)) return;
     setDropTarget(null);
   }, []);
 
@@ -171,47 +197,62 @@ export default function MatchScheduleView({
     e.stopPropagation();
     setDropTarget(null);
     setIsDragging(false);
-    setDragMatchId(null);
 
-    const matchId = e.dataTransfer.getData('text/plain');
+    const matchId = e.dataTransfer.getData('text/plain') || dragMatchIdRef.current;
+    dragMatchIdRef.current = null;
+    setDragMatchId(null);
     if (!matchId) return;
 
     const draggedMatch = localMatches.find(m => m.id === matchId);
-    if (!draggedMatch) return;
+    if (!draggedMatch?.scheduled_time) return;
 
-    const targetTs = new Date(targetTime).getTime();
-    const draggedTs = new Date(draggedMatch.scheduled_time || '').getTime();
-    const samePosition = draggedTs === targetTs && (draggedMatch.court || '').trim() === targetCourt;
+    const targetCourtTrim = targetCourt.trim();
+    const targetSlotTs = new Date(targetTime).getTime();
+    const draggedSlotTs = snapToGridSlot(new Date(draggedMatch.scheduled_time).getTime());
+    const prevCourt = (draggedMatch.court || '').trim();
+    const sameSlot = draggedSlotTs === targetSlotTs;
+    const samePosition = sameSlot && prevCourt === targetCourtTrim;
     if (samePosition) return;
 
+    // Parceiro de swap: mesmo slot da grelha + mesmo campo (não exige scheduled_time idêntico)
     const existingMatch = localMatches.find(m => {
-      if (m.id === matchId) return false;
-      const mTs = new Date(m.scheduled_time || '').getTime();
-      return mTs === targetTs && (m.court || '').trim() === targetCourt;
+      if (m.id === matchId || !m.scheduled_time) return false;
+      if ((m.court || '').trim() !== targetCourtTrim) return false;
+      return snapToGridSlot(new Date(m.scheduled_time).getTime()) === targetSlotTs;
     });
 
     const prevTime = draggedMatch.scheduled_time;
-    const prevCourt = draggedMatch.court;
+    // No mesmo horário, só troca o campo (mantém scheduled_time original).
+    // Noutro horário, troca tempo+campo (usa o timestamp do slot da grelha).
+    const draggedNewTime = sameSlot ? prevTime : targetTime;
+    const existingNewTime = sameSlot
+      ? existingMatch?.scheduled_time || prevTime
+      : prevTime;
+    const existingNewCourt = prevCourt;
 
     pendingDropRef.current = true;
     setLocalMatches(prev => prev.map(m => {
-      if (m.id === matchId) return { ...m, scheduled_time: targetTime, court: targetCourt };
-      if (existingMatch && m.id === existingMatch.id) return { ...m, scheduled_time: prevTime!, court: prevCourt! };
+      if (m.id === matchId) {
+        return { ...m, scheduled_time: draggedNewTime, court: targetCourtTrim };
+      }
+      if (existingMatch && m.id === existingMatch.id) {
+        return { ...m, scheduled_time: existingNewTime!, court: existingNewCourt };
+      }
       return m;
     }));
 
     try {
       if (existingMatch) {
         const { error: e1 } = await supabase.from('matches').update({
-          scheduled_time: prevTime,
-          court: prevCourt,
+          scheduled_time: existingNewTime,
+          court: existingNewCourt,
         }).eq('id', existingMatch.id);
         if (e1) throw e1;
       }
 
       const { error: e2 } = await supabase.from('matches').update({
-        scheduled_time: targetTime,
-        court: targetCourt,
+        scheduled_time: draggedNewTime,
+        court: targetCourtTrim,
       }).eq('id', matchId);
       if (e2) throw e2;
 
@@ -220,13 +261,19 @@ export default function MatchScheduleView({
       console.error('Drag-drop update failed:', err);
       pendingDropRef.current = false;
       setLocalMatches(prev => prev.map(m => {
-        if (m.id === matchId) return { ...m, scheduled_time: prevTime!, court: prevCourt! };
-        if (existingMatch && m.id === existingMatch.id) return { ...m, scheduled_time: targetTime, court: targetCourt };
+        if (m.id === matchId) return { ...m, scheduled_time: prevTime, court: prevCourt };
+        if (existingMatch && m.id === existingMatch.id) {
+          return {
+            ...m,
+            scheduled_time: existingMatch.scheduled_time,
+            court: existingMatch.court,
+          };
+        }
         return m;
       }));
       alert('Erro ao mover o jogo. Tente novamente.');
     }
-  }, [localMatches, onScheduleUpdate]);
+  }, [localMatches, onScheduleUpdate, snapToGridSlot]);
 
   const getCategoryColor = (categoryId: string): string => {
     const categoryColors: { [key: string]: string } = {};
@@ -1011,6 +1058,11 @@ export default function MatchScheduleView({
         draggable
         onDragStart={(e) => handleDragStart(e, match.id)}
         onDragEnd={handleDragEnd}
+        onDragOver={(e) => {
+          // Permite dropar em cima desta card (bubbling para a célula)
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }}
         onClick={() => {
           if (wasDraggedRef.current) { wasDraggedRef.current = false; return; }
           onMatchClick(match.id);
@@ -1116,13 +1168,15 @@ export default function MatchScheduleView({
                             onDrop={(e) => handleDrop(e, row.time, c)}
                           >
                             {cellMatches.length > 0 ? (
-                              <div className="space-y-1">
+                              <div className="space-y-1 pointer-events-none">
                                 {cellMatches.map(m => (
-                                  <div key={m.id}>{renderMatchCell(m)}</div>
+                                  <div key={m.id} className="pointer-events-auto">
+                                    {renderMatchCell(m)}
+                                  </div>
                                 ))}
                               </div>
                             ) : (
-                              <div className={`h-full w-full rounded-md border border-dashed ${isOver ? 'border-blue-400 bg-blue-50 text-blue-500' : 'border-gray-200 text-gray-300'} text-[10px] flex items-center justify-center transition-colors`}>
+                              <div className={`h-full w-full rounded-md border border-dashed pointer-events-none ${isOver ? 'border-blue-400 bg-blue-50 text-blue-500' : 'border-gray-200 text-gray-300'} text-[10px] flex items-center justify-center transition-colors`}>
                                 {isOver ? '↓ Largar aqui' : 'livre'}
                               </div>
                             )}
