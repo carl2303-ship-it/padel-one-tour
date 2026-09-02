@@ -27,6 +27,13 @@ function normalizeEmail(email: string | null | undefined): string {
   return email?.trim().toLocaleLowerCase('pt') ?? '';
 }
 
+/** Last 9 digits — matches +351 / 351 / national PT formats in lists. */
+function phoneIdentityKey(phone: string | null | undefined): string {
+  const digits = normalizePhoneKey(phone);
+  if (!digits) return '';
+  return digits.length >= 9 ? digits.slice(-9) : digits;
+}
+
 export function isSameOrganizerPlayer(
   first: PlayerIdentity,
   second: PlayerIdentity,
@@ -39,8 +46,8 @@ export function isSameOrganizerPlayer(
     return true;
   }
 
-  const firstPhone = normalizePhoneKey(first.phone_number);
-  const secondPhone = normalizePhoneKey(second.phone_number);
+  const firstPhone = phoneIdentityKey(first.phone_number);
+  const secondPhone = phoneIdentityKey(second.phone_number);
   if (firstPhone && secondPhone && firstPhone === secondPhone) return true;
 
   const firstEmail = normalizeEmail(first.email);

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
 import { normalizePhoneKey } from '../lib/phoneUtils';
+import { isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
 import { categoryFromLevel, levelFromCategory } from '../lib/playerLevelCategory';
 import {
   X,
@@ -78,6 +79,29 @@ function phoneLookupKey(phone: string | null | undefined): string | null {
   return key.length >= 6 ? key : null;
 }
 
+function phoneDedupeKey(phone: string | null | undefined): string | null {
+  const key = phoneLookupKey(phone);
+  if (!key) return null;
+  return key.length >= 9 ? key.slice(-9) : key;
+}
+
+function playerDedupeKey(name: string, phone: string | null, playerAccountId?: string | null): string {
+  const phoneKey = phoneDedupeKey(phone);
+  if (phoneKey) return `phone:${phoneKey}`;
+  if (playerAccountId) return `acct:${playerAccountId}`;
+  return `name:${normalizeName(name)}`;
+}
+
+function pickBestAccount(existing: any, candidate: any): any {
+  if (!existing) return candidate;
+  if (!candidate) return existing;
+  const score = (pa: any) =>
+    (pa.user_id ? 100 : 0) +
+    (pa.level != null ? 10 : 0) +
+    (pa.rated_matches ?? 0);
+  return score(candidate) > score(existing) ? candidate : existing;
+}
+
 export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded = false }: OrganizerPlayersModalProps) {
   const { user } = useAuth();
   const [players, setPlayers] = useState<PlayerRecord[]>([]);
@@ -151,14 +175,13 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     playerAccountsData.forEach((pa: any) => {
       const phoneKey = phoneLookupKey(pa.phone_number);
       if (phoneKey) {
-        accountsByPhone.set(phoneKey, pa);
-        // Also index last 9 digits for suffix matching
+        accountsByPhone.set(phoneKey, pickBestAccount(accountsByPhone.get(phoneKey), pa));
         if (phoneKey.length >= 9) {
-          accountsByPhone.set(phoneKey.slice(-9), pa);
+          accountsByPhone.set(phoneKey.slice(-9), pickBestAccount(accountsByPhone.get(phoneKey.slice(-9)), pa));
         }
       }
       if (pa.name) {
-        accountsByName.set(normalizeName(pa.name), pa);
+        accountsByName.set(normalizeName(pa.name), pickBestAccount(accountsByName.get(normalizeName(pa.name)), pa));
       }
     });
 
@@ -180,6 +203,29 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
 
     const playerMap = new Map<string, PlayerRecord>();
 
+    const findExistingRecord = (
+      name: string,
+      phone: string | null,
+      playerAccountId?: string | null,
+    ): PlayerRecord | undefined => {
+      const identity = {
+        name,
+        phone_number: phone,
+        player_account_id: playerAccountId,
+      };
+      for (const record of playerMap.values()) {
+        if (isSameOrganizerPlayer(
+          {
+            name: record.displayName,
+            phone_number: record.phone_number,
+            player_account_id: record.player_account_id,
+          },
+          identity,
+        )) return record;
+      }
+      return undefined;
+    };
+
     const addPlayerToMap = (
       name: string,
       email: string | null,
@@ -192,19 +238,19 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
 
       const normalizedName = normalizeName(name);
       const organizerPlayer = organizerPlayersMap.get(normalizedName);
-      const playerAccount = playerAccountId 
+      const resolvedPhone = phone || organizerPlayer?.phone_number || null;
+      const playerAccount = playerAccountId
         ? playerAccountsData.find((pa: any) => pa.id === playerAccountId)
-        : findPlayerAccount(phone || organizerPlayer?.phone_number || null, name);
+        : findPlayerAccount(resolvedPhone, name);
 
-      const existing = playerMap.get(normalizedName);
+      const existing = findExistingRecord(name, resolvedPhone, playerAccount?.id || playerAccountId);
       if (existing) {
         if (!existing.tournaments.find(t => t.id === tournamentId)) {
           existing.tournaments.push({ id: tournament.id, name: tournament.name, date: tournament.start_date });
           existing.tournaments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         }
         if (!existing.email && email) existing.email = email;
-        if (!existing.phone_number && phone) existing.phone_number = phone;
-        // Update level/reliability from player_account if we didn't have it
+        if (!existing.phone_number && resolvedPhone) existing.phone_number = resolvedPhone;
         if (playerAccount && !existing.player_account_id) {
           existing.player_account_id = playerAccount.id;
           existing.level = playerAccount.level;
@@ -214,13 +260,15 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
             existing.player_category = playerAccount.player_category;
           }
         }
+        if (playerAccount?.name) existing.displayName = playerAccount.name;
       } else {
-        playerMap.set(normalizedName, {
-          id: normalizedName,
+        const key = playerDedupeKey(name, resolvedPhone, playerAccount?.id || playerAccountId);
+        playerMap.set(key, {
+          id: key,
           normalizedName,
           displayName: playerAccount?.name || name.trim(),
           email: organizerPlayer?.email || email,
-          phone_number: organizerPlayer?.phone_number || phone,
+          phone_number: organizerPlayer?.phone_number || resolvedPhone,
           player_category: playerAccount?.player_category || organizerPlayer?.player_category || null,
           level: playerAccount?.level || null,
           level_reliability_percent: playerAccount?.level_reliability_percent || null,
