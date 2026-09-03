@@ -204,7 +204,14 @@ export function generateIndividualGroupsKnockoutSchedule(
   const lastPlayedSlot = new Map<string, number>();
   sortedGroupNames.forEach(g => lastPlayedSlot.set(g, -999));
 
-  while (getTotalRemainingMatches() > 0) {
+  // Cada slot deve colocar pelo menos 1 jogo quando há grupos por jogar
+  // (jogadores de grupos diferentes nunca colidem). Este limite é só uma
+  // rede de segurança contra dados corrompidos/edge cases que impeçam
+  // progresso, para nunca bloquear o browser num loop sem fim.
+  const totalMatchesToSchedule = getTotalRemainingMatches();
+  const maxSlotsSafety = totalMatchesToSchedule + numGroups + 10;
+
+  while (getTotalRemainingMatches() > 0 && slotNumber < maxSlotsSafety) {
     const slot: Array<{
       group: string;
       player1_id: string;
@@ -259,6 +266,10 @@ export function generateIndividualGroupsKnockoutSchedule(
       timeSlots.push(slot);
     }
     slotNumber++;
+  }
+
+  if (getTotalRemainingMatches() > 0) {
+    console.error(`[INDIVIDUAL_GROUPS_KNOCKOUT] Safety limit reached with ${getTotalRemainingMatches()} matches unscheduled — check for data inconsistency (duplicate players across groups).`);
   }
 
   let totalGroupMatches = 0;

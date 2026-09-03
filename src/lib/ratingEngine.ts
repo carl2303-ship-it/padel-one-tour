@@ -231,7 +231,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   const { data: match, error: matchErr } = await supabase
     .from('matches')
     .select(`
-      id, team1_id, team2_id, status,
+      id, team1_id, team2_id, status, rating_processed,
       team1_score_set1, team2_score_set1,
       team1_score_set2, team2_score_set2,
       team1_score_set3, team2_score_set3,
@@ -249,6 +249,15 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   if (match.status !== 'completed') {
     console.log('[RatingEngine] Match not completed, skipping:', matchId)
     return null
+  }
+
+  // Evita duplicar deltas de rating se a função for chamada mais que uma vez
+  // para o mesmo jogo (retry, race condition, re-scan em lote). Para
+  // reprocessar de propósito, o chamador deve repor rating_processed=false
+  // antes (como já faz TournamentDetail/EditTournamentModal ao "Reprocessar").
+  if (match.rating_processed) {
+    console.log('[RatingEngine] Match already rated, skipping:', matchId)
+    return { skipped: true, message: 'Already processed' }
   }
 
   const s1 = [match.team1_score_set1 ?? 0, match.team2_score_set1 ?? 0] as [number, number]
