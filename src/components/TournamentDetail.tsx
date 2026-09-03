@@ -45,12 +45,7 @@ import {
   orderTeamsForRound1,
   pairRound1,
   pairSwissRound,
-  pairSwissFinalsRound,
-  isSwissFinalsRound,
-  normalizeSwissLastRoundMode,
-  usesSwissPlacementPairing,
   parseSwissRoundNumber,
-  type SwissLastRoundMode,
 } from '../lib/swissTeamsScheduler';
 import SuperTeamLineupModal from './SuperTeamLineupModal';
 import SuperTeamResultsModal from './SuperTeamResultsModal';
@@ -1435,7 +1430,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('seed', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, swiss_last_round_mode')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);
@@ -1466,7 +1461,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, swiss_last_round_mode')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -1803,7 +1798,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, swiss_last_round_mode')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -4969,26 +4964,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         categoryId: string | null;
         teamList: typeof teams;
         maxRounds: number;
-        lastRoundMode: SwissLastRoundMode;
       }> =
         categories.length > 0 && teams.some(t => t.category_id)
           ? categories.map(c => ({
               categoryId: c.id,
               teamList: teams.filter(t => t.category_id === c.id),
               maxRounds: clampSwissRounds((c as any).swiss_rounds ?? tournamentMaxRounds),
-              lastRoundMode: normalizeSwissLastRoundMode(
-                (c as any).swiss_last_round_mode ?? (currentTournament as any).swiss_last_round_mode
-              ),
             })).filter(b => b.teamList.length >= 2)
           : [{
               categoryId: categories.length === 1 ? categories[0].id : null,
               teamList: teams,
               maxRounds: clampSwissRounds(
                 (categories[0] as any)?.swiss_rounds ?? tournamentMaxRounds
-              ),
-              lastRoundMode: normalizeSwissLastRoundMode(
-                (categories[0] as any)?.swiss_last_round_mode ??
-                  (currentTournament as any).swiss_last_round_mode
               ),
             }];
 
@@ -5065,13 +5052,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         if (nextRound === 1) {
           const ordered = orderTeamsForRound1(swissTeams, `${currentTournament.id}:${bucket.categoryId || 'all'}`);
           pairings = pairRound1(ordered);
-        } else if (
-          isSwissFinalsRound(nextRound, bucket.maxRounds) &&
-          usesSwissPlacementPairing(bucket.lastRoundMode)
-        ) {
-          // 1ºvs2º… (finals ou placement); rematches OK
-          const standings = computeSwissStandings(swissTeams, catMatches);
-          pairings = pairSwissFinalsRound(standings);
         } else {
           const standings = computeSwissStandings(swissTeams, catMatches);
           const opponents = buildOpponentMap(catMatches);
@@ -8163,87 +8143,35 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       const maxRounds = clampSwissRounds(
                         (categories[0] as any)?.swiss_rounds ?? (currentTournament as any).swiss_rounds
                       );
-                      const lastRoundMode = normalizeSwissLastRoundMode(
-                        (categories[0] as any)?.swiss_last_round_mode ??
-                          (currentTournament as any).swiss_last_round_mode
-                      );
                       const highest = getHighestSwissRound(matches);
                       const canGenerate =
                         highest < maxRounds &&
                         (highest === 0 || isSwissRoundComplete(matches, highest));
-                      const nextIsFinals =
-                        highest + 1 === maxRounds &&
-                        highest > 0 &&
-                        usesSwissPlacementPairing(lastRoundMode);
                       const label =
                         highest === 0
                           ? t.tournament.generateSwissRound1
-                          : nextIsFinals
-                            ? t.tournament.generateSwissFinals
-                            : t.tournament.generateSwissNextRound;
-                      const saveLastRoundMode = async (mode: SwissLastRoundMode) => {
-                        const updated = {
-                          ...currentTournament,
-                          swiss_last_round_mode: mode,
-                        } as typeof currentTournament;
-                        setCurrentTournament(updated);
-                        await supabase
-                          .from('tournaments')
-                          .update({ swiss_last_round_mode: mode })
-                          .eq('id', currentTournament.id);
-                        if (categories.length === 1) {
-                          await supabase
-                            .from('tournament_categories')
-                            .update({ swiss_last_round_mode: mode })
-                            .eq('id', categories[0].id);
-                        }
-                      };
+                          : t.tournament.generateSwissNextRound;
                       return (
-                        <div className="flex flex-wrap items-center gap-2">
-                          {highest < maxRounds && (
-                            <select
-                              value={lastRoundMode}
-                              onChange={(e) =>
-                                saveLastRoundMode(
-                                  normalizeSwissLastRoundMode(e.target.value)
-                                )
-                              }
-                              disabled={loading}
-                              title={t.tournament.swissLastRoundModeHelp}
-                              className="text-sm border border-gray-300 rounded-lg px-2 py-2 bg-white max-w-[260px]"
-                            >
-                              <option value="finals">
-                                {t.tournament.swissLastRoundModeFinals}
-                              </option>
-                              <option value="placement">
-                                {t.tournament.swissLastRoundModePlacement}
-                              </option>
-                              <option value="swiss">
-                                {t.tournament.swissLastRoundModeSwiss}
-                              </option>
-                            </select>
+                        <button
+                          onClick={handleGenerateSwissRound}
+                          disabled={loading || !canGenerate}
+                          title={
+                            highest >= maxRounds
+                              ? t.tournament.swissMaxRoundsReached
+                              : highest > 0 && !isSwissRoundComplete(matches, highest)
+                                ? t.tournament.swissRoundCompleteHint
+                                : undefined
+                          }
+                          className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                        >
+                          <Calendar className="w-4 h-4" />
+                          {label}
+                          {highest > 0 && (
+                            <span className="text-xs opacity-80">
+                              ({highest}/{maxRounds})
+                            </span>
                           )}
-                          <button
-                            onClick={handleGenerateSwissRound}
-                            disabled={loading || !canGenerate}
-                            title={
-                              highest >= maxRounds
-                                ? t.tournament.swissMaxRoundsReached
-                                : highest > 0 && !isSwissRoundComplete(matches, highest)
-                                  ? t.tournament.swissRoundCompleteHint
-                                  : undefined
-                            }
-                            className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:opacity-50"
-                          >
-                            <Calendar className="w-4 h-4" />
-                            {label}
-                            {highest > 0 && (
-                              <span className="text-xs opacity-80">
-                                ({highest}/{maxRounds})
-                              </span>
-                            )}
-                          </button>
-                        </div>
+                        </button>
                       );
                     })()
                   ) : (
@@ -8296,22 +8224,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   onSortByChange={setMatchViewSortBy}
                   matchDurationMinutes={currentTournament.match_duration_minutes || 30}
                   dayStartTime={currentTournament.start_time || '09:00'}
-                  swissMaxRounds={
-                    isSwissTeams
-                      ? clampSwissRounds(
-                          (categories[0] as any)?.swiss_rounds ??
-                            (currentTournament as any).swiss_rounds
-                        )
-                      : undefined
-                  }
-                  swissLastRoundMode={
-                    isSwissTeams
-                      ? normalizeSwissLastRoundMode(
-                          (categories[0] as any)?.swiss_last_round_mode ??
-                            (currentTournament as any).swiss_last_round_mode
-                        )
-                      : undefined
-                  }
                   outdoorCourtKeys={outdoorCourtKeys}
                   outdoorCountMatches={matches as MatchWithTeams[]}
                 />
