@@ -213,7 +213,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const handleMatchRealtime = async (payload: any) => {
     const { eventType, new: newRecord, old: oldRecord } = payload;
-    console.log('[REALTIME] Match change:', eventType);
     if (eventType === 'UPDATE' && newRecord) {
       // Use the value coming from DB literally. Any normalization of
       // numeric court ("1" -> "Court A") happens once at fetch time via
@@ -232,7 +231,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             setTimeout(() => autoAdvanceCrossedPlayoffs(updated), 500);
           } else if (newRecord.round === 'quarterfinal' || newRecord.round === 'quarter_final') {
             // Avançar quarterfinals → semifinals
-            console.log('[REALTIME] Quarterfinal completed, advancing winner to semifinal');
             setTimeout(async () => {
               await advanceKnockoutWinner(tournament.id, newRecord.id, newRecord.category_id || undefined);
               fetchTournamentData();
@@ -248,20 +246,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             
             if (allGroupsDone) {
               if (fmt === 'mixed_american') {
-                console.log('[REALTIME] All rounds done (mixed_american) - refetching to auto-populate knockouts');
                 setTimeout(() => fetchTournamentData(), 500);
               } else if (fmt === 'crossed_playoffs_teams') {
-                console.log('[REALTIME] Crossed playoffs teams - groups done, refetching');
                 setTimeout(() => fetchTournamentData(), 500);
               } else if (fmt === 'individual_groups_knockout') {
                 setTimeout(async () => {
-                  console.log('[REALTIME] All groups done, populating knockout brackets');
                   await populatePlacementMatches(tournament.id);
                   fetchTournamentData();
                 }, 600);
               } else {
                 // Fallback: refetch for any format with groups
-                console.log(`[REALTIME] All groups done (format: ${fmt}) - refetching`);
                 setTimeout(() => fetchTournamentData(), 500);
               }
             }
@@ -277,7 +271,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const handleTeamRealtime = async (payload: any) => {
     const { eventType, new: newRecord } = payload;
-    console.log('[REALTIME] Team change:', eventType);
     if (eventType === 'UPDATE' && newRecord) {
       setTeams(prev => prev.map(t => t.id === newRecord.id ? { ...t, ...newRecord } : t));
     } else {
@@ -287,7 +280,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   const handlePlayerRealtime = async (payload: any) => {
     const { eventType, new: newRecord } = payload;
-    console.log('[REALTIME] Player change:', eventType);
     if (eventType === 'UPDATE' && newRecord) {
       setIndividualPlayers(prev => prev.map(p => p.id === newRecord.id ? { ...p, ...newRecord } : p));
     } else {
@@ -425,7 +417,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (error) {
         console.error('[COURT BOOKINGS] Error deleting bookings:', error);
       } else {
-        console.log('[COURT BOOKINGS] Deleted all tournament bookings');
       }
     } catch (error) {
       console.error('[COURT BOOKINGS] Error deleting:', error);
@@ -437,11 +428,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     tournamentData: typeof currentTournament
   ) => {
     if (tournamentData.format === 'ladder') {
-      console.log('[COURT BOOKINGS] Ladder tournament, skipping court bookings');
       return;
     }
     if (!tournamentData.club_id || !tournamentData.court_names || tournamentData.court_names.length === 0) {
-      console.log('[COURT BOOKINGS] No club or court_names configured, skipping bookings');
       return;
     }
 
@@ -497,7 +486,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         });
 
       if (bookingsToCreate.length > 0) {
-        console.log(`[COURT BOOKINGS] Creating ${bookingsToCreate.length} bookings`);
         const { error } = await supabase
           .from('court_bookings')
           .insert(bookingsToCreate);
@@ -505,7 +493,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         if (error) {
           console.error('[COURT BOOKINGS] Error creating bookings:', error);
         } else {
-          console.log(`[COURT BOOKINGS] Successfully created ${bookingsToCreate.length} bookings`);
         }
       }
     } catch (error) {
@@ -539,7 +526,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const qualifiedPerGroup = Math.floor(totalQualified / numberOfGroups);
       const extraBestNeeded = totalQualified - (qualifiedPerGroup * numberOfGroups);
 
-      console.log(`[CALCULATE_QUALIFIED] Individual ${knockoutStage}: ${numberOfGroups} groups, ${qualifiedPerGroup}/group + ${extraBestNeeded} best ${qualifiedPerGroup + 1}th = ${totalQualified} total`);
       return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition: qualifiedPerGroup + 1 };
     }
 
@@ -555,8 +541,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const extraBestNeeded = totalQualified - (qualifiedPerGroup * numberOfGroups);
     const extraFromPosition = qualifiedPerGroup + 1;
 
-    console.log(`[CALCULATE_QUALIFIED] Teams: ${numberOfGroups} groups, Stage: ${knockoutStage}`);
-    console.log(`[CALCULATE_QUALIFIED] Total needed: ${totalQualified}, Per group: ${qualifiedPerGroup}, Extra best ${extraFromPosition}th needed: ${extraBestNeeded}`);
 
     return { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition };
   };
@@ -816,10 +800,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleSuperTeamsGenerateSchedule = async () => {
-    console.log('[SUPER-SCHEDULE] ====================================');
-    console.log('[SUPER-SCHEDULE] Starting schedule generation for Super Teams');
     if (!currentTournament || currentTournament.format !== 'super_teams') {
-      console.log('[SUPER-SCHEDULE] Aborted: not a super_teams tournament');
       return;
     }
     setLoading(true);
@@ -845,20 +826,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const startDate = new Date(currentTournament.start_date);
       const endDate = new Date(currentTournament.end_date);
       
-      console.log('[SUPER-SCHEDULE] Tournament settings:');
-      console.log('[SUPER-SCHEDULE]   - daily_start_time:', dailyStartTime);
-      console.log('[SUPER-SCHEDULE]   - daily_end_time:', dailyEndTime);
-      console.log('[SUPER-SCHEDULE]   - match_duration_minutes:', matchDurationMinutes);
-      console.log('[SUPER-SCHEDULE]   - start_date:', startDate);
-      console.log('[SUPER-SCHEDULE]   - categories:', categories.length);
-      console.log('[SUPER-SCHEDULE]   - superTeams:', superTeams.length);
       
       // Obter os nomes dos campos definidos
       const courtNames = (currentTournament as any).court_names || [];
       const availableCourts = courtNames.length > 0 ? courtNames : ['Campo 1'];
       const numCourts = availableCourts.length;
       
-      console.log('[SUPER-SCHEDULE]   - courts:', availableCourts);
       
       // Gerar todas as confrontações
       const toInsert: Array<{
@@ -881,8 +854,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const slotsPerCourtPerDay = Math.floor(dailyMinutes / matchDurationMinutes);
       const totalSlotsPerDay = slotsPerCourtPerDay * numCourts;
       
-      console.log('[SUPER-SCHEDULE]   - slots per court per day:', slotsPerCourtPerDay);
-      console.log('[SUPER-SCHEDULE]   - total slots per day:', totalSlotsPerDay);
       
       // Recolher todos os confrontos a agendar
       const allConfronts: Array<{
@@ -944,8 +915,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         roundIndex++;
       }
       
-      console.log('[SUPER-SCHEDULE]   - groups/categories:', confrontsByGroup.length);
-      console.log('[SUPER-SCHEDULE]   - total confronts to schedule:', allConfronts.length);
       
       if (allConfronts.length === 0) {
         alert('Defina grupos nas super equipas primeiro (Sortear Grupos ou Grupos Manual).');
@@ -1024,7 +993,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // Marcar como ocupado
           markSlotOccupied(slotKey, confront.team1.id, confront.team2.id, courtIndex);
           
-          console.log(`[SUPER-SCHEDULE] Slot ${slotKey}: ${confront.team1.name} vs ${confront.team2.name} - ${matchDate.toLocaleString()} - ${availableCourts[courtIndex]}`);
           
           toInsert.push({
             tournament_id: tournament.id,
@@ -1075,20 +1043,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         court_name: string;
       }> = [];
       
-      console.log('[SUPER-SCHEDULE] Generating knockout rounds...');
       
       for (const cat of categories) {
         const knockoutStage = (cat as any).knockout_stage || 'semifinals';
         const qualifiedPerGroup = (cat as any).qualified_per_group || 2;
         const numberOfGroups = (cat as any).number_of_groups || 2;
         
-        console.log(`[SUPER-SCHEDULE] Category ${cat.name}: knockout_stage = ${knockoutStage}, qualified_per_group = ${qualifiedPerGroup}, groups = ${numberOfGroups}`);
         
         // Calculate qualification config to get total qualified
         const qualConfig = calculateQualificationConfig(numberOfGroups, knockoutStage, false);
         const totalQualified = qualConfig.totalQualified;
         
-        console.log(`[SUPER-SCHEDULE] Total qualified teams: ${totalQualified}`);
         
         // Determinar quantas partidas de cada fase baseado no número de qualificados
         // Para equipas: cada jogo tem 2 equipas
@@ -1097,19 +1062,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         let numQuarters = 0, numSemis = 0, numFinals = 0;
         
         if (knockoutStage === 'none') {
-          console.log(`[SUPER-SCHEDULE] Category ${cat.name}: groups only, no knockout`);
         } else if (knockoutStage === 'quarterfinals') {
           numQuarters = Math.ceil(totalQualified / 2);
           numSemis = Math.ceil(numQuarters / 2);
           numFinals = 1;
-          console.log(`[SUPER-SCHEDULE] QFs: ${numQuarters}, SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'semifinals') {
           numSemis = Math.ceil(totalQualified / 2);
           numFinals = 1;
-          console.log(`[SUPER-SCHEDULE] SFs: ${numSemis}, Finals: ${numFinals}`);
         } else if (knockoutStage === 'final') {
           numFinals = 1;
-          console.log(`[SUPER-SCHEDULE] Finals: ${numFinals}`);
         }
         
         // Criar confrontos de quartos de final
@@ -1221,7 +1182,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               scheduled_time: finalDate.toISOString(),
               court_name: availableCourts.length > 1 ? availableCourts[1] : availableCourts[0],
             });
-            console.log(`[SUPER-SCHEDULE] Added 3rd/4th place match for ${cat.name}`);
           }
           
           currentTimeSlot++;
@@ -1232,7 +1192,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       }
       
-      console.log(`[SUPER-SCHEDULE] Knockout confronts to insert: ${knockoutConfronts.length}`);
       
       // Inserir todos os confrontos (grupo + eliminatórias)
       const allToInsert = [...toInsert, ...knockoutConfronts];
@@ -1301,7 +1260,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       return false;
     }
 
-    console.log(`[NORMALIZE-COURTS] Found ${updates.length} match(es) with purely-numeric court. Persisting names to DB...`);
     for (const u of updates) {
       const { error } = await supabase
         .from('matches')
@@ -1312,7 +1270,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
     courtsNormalizedRef.current.add(tournament.id);
-    console.log('[NORMALIZE-COURTS] Done. Refetching...');
     return true;
   };
 
@@ -1349,7 +1306,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
     fetchDepthRef.current++;
     try {
-    console.log('[FETCH] Starting fetchTournamentData for tournament:', tournament.id, silent ? '(silent)' : '');
     if (!silent) setLoading(true);
 
     if (seedSyncRef.current !== tournament.id) {
@@ -1378,7 +1334,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         effectiveRoundRobinType = 'individual';
       }
       if (effectiveRoundRobinType) {
-        console.log('[FETCH] Auto-detected round_robin_type:', effectiveRoundRobinType, '(teams:', teamCount, 'players:', playerCount, ')');
         // Persist to DB so this only runs once
         await supabase.from('tournaments').update({ round_robin_type: effectiveRoundRobinType }).eq('id', tournament.id);
       }
@@ -1390,7 +1345,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     setResolvedFormat(effectiveFormat);
     setResolvedRoundRobinType(effectiveRoundRobinType);
 
-    console.log('[FETCH] Effective format:', effectiveFormat, 'individual:', isEffectiveIndividual);
 
     if (effectiveFormat === 'super_teams') {
       const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
@@ -1467,15 +1421,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       ]);
 
       if (playersResult.data) {
-        console.log('[FETCH] Loaded', playersResult.data.length, 'individual players:', playersResult.data);
         setIndividualPlayers(playersResult.data);
         fetchPlayerLevelsFromAccounts(playersResult.data);
       } else {
         console.error('[FETCH] No individual players data');
       }
       if (matchesResult.data) {
-        console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
-        console.log('[FETCH] First match:', matchesResult.data[0]);
         const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
         // One-shot DB normalization for purely-numeric courts ("1" -> court_names[0]).
         // Once done, the DB is consistent and renders are deterministic.
@@ -1494,7 +1445,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))
             .map((m: any) => `#${m.match_number}|${(m.court || '').toString().trim()}|${m.scheduled_time || ''}`)
             .join('\n');
-          console.log('[FETCH-FP] Schedule fingerprint (BD raw):\n' + fp);
           (window as any).__matchesFP = fp;
           (window as any).__matches = matchesResult.data;
         } catch {}
@@ -1517,7 +1467,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           if (allGroupsDone && hasUnpopulatedFirstRound) {
             autoPopulateAttemptedRef.current = true;
-            console.log('[FETCH] individual_groups_knockout: Auto-populating knockout brackets (first round only)');
             await populatePlacementMatches(tournament.id);
             await fetchTournamentData(silent);
             return;
@@ -1562,7 +1511,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           if (!autoPopulateAttemptedRef.current && categoriesNeedingSync.length > 0) {
             autoPopulateAttemptedRef.current = true;
-            console.log('[FETCH] groups_knockout TEAMS: syncing knockouts for categories:', categoriesNeedingSync);
             for (const cId of categoriesNeedingSync) {
               try { await populateTeamPlacementMatches(tournament.id, cId); }
               catch (err) { console.error('[FETCH] populateTeamPlacementMatches error:', err); }
@@ -1573,7 +1521,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       }
       if (categoriesResult.data) {
-        console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
       }
 
@@ -1588,7 +1535,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const hasCrossedRounds = matchesResult.data.some((m: any) => m.round === 'crossed_r1_j1');
         const hasSemifinalRounds = matchesResult.data.some((m: any) => m.round === 'semifinal');
         
-        console.log('[FETCH-CHECK] Format:', effectiveFormat, 'Groups:', groupMatchesLocal.length, 'All done:', allGroupsDoneLocal, 'HasCrossed:', hasCrossedRounds, 'HasSemifinal:', hasSemifinalRounds);
         
         if (allGroupsDoneLocal) {
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
@@ -1630,7 +1576,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // INDIVIDUAL AMERICANO: NÃO existe confronto direto (parceiros mudam a cada ronda)
             // Critérios de desempate: 1° Vitórias > 2° Pontos > 3° Diferença de jogos > 4° Jogos ganhos > 5° Data inscrição
             const sorted = sortTeamsByTiebreaker(teamStatsArr, []);
-            console.log(`[getCatRankings] Category ${categoryId}: ${sorted.map((s,i) => `${i+1}°${s.name}(W:${s.wins},GD:${s.gamesWon-s.gamesLost},GW:${s.gamesWon})`).join(', ')}`);
             return sorted.map(s => ({ id: s.id, name: s.name, wins: s.wins, gamesWon: s.gamesWon, gamesLost: s.gamesLost }));
           };
 
@@ -1698,7 +1643,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 const rankedMen = allRanked.filter(p => p.gender === 'M');
                 const rankedWomen = allRanked.filter(p => p.gender === 'F');
 
-                console.log(`[FETCH-FILL] MA Mixed Rankings: Men=[${rankedMen.map(p=>p.name)}], Women=[${rankedWomen.map(p=>p.name)}]`);
 
                 if (rankedMen.length >= 2 && rankedWomen.length >= 2) {
                   const topMen = rankedMen.slice(0, Math.min(4, rankedMen.length));
@@ -1730,7 +1674,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
                   if (!autoPopulateAttemptedRef.current && (!sf1Correct || !sf2Correct)) {
                     autoPopulateAttemptedRef.current = true;
-                    console.log('[FETCH-FILL] MA Mixed Semifinals incorretas ou vazias, corrigindo...');
                     await supabase.from('matches').update({
                       player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
                       player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
@@ -1755,10 +1698,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       }).eq('id', thirdMatch.id);
                     }
 
-                    console.log('[FETCH-FILL] MA Mixed Semifinals corrigidas! Refreshing...');
                     await fetchTournamentData(silent); return;
                   } else {
-                    console.log('[FETCH-FILL] MA Mixed Semifinals já estão corretas');
                   }
                 }
               }
@@ -1806,11 +1747,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (teamsResult.error) {
         console.error('[FETCH] Teams error:', teamsResult.error);
       } else if (teamsResult.data) {
-        console.log('[FETCH] Loaded', teamsResult.data.length, 'teams');
         setTeams(teamsResult.data as unknown as TeamWithPlayers[]);
       }
       if (playersResult.data) {
-        console.log('[FETCH] Loaded', playersResult.data.length, 'individual players from categories');
         setIndividualPlayers(playersResult.data);
         const teamPlayerPhones = (teamsResult.data || []).flatMap((t: any) => [
           t.player1?.phone_number ? { phone_number: t.player1.phone_number } : null,
@@ -1819,17 +1758,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         fetchPlayerLevelsFromAccounts([...playersResult.data, ...teamPlayerPhones]);
       }
       if (matchesResult.data) {
-        console.log('[FETCH] Loaded', matchesResult.data.length, 'matches');
         const knockoutFetched = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
         if (knockoutFetched.length > 0) {
-          console.log('[FETCH] Knockout matches:', knockoutFetched.map((m: any) => ({
-            round: m.round,
-            match_number: m.match_number,
-            team1_id: m.team1_id,
-            team2_id: m.team2_id,
-            team1_name: m.team1?.name,
-            team2_name: m.team2?.name
-          })));
         }
         const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
         const didNormalize = await normalizeNumericCourtsInDB(rawMatches as any);
@@ -1847,13 +1777,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))
             .map((m: any) => `#${m.match_number}|${(m.court || '').toString().trim()}|${m.scheduled_time || ''}`)
             .join('\n');
-          console.log('[FETCH-FP] Schedule fingerprint (BD raw):\n' + fp);
           (window as any).__matchesFP = fp;
           (window as any).__matches = matchesResult.data;
         } catch {}
       }
       if (categoriesResult.data) {
-        console.log('[FETCH] Loaded', categoriesResult.data.length, 'categories');
         setCategories(categoriesResult.data);
       }
 
@@ -1892,7 +1820,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               return !!(m.team1_id || m.team2_id);
             });
 
-            console.log(`[FETCH-GK] Category ${cat.name}: groups ${allDone ? 'all done' : 'NOT all done'}, knockouts ${hasEmpty ? 'have empty' : 'all filled'}${hasStaleTeams ? ', has stale teams' : ''}`);
 
             const needsPopulate = allDone;
             const needsClear = !allDone && hasStaleTeams;
@@ -1912,7 +1839,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const fingerprint = `${doneCount}/${catGroupMatches.length}|emp:${koEmptyCount}|stale:${koStaleCount}|pairs:${koPairSig}|action:${needsPopulate ? 'pop' : 'clr'}`;
             const lastFingerprint = gkSyncFingerprintRef.current.get(cat.id);
             if (lastFingerprint === fingerprint) {
-              console.log(`[FETCH-GK] Skip ${cat.name}: same state as last attempt (${fingerprint}) - populate cannot resolve, breaking loop`);
               continue;
             }
             gkSyncFingerprintRef.current.set(cat.id, fingerprint);
@@ -1920,7 +1846,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           if (categoriesNeedingSync.length > 0) {
-            console.log('[FETCH-GK] Syncing groups_knockout categories:', categoriesNeedingSync);
             (async () => {
               for (const cId of categoriesNeedingSync) {
                 try { await populateTeamPlacementMatches(tournament.id, cId); }
@@ -1937,14 +1862,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // AUTO-POPULATE CROSSED PLAYOFFS TEAMS quando todos os grupos estão completos
       // ================================================================
       const tournamentFormat = effectiveFormat;
-      console.log('[FETCH-CHECK-TEAMS] Tournament format:', tournamentFormat);
-      console.log('[FETCH-CHECK-TEAMS] Has matchesResult.data:', !!matchesResult.data);
-      console.log('[FETCH-CHECK-TEAMS] Has teamsResult.data:', !!teamsResult.data);
-      console.log('[FETCH-CHECK-TEAMS] Has categoriesResult.data:', !!categoriesResult.data);
       
       if (tournamentFormat === 'crossed_playoffs_teams' && matchesResult.data && teamsResult.data && categoriesResult.data) {
-        console.log('[FETCH-CHECK-TEAMS] ====================================');
-        console.log('[FETCH-CHECK-TEAMS] Checking crossed_playoffs_teams format in TEAMS block...');
         const allMatchesLocal = matchesResult.data as unknown as MatchWithTeams[];
         const groupMatchesLocal = allMatchesLocal.filter(m => m.round?.startsWith('group_'));
         
@@ -1961,13 +1880,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const crossedMatches = allMatchesLocal.filter(m => m.round?.startsWith('crossed_'));
         const hasCrossedRounds = crossedMatches.length > 0;
         
-        console.log('[FETCH-CHECK-TEAMS] Group matches breakdown:', {
-          total: groupMatchesLocal.length,
-          completed: groupMatchesLocal.filter(m => m.status === 'completed').length,
-          withScores: groupMatchesLocal.filter(m => isMatchDone(m)).length,
-          scheduled: groupMatchesLocal.filter(m => m.status === 'scheduled').length,
-          other: groupMatchesLocal.filter(m => m.status !== 'completed' && m.status !== 'scheduled').map(m => ({ round: m.round, status: m.status, set1: `${m.team1_score_set1}-${m.team2_score_set1}` }))
-        });
         
         // ================================================================
         // AUTO-FIX: Verificar se estrutura de playoffs está completa
@@ -1986,7 +1898,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             (currentTournament as any)?.knockout_stage ||
             'semifinals';
           qualifiedPerGroupLocal = calculateTeamQualificationConfig(localCats.length, ksGuess).qualifiedPerGroup;
-          console.log(`[FETCH-CHECK-TEAMS] WARNING: qualified_per_group not in DB, derived ${qualifiedPerGroupLocal} from knockout_stage=${ksGuess}`);
         }
         if (!knockoutStageLocal) {
           const tournamentKS = (currentTournament as any)?.knockout_stage;
@@ -1996,7 +1907,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const totalQ = localCats.length * qualifiedPerGroupLocal;
             knockoutStageLocal = totalQ >= 8 ? 'quarterfinals' : totalQ >= 4 ? 'semifinals' : 'final';
           }
-          console.log(`[FETCH-CHECK-TEAMS] WARNING: knockout_stage not in DB, auto-calculated to ${knockoutStageLocal}`);
         }
         const totalQualifiedLocal = localCats.length * qualifiedPerGroupLocal;
         
@@ -2020,14 +1930,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const existingR5 = crossedMatches.filter(m => m.round?.startsWith('crossed_r5_')).length;
         const existingTotal = existingR1 + existingR2 + existingR3 + existingR4 + existingR5;
         
-        console.log(`[FETCH-CHECK-TEAMS] Playoff structure: expected=${expectedTotal} (R1:${expectedR1} R2:${expectedR2} R3:${expectedR3} R4:${expectedR4} R5:${expectedR5}), existing=${existingTotal} (R1:${existingR1} R2:${existingR2} R3:${existingR3} R4:${existingR4} R5:${existingR5})`);
         
         // [DISABLED] AUTO-FIX que apagava TODOS os playoffs e recriava em cada fetch.
         // Causava alteração contínua de campos/horários sempre que se abria a app.
         // Para regenerar, use o botão "Gerar Calendário" manualmente.
         if (false && hasCrossedRounds && existingTotal < expectedTotal) {
-          console.log('[FETCH-AUTOFIX] ====================================');
-          console.log(`[FETCH-AUTOFIX] Playoff structure incomplete: ${existingTotal}/${expectedTotal}. Auto-fixing...`);
           
           // Apagar TODOS os playoffs existentes e recriá-los
           const { error: deleteErr } = await supabase.from('matches')
@@ -2131,35 +2038,21 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             if (insertErr) {
               console.error('[FETCH-AUTOFIX] Error inserting playoffs:', insertErr);
             } else {
-              console.log(`[FETCH-AUTOFIX] Created ${newPlayoffs.length} playoff matches (R1:${expectedR1} R2:${expectedR2} R3:${expectedR3} R4:${expectedR4} R5:${expectedR5}). Refreshing...`);
               await fetchTournamentData();
               return;
             }
           }
         }
         
-        console.log('[FETCH-CHECK-TEAMS] Format:', effectiveFormat);
-        console.log('[FETCH-CHECK-TEAMS] Total matches:', allMatchesLocal.length);
-        console.log('[FETCH-CHECK-TEAMS] Group matches:', groupMatchesLocal.length);
-        console.log('[FETCH-CHECK-TEAMS] All groups done:', allGroupsDoneLocal);
-        console.log('[FETCH-CHECK-TEAMS] Has crossed rounds:', hasCrossedRounds);
-        console.log('[FETCH-CHECK-TEAMS] Teams data:', teamsResult.data?.length);
-        console.log('[FETCH-CHECK-TEAMS] Categories data:', categoriesResult.data?.length);
         
         if (allGroupsDoneLocal && hasCrossedRounds) {
           const r1j1Local = allMatchesLocal.find(m => m.round === 'crossed_r1_j1');
           const localCategories = categoriesResult.data as Array<{ id: string; name: string }>;
           const sortedCats = [...localCategories].sort((a, b) => a.name.localeCompare(b.name));
           
-          console.log('[FETCH-CHECK-TEAMS] R1J1 match found:', !!r1j1Local);
-          console.log('[FETCH-CHECK-TEAMS] R1J1 team1_id:', r1j1Local?.team1_id);
-          console.log('[FETCH-CHECK-TEAMS] R1J1 team2_id:', r1j1Local?.team2_id);
-          console.log('[FETCH-CHECK-TEAMS] Sorted categories:', sortedCats.length, sortedCats.map(c => c.name));
           
           if (!autoPopulateAttemptedRef.current && r1j1Local && sortedCats.length >= 2 && sortedCats.length <= 3) {
             autoPopulateAttemptedRef.current = true;
-            console.log('[FETCH-FILL-TEAMS] ====================================');
-            console.log('[FETCH-FILL-TEAMS] Filling crossed playoffs teams R1...');
             
             // Função para calcular ranking de equipas de uma categoria
             const getCategoryTeamRankings = (categoryId: string) => {
@@ -2173,7 +2066,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 return hasScores;
               });
 
-              console.log(`[FETCH-FILL-TEAMS] Category ${categoryId}: ${categoryTeams.length} teams, ${categoryMatches.length} done matches`);
 
               const teamStats = new Map<string, { id: string; name: string; wins: number; gamesWon: number; gamesLost: number }>();
               
@@ -2227,10 +2119,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 const rankB = getCategoryTeamRankings(catB.id);
                 const rankC = getCategoryTeamRankings(catC.id);
                 
-                console.log(`[FETCH-FILL-TEAMS] Rankings calculated - A: ${rankA.length} teams, B: ${rankB.length} teams, C: ${rankC.length} teams`);
-                console.log(`[FETCH-FILL-TEAMS] Rank A:`, rankA.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
-                console.log(`[FETCH-FILL-TEAMS] Rank B:`, rankB.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
-                console.log(`[FETCH-FILL-TEAMS] Rank C:`, rankC.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
                 
                 // Ler configurações das categorias para determinar quantas equipas qualificam
                 let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
@@ -2249,10 +2137,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   return aNum - bNum;
                 });
                 
-                console.log(`[FETCH-FILL-TEAMS] Found ${r1MatchesLocal.length} R1 matches, qualified_per_group=${qualifiedPerGroup}`);
                 
                 if (rankA.length >= qualifiedPerGroup && rankB.length >= qualifiedPerGroup && rankC.length >= qualifiedPerGroup) {
-                  console.log(`[FETCH-FILL-TEAMS] 3-cat teams: A=[${rankA.slice(0, qualifiedPerGroup).map(t=>t.name)}], B=[${rankB.slice(0, qualifiedPerGroup).map(t=>t.name)}], C=[${rankC.slice(0, qualifiedPerGroup).map(t=>t.name)}]`);
                   
                   // Para 3 categorias, distribuir os jogos entre as categorias
                   // J1: 1°A vs 4°B
@@ -2281,13 +2167,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       team1_id: matchup.team1.id,
                       team2_id: matchup.team2.id
                     }).eq('id', match.id).select();
-                    console.log(`[FETCH-FILL-TEAMS] Filled ${match.round}: ${matchup.team1.name} vs ${matchup.team2.name}, error:`, error, 'updated:', data?.length);
                   }
                   
-                  console.log('[FETCH-FILL-TEAMS] R1 filled (3 cat teams - direct matchups)! Refreshing...');
                   await fetchTournamentData(silent); return;
                 } else {
-                  console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length}, C=${rankC.length} (need ${qualifiedPerGroup} each)`);
                 }
               } else if (sortedCats.length === 2) {
                 const [catA, catB] = sortedCats;
@@ -2305,9 +2188,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   return { winnerId: m.team2_id, loserId: m.team1_id };
                 };
                 
-                console.log(`[FETCH-FILL-TEAMS] Rankings calculated - A: ${rankA.length} teams, B: ${rankB.length} teams`);
-                console.log(`[FETCH-FILL-TEAMS] Rank A:`, rankA.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
-                console.log(`[FETCH-FILL-TEAMS] Rank B:`, rankB.map((t, i) => `${i+1}° ${t.name} (W:${t.wins}, GD:${t.gamesWon-t.gamesLost})`));
                 
                 // Ler configurações das categorias para determinar quantas equipas qualificam
                 let qualifiedPerGroup = (sortedCats[0] as any).qualified_per_group;
@@ -2333,10 +2213,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 const r6aLocal = allMatchesLocal.find(m => m.round === 'crossed_r6_5th_final');
                 const r6bLocal = allMatchesLocal.find(m => m.round === 'crossed_r6_7th_final');
                 
-                console.log(`[FETCH-FILL-TEAMS] Found ${r1MatchesLocal.length} R1 matches, qualified_per_group=${qualifiedPerGroup}`);
                 
                 if (rankA.length >= qualifiedPerGroup && rankB.length >= qualifiedPerGroup) {
-                  console.log(`[FETCH-FILL-TEAMS] 2-cat teams: A=[${rankA.slice(0, qualifiedPerGroup).map(t=>t.name)}], B=[${rankB.slice(0, qualifiedPerGroup).map(t=>t.name)}]`);
                   
                   // Preencher os jogos R1 baseado no número de jogos e equipas qualificadas
                   // Para 4 equipas qualificadas por categoria (8 total), temos 4 jogos:
@@ -2367,7 +2245,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       team1_id: matchup.team1.id,
                       team2_id: matchup.team2.id
                     }).eq('id', match.id).select();
-                    console.log(`[FETCH-FILL-TEAMS] Filled ${match.round}: ${matchup.team1.name} vs ${matchup.team2.name}, error:`, error, 'updated:', data?.length);
                     changed = true;
                   }
 
@@ -2379,7 +2256,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                         team1_id: rankA[2].id,
                         team2_id: rankB[3].id,
                       }).eq('id', r4MatchLocal.id);
-                      console.log(`[FETCH-FILL-TEAMS] Filled ${r4MatchLocal.round}: ${rankA[2].name} vs ${rankB[3].name}`);
                       changed = true;
                     }
                     if (r5MatchLocal && (!r5MatchLocal.team1_id || !r5MatchLocal.team2_id)) {
@@ -2387,7 +2263,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                         team1_id: rankA[3].id,
                         team2_id: rankB[2].id,
                       }).eq('id', r5MatchLocal.id);
-                      console.log(`[FETCH-FILL-TEAMS] Filled ${r5MatchLocal.round}: ${rankA[3].name} vs ${rankB[2].name}`);
                       changed = true;
                     }
                   }
@@ -2438,31 +2313,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   }
                   
                   if (changed) {
-                    console.log('[FETCH-FILL-TEAMS] Crossed teams matches updated! Refreshing...');
                     await fetchTournamentData(silent); return;
                   }
                 } else {
-                  console.log(`[FETCH-FILL-TEAMS] Not enough teams ranked: A=${rankA.length}, B=${rankB.length} (need ${qualifiedPerGroup} each)`);
                 }
               } else {
-                console.log(`[FETCH-FILL-TEAMS] Invalid number of categories: ${sortedCats.length} (need 2 or 3)`);
               }
             } catch (err) {
               console.error('[FETCH-FILL-TEAMS] Error:', err);
             }
           } else {
-            console.log('[FETCH-CHECK-TEAMS] Conditions not met:', {
-              hasR1J1: !!r1j1Local,
-              r1j1Team1Id: r1j1Local?.team1_id,
-              r1j1Team2Id: r1j1Local?.team2_id,
-              categoriesCount: sortedCats.length
-            });
           }
         } else {
-          console.log('[FETCH-CHECK-TEAMS] Conditions not met:', {
-            allGroupsDone: allGroupsDoneLocal,
-            hasCrossedRounds: hasCrossedRounds
-          });
         }
       }
     }
@@ -2527,12 +2389,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
       setCurrentTournament(latestTournament as Tournament);
 
-      console.log('[ASSIGN GROUPS] Latest tournament data from DB:', {
-        id: latestTournament.id,
-        name: latestTournament.name,
-        number_of_groups: (latestTournament as any).number_of_groups,
-        format: latestTournament.format
-      });
 
       if (isIndividualFormat) {
         const { assignPlayersToGroups, savePlayerGroupAssignments } = await import('../lib/groups');
@@ -2563,7 +2419,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               // Nome do grupo: para playoffs cruzados, usar A, B, C baseado na ordem da categoria
               const crossedGroupName = String.fromCharCode(65 + catIndex); // A, B, C
               
-              console.log('[ASSIGN GROUPS] Category:', category.name, 'Number of groups:', numberOfGroups, 'Teams:', categoryTeams.length, 'Crossed playoffs teams:', isCrossedPlayoffs, 'CrossedGroupName:', crossedGroupName);
               
               if (categoryTeams.length < minTeams) {
                 alert(`Categoria "${category.name}" precisa de pelo menos ${minTeams} equipas para ${numberOfGroups} grupo(s). Encontradas: ${categoryTeams.length}`);
@@ -2602,7 +2457,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             // Nome do grupo: para playoffs cruzados, usar A, B, C baseado na ordem da categoria
             const crossedGroupName = String.fromCharCode(65 + catIndex); // A, B, C
 
-            console.log('[ASSIGN GROUPS] Category:', category.name, 'Number of groups:', numberOfGroups, 'Players:', categoryPlayers.length, 'Crossed playoffs:', isCrossedPlayoffs, 'CrossedGroupName:', crossedGroupName);
 
             if (categoryPlayers.length < minPlayers) {
               alert(`Category "${category.name}" needs at least ${minPlayers} players for ${numberOfGroups} groups (minimum 4 per group for American format)`);
@@ -2629,7 +2483,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const numberOfGroups = (latestTournament as any).number_of_groups || 2;
           const minPlayers = numberOfGroups * 4;
 
-          console.log('[ASSIGN GROUPS] Using number_of_groups:', numberOfGroups);
 
           if (playersForDraw.length < minPlayers) {
             alert(`You need at least ${minPlayers} players for ${numberOfGroups} groups (minimum 4 per group for American format)`);
@@ -2659,7 +2512,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             const numberOfGroups = (category as any).number_of_groups || tournamentNumberOfGroups;
             const minTeams = numberOfGroups * 2;
 
-            console.log('[ASSIGN GROUPS] Category:', category.name, 'Number of groups:', numberOfGroups);
 
             if (categoryTeams.length < minTeams) {
               alert(`Category "${category.name}" needs at least ${minTeams} teams for ${numberOfGroups} groups`);
@@ -2685,7 +2537,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const numberOfGroups = (latestTournament as any).number_of_groups || 4;
           const minTeams = numberOfGroups * 2;
 
-          console.log('[ASSIGN GROUPS] Using number_of_groups:', numberOfGroups);
 
           if (teamsForDraw.length < minTeams) {
             alert(`You need at least ${minTeams} teams for ${numberOfGroups} groups`);
@@ -2709,7 +2560,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleGenerateIndividualFinal = async (categoryId: string) => {
-    console.log('[GENERATE_FINAL] Starting for category:', categoryId);
 
     const categoryMatches = matches.filter(m => m.category_id === categoryId);
     const semifinalMatches = categoryMatches.filter(m => m.round === 'semifinal');
@@ -2791,7 +2641,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   };
 
   const handleGenerateIndividualKnockout = async (categoryId: string) => {
-    console.log('[GENERATE_KNOCKOUT] Starting for category:', categoryId);
 
     const category = categories.find(c => c.id === categoryId);
     if (!category) {
@@ -2807,15 +2656,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const numberOfGroups = uniqueGroups.size;
     const knockoutStage = (category as any).knockout_stage || 'semifinals';
 
-    console.log(`[GENERATE_KNOCKOUT] Found ${numberOfGroups} groups, knockout stage: ${knockoutStage}`);
 
     const qualConfig = calculateQualificationConfig(numberOfGroups, knockoutStage, true);
     const { qualifiedPerGroup, extraBestNeeded, totalQualified, extraFromPosition } = qualConfig;
 
-    console.log(`[GENERATE_KNOCKOUT] Config: ${qualifiedPerGroup} per group + ${extraBestNeeded} best ${extraFromPosition}th = ${totalQualified} total`);
 
     if ((category as any).qualified_per_group !== qualifiedPerGroup) {
-      console.log(`[GENERATE_KNOCKOUT] Updating category qualified_per_group to ${qualifiedPerGroup}`);
       await supabase
         .from('tournament_categories')
         .update({ qualified_per_group: qualifiedPerGroup })
@@ -2902,7 +2748,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         });
 
       const topPlayers = sortedPlayers.slice(0, qualifiedPerGroup);
-      console.log(`[GENERATE_KNOCKOUT] Group ${groupName} top ${qualifiedPerGroup}:`, topPlayers.map(p => p.name));
       qualifiedPlayers.push(...topPlayers.map(p => p.id));
 
       if (extraBestNeeded > 0 && sortedPlayers.length >= extraFromPosition) {
@@ -2923,7 +2768,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       });
 
       const bestRunnersUp = runnersUpCandidates.slice(0, extraBestNeeded);
-      console.log(`[GENERATE_KNOCKOUT] Best ${extraFromPosition}th-place:`, bestRunnersUp.map(p => p.id));
       qualifiedPlayers.push(...bestRunnersUp.map(p => p.id));
     }
 
@@ -3295,7 +3139,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   // Função para gerar Playoffs Mistos para 2 CATEGORIAS (ex: FEM + MASC)
   // Estrutura: Semi 1 + Semi 2 + Final + 3º lugar = 4 jogos
   const handleGenerateMixedPlayoffs2Categories = async () => {
-    console.log('[MIXED_PLAYOFFS_2CAT] Starting...');
 
     if (categories.length !== 2) {
       alert(`Playoffs Mistos requer exatamente 2 categorias. Encontradas: ${categories.length}`);
@@ -3306,7 +3149,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
     const [catA, catB] = sortedCategories;
 
-    console.log(`[MIXED_PLAYOFFS_2CAT] Categorias: ${catA.name} (A), ${catB.name} (B)`);
 
     // Função para calcular ranking de uma categoria
     const getCategoryRankings = (categoryId: string) => {
@@ -3366,9 +3208,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const rankA = getCategoryRankings(catA.id);
     const rankB = getCategoryRankings(catB.id);
 
-    console.log(`[MIXED_PLAYOFFS_2CAT] Rankings:`);
-    console.log(`  ${catA.name}:`, rankA.map(p => p.name));
-    console.log(`  ${catB.name}:`, rankB.map(p => p.name));
 
     // Verificar se cada categoria tem pelo menos 4 jogadores
     if (rankA.length < 4 || rankB.length < 4) {
@@ -3489,7 +3328,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   // Função para avançar jogadores nos playoffs mistos (2 categorias)
   const handleAdvanceMixedPlayoffs = async () => {
-    console.log('[ADVANCE_MIXED] Checking for matches to advance...');
 
     const sf1 = matches.find(m => m.round === 'mixed_semifinal1');
     const sf2 = matches.find(m => m.round === 'mixed_semifinal2');
@@ -3563,7 +3401,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   // Função para gerar Playoffs Cruzados ENTRE CATEGORIAS (ex: M3, M4, M5 = grupos A, B, C)
   // Estrutura completa: R1 (3 jogos) + R2 Meias-Finais (3 jogos) + R3 Finais (2 jogos) = 8 jogos total
   const handleGenerateCrossedPlayoffsBetweenCategories = async () => {
-    console.log('[CROSSED_PLAYOFFS_CATEGORIES] Starting...');
 
     if (categories.length !== 3) {
       alert(`Playoffs Cruzados entre categorias requer exatamente 3 categorias. Encontradas: ${categories.length}`);
@@ -3574,7 +3411,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
     const [catA, catB, catC] = sortedCategories;
 
-    console.log(`[CROSSED_PLAYOFFS_CATEGORIES] Categorias: ${catA.name} (A), ${catB.name} (B), ${catC.name} (C)`);
 
     // Função para calcular ranking de uma categoria
     const getCategoryRankings = (categoryId: string) => {
@@ -3638,10 +3474,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const rankB = getCategoryRankings(catB.id);
     const rankC = getCategoryRankings(catC.id);
 
-    console.log(`[CROSSED_PLAYOFFS_CATEGORIES] Rankings:`);
-    console.log(`  ${catA.name}:`, rankA.map(p => p.name));
-    console.log(`  ${catB.name}:`, rankB.map(p => p.name));
-    console.log(`  ${catC.name}:`, rankC.map(p => p.name));
 
     // Verificar se cada categoria tem pelo menos 4 jogadores
     if (rankA.length < 4 || rankB.length < 4 || rankC.length < 4) {
@@ -3824,7 +3656,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   // Função para gerar Playoffs Cruzados ENTRE CATEGORIAS COM EQUIPAS (ex: M3, M4, M5 = grupos A, B, C)
   // Estrutura completa: R1 (3 jogos) + R2 Meias-Finais (3 jogos) + R3 Finais (2 jogos) = 8 jogos total
   const handleGenerateCrossedPlayoffsTeamsBetweenCategories = async () => {
-    console.log('[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Starting...');
 
     if (categories.length < 2 || categories.length > 3) {
       alert(`Playoffs Cruzados entre categorias requer 2 ou 3 categorias. Encontradas: ${categories.length}`);
@@ -3835,7 +3666,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
     const [catA, catB, catC] = sortedCategories;
 
-    console.log(`[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Categorias: ${catA.name} (A), ${catB.name} (B)${catC ? `, ${catC.name} (C)` : ''}`);
 
     // Função para calcular ranking de equipas de uma categoria
     const getCategoryTeamRankings = (categoryId: string) => {
@@ -3898,9 +3728,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const rankB = getCategoryTeamRankings(catB.id);
     const rankC = catC ? getCategoryTeamRankings(catC.id) : [];
 
-    console.log(`[CROSSED_PLAYOFFS_TEAMS_CATEGORIES] Rankings:`);
-    console.log(`  ${catA.name}:`, rankA.map(t => t.name));
-    console.log(`  ${catB.name}:`, rankB.map(t => t.name));
     if (catC) console.log(`  ${catC.name}:`, rankC.map(t => t.name));
 
     // Verificar se cada categoria tem pelo menos 4 equipas
@@ -4235,7 +4062,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   // Função para avançar meias-finais → final e 3°/4° lugar
   const autoAdvanceSemifinals = async (currentMatches: MatchWithTeams[]) => {
-    console.log('[AUTO_ADVANCE_SF] Checking semifinals...');
     
     const sfMatches = currentMatches
       .filter(m => m.round === 'semifinal')
@@ -4246,19 +4072,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const thirdPlaceMatch = currentMatches.find(m => m.round === '3rd_place');
     
     if (sfMatches.length < 2 || !finalMatch) {
-      console.log('[AUTO_ADVANCE_SF] Missing matches: SF=', sfMatches.length, 'Final=', !!finalMatch, '3rd=', !!thirdPlaceMatch);
       return;
     }
     
     // Verificar se ambas as meias-finais estão completas
     if (sfMatches[0].status !== 'completed' || sfMatches[1].status !== 'completed') {
-      console.log('[AUTO_ADVANCE_SF] Not both semifinals completed yet');
       return;
     }
     
     // Se a final já tem jogadores, não preencher novamente
     if (finalMatch.player1_individual_id) {
-      console.log('[AUTO_ADVANCE_SF] Final already populated');
       return;
     }
     
@@ -4298,9 +4121,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           player3_individual_id: sf2Result.loser.p1,
           player4_individual_id: sf2Result.loser.p2,
         }).eq('id', thirdPlaceMatch.id);
-        console.log('[AUTO_ADVANCE_SF] Final and 3rd place populated! Refreshing...');
       } else {
-        console.log('[AUTO_ADVANCE_SF] Final populated (no 3rd place match). Refreshing...');
       }
       await fetchTournamentData();
     } catch (err) {
@@ -4310,7 +4131,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   // Função para avançar automaticamente os playoffs cruzados
   const autoAdvanceCrossedPlayoffs = async (currentMatches: MatchWithTeams[]) => {
-    console.log('[AUTO_ADVANCE] Checking crossed playoffs...');
     const currentFormat = resolvedFormat || currentTournament?.format || tournament.format;
     const hasTeamBasedCrossedMatches = currentMatches.some(
       m => m.round?.startsWith('crossed_') && (!!m.team1_id || !!m.team2_id),
@@ -4458,7 +4278,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
   // Função para gerar Playoffs Cruzados (3 grupos: A, B, C) - dentro de uma categoria
   const handleGenerateCrossedPlayoffs = async (categoryId: string) => {
-    console.log('[CROSSED_PLAYOFFS] Starting for category:', categoryId);
 
     const category = categories.find(c => c.id === categoryId);
     if (!category) {
@@ -4813,7 +4632,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     }
 
     try {
-      console.log(`[DELETE-PLAYER] Iniciando remoção do jogador ${playerId} do torneio ${currentTournament.id}`);
 
       // 1) Verificar se o jogador existe e pertence a este torneio
       const { data: playerCheck, error: playerCheckError } = await supabase
@@ -4829,13 +4647,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
 
       if (!playerCheck) {
-        console.log('[DELETE-PLAYER] Jogador não encontrado neste torneio');
         alert('Jogador não encontrado neste torneio.');
         await fetchTournamentData();
         return;
       }
 
-      console.log(`[DELETE-PLAYER] Jogador encontrado: ${playerCheck.name}`);
 
       // 2) Encontrar e remover matches individuais que referenciam este jogador
       const [match1, match2, match3, match4] = await Promise.all([
@@ -4854,11 +4670,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const uniqueIndividualMatchIds = [...new Set(individualMatchIds)];
 
       if (uniqueIndividualMatchIds.length > 0) {
-        console.log(`[DELETE-PLAYER] Removendo ${uniqueIndividualMatchIds.length} match(es) individuais...`);
         for (const matchId of uniqueIndividualMatchIds) {
           await supabase.from('matches').delete().eq('id', matchId);
         }
-        console.log(`[DELETE-PLAYER] ✅ Matches individuais removidos`);
       }
 
       // 3) Encontrar equipas que referenciam este jogador
@@ -4874,7 +4688,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
       if (teamsWithPlayer.length > 0) {
         const teamIds = teamsWithPlayer.map(t => t.id);
-        console.log(`[DELETE-PLAYER] Encontradas ${teamsWithPlayer.length} equipa(s): ${teamsWithPlayer.map(t => t.name).join(', ')}`);
 
         // 3a) Remover matches que referenciam essas equipas (matches.team1_id/team2_id tem ON DELETE CASCADE,
         //     mas removemos explicitamente para garantir)
@@ -4889,27 +4702,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         ])];
 
         if (teamMatchIds.length > 0) {
-          console.log(`[DELETE-PLAYER] Removendo ${teamMatchIds.length} match(es) de equipas...`);
           for (const matchId of teamMatchIds) {
             await supabase.from('matches').delete().eq('id', matchId);
           }
-          console.log(`[DELETE-PLAYER] ✅ Matches de equipas removidos`);
         }
 
         // 3b) Remover as equipas
-        console.log(`[DELETE-PLAYER] Removendo ${teamsWithPlayer.length} equipa(s)...`);
         for (const team of teamsWithPlayer) {
           const { error: teamErr } = await supabase.from('teams').delete().eq('id', team.id);
           if (teamErr) {
             console.error(`[DELETE-PLAYER] Erro ao remover equipa ${team.id}:`, teamErr);
           } else {
-            console.log(`[DELETE-PLAYER] ✅ Equipa ${team.name} removida`);
           }
         }
       }
 
       // 4) Remover o jogador (com a migração CASCADE, equipas/matches restantes serão eliminados automaticamente)
-      console.log(`[DELETE-PLAYER] Removendo jogador: ${playerCheck.name} (${playerId})`);
 
       const { error } = await supabase
         .from('players')
@@ -4933,7 +4741,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         throw error;
       }
 
-      console.log(`[DELETE-PLAYER] ✅ Jogador ${playerCheck.name} removido com sucesso`);
       await fetchTournamentData();
     } catch (error: unknown) {
       console.error('Error deleting player:', error);
@@ -5137,7 +4944,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
       // Apagar apenas jogos nao terminados
       if (nonCompletedIds.length > 0) {
-        console.log(`[SCHEDULE] Removing ${nonCompletedIds.length} non-completed matches (preserving ${completedMatches.length} completed)`);
         const batchSize = 100;
         for (let i = 0; i < nonCompletedIds.length; i += batchSize) {
           const batch = nonCompletedIds.slice(i, i + batchSize);
@@ -5155,7 +4961,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         ? Math.max(...completedMatches.map(m => m.match_number || 0))
         : 0;
 
-      console.log(`[SCHEDULE] ${completedPairs.size} completed pairs preserved, next match_number starts at ${maxCompletedMatchNumber + 1}`);
 
       const numberOfCourts = currentTournament.number_of_courts || 2;
       const startDate = currentTournament.start_date || new Date().toISOString().split('T')[0];
@@ -5164,34 +4969,23 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const matchDuration = currentTournament.match_duration_minutes || 30;
       const dailySchedules = currentTournament.daily_schedules || [];
       
-      console.log('[SCHEDULE] ====================================');
       // Tournament format is the single source of truth
       const schedFormat = currentTournament.format;
       const schedRoundRobinType = currentTournament.round_robin_type;
 
-      console.log('[SCHEDULE] Generating schedule for format:', schedFormat, 'type:', schedRoundRobinType);
-      console.log('[SCHEDULE] Tournament settings from DB:');
-      console.log('[SCHEDULE]   - daily_start_time:', currentTournament.daily_start_time);
-      console.log('[SCHEDULE]   - daily_end_time:', currentTournament.daily_end_time);
-      console.log('[SCHEDULE]   - match_duration_minutes:', currentTournament.match_duration_minutes);
-      console.log('[SCHEDULE]   - daily_schedules:', currentTournament.daily_schedules);
-      console.log('[SCHEDULE] Using values:', { numberOfCourts, startDate, startTime, endTime, matchDuration, dailySchedules });
       
       // Identify outdoor courts from club_courts data
       const outdoorCourtIndices = new Set<number>();
       const courtNames: string[] = (currentTournament as any).court_names || [];
       if (currentTournament.club_id && courtNames.length > 0) {
         const { data: clubData } = await supabase.from('clubs').select('owner_id').eq('id', currentTournament.club_id).single();
-        console.log('[SCHEDULE] Club lookup:', currentTournament.club_id, '→ owner:', clubData?.owner_id);
         if (clubData) {
           const { data: courtData } = await supabase.from('club_courts').select('name, type').eq('user_id', clubData.owner_id).eq('is_active', true);
-          console.log('[SCHEDULE] Club courts from DB:', courtData?.map(c => `${c.name} (${c.type})`));
           if (courtData) {
             const courtTypeMap = new Map<string, string>();
             courtData.forEach(c => courtTypeMap.set(c.name, c.type || 'indoor'));
             courtNames.forEach((name, idx) => {
               const type = courtTypeMap.get(name) || 'unknown';
-              console.log(`[SCHEDULE] Court ${idx + 1}: "${name}" → type: ${type}`);
               if (type === 'outdoor') {
                 outdoorCourtIndices.add(idx + 1);
               }
@@ -5199,7 +4993,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
       }
-      console.log('[SCHEDULE] Outdoor court indices:', [...outdoorCourtIndices], outdoorCourtIndices.size > 0 ? '✅ Outdoor detection active' : '⚠️ No outdoor courts detected');
       
       // Helper: convert 0-based court index to court name
       const courtName = (idx: number) => courtNames[idx] || (idx + 1).toString();
@@ -5221,12 +5014,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const nextSlot = new Date(latestCompletedMs + matchDuration * 60000);
         effectiveStartDate = `${nextSlot.getFullYear()}-${String(nextSlot.getMonth() + 1).padStart(2, '0')}-${String(nextSlot.getDate()).padStart(2, '0')}`;
         effectiveStartTime = `${String(nextSlot.getHours()).padStart(2, '0')}:${String(nextSlot.getMinutes()).padStart(2, '0')}`;
-        console.log(`[SCHEDULE] Effective start after ${completedWithTimes.length} completed matches: ${effectiveStartDate} ${effectiveStartTime}`);
       }
       
       if (schedFormat === 'round_robin' && schedRoundRobinType === 'individual') {
         // Individual Round Robin (Americano SEM grupos) - todos jogam contra todos com parceiros rotativos
-        console.log('[SCHEDULE] Using American scheduler (individual round robin) with', individualPlayers.length, 'players');
         
         const playersForSchedule = individualPlayers.map(p => ({
           id: p.id,
@@ -5234,7 +5025,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }));
         
         const matchesPerPlayer = playersForSchedule.length - 1;
-        console.log('[SCHEDULE] American matchesPerPlayer:', matchesPerPlayer, '(all-vs-all: n-1 =', playersForSchedule.length, '- 1)');
 
         // Build completed matches for this category to seed the scheduler
         const completedForAmericano = completedMatches
@@ -5282,7 +5072,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         // Todos os jogadores juntos, cada jogo tem 1 Homem + 1 Mulher por equipa
         // Usa gender de player_accounts para separar jogadores
         // ================================================================
-        console.log('[SCHEDULE] MIXED AMERICAN (1H+1M vs 1H+1M): Generating mixed pairs schedule');
 
         // Fetch gender from player_accounts for all enrolled players
         const phones = individualPlayers
@@ -5313,7 +5102,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
 
-        console.log(`[SCHEDULE] MA: ${menPlayers.length} men, ${womenPlayers.length} women`);
 
         if (menPlayers.length < 2 || womenPlayers.length < 2) {
           alert(`O torneio Americano Misto precisa de pelo menos 2 homens e 2 mulheres. Tem ${menPlayers.length} homens e ${womenPlayers.length} mulheres.`);
@@ -5408,11 +5196,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           scheduled_time: knockoutTime.toISOString(), court: courtName(0), status: 'scheduled'
         });
 
-        console.log(`[SCHEDULE] MIXED AMERICAN: Total ${matchesToInsert.length} matches (${mixedMatches.length} group + 2SF + Final)`);
 
       } else if (schedFormat === 'individual_groups_knockout') {
         // Americano COM grupos + eliminatórias
-        console.log('[SCHEDULE] Using Individual Groups Knockout scheduler with', individualPlayers.length, 'players, format:', schedFormat);
         
         const groupNames = [...new Set(individualPlayers.map(p => p.group_name).filter(Boolean))];
           const numberOfGroups = groupNames.length || Math.min(Math.floor(individualPlayers.length / 4), 4);
@@ -5429,7 +5215,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const qualConfig = calculateQualificationConfig(numberOfGroups, categoryKnockoutStage, true);
           const qualifiedPerGroup = categoryQualifiedPerGroup ?? qualConfig.qualifiedPerGroup;
           
-          console.log(`[SCHEDULE] Individual Groups Knockout: ${numberOfGroups} groups, ${qualifiedPerGroup} qualified per group, stage: ${categoryKnockoutStage}`);
 
           // Build list of completed individual matches for this category to pass to scheduler
           const catId = categories.length > 0 ? categories[0].id : null;
@@ -5473,7 +5258,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             });
             for (const [groupName, playerIds] of groupAssignments) {
               await supabase.from('players').update({ group_name: groupName }).in('id', playerIds);
-              console.log(`[SCHEDULE] Saved group "${groupName}" to ${playerIds.length} players in DB`);
             }
           }
 
@@ -5551,18 +5335,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const knockoutQualConfig = calculateQualificationConfig(groupCount, categoryKnockoutStage, true);
           const totalQualifiedPlayers = knockoutQualConfig.totalQualified;
           
-          console.log(`[SCHEDULE] Knockout: ${groupCount} groups, ${qualifiedPerGroup} qualified per group, ${totalQualifiedPlayers} total qualified, stage: ${categoryKnockoutStage}`);
 
           // Calculate knockout structure dynamically
           // Each match has 4 players (2v2), so we need totalQualifiedPlayers / 4 matches in first round
           const numFirstRoundMatches = Math.ceil(totalQualifiedPlayers / 4);
           
-          console.log(`[SCHEDULE] Knockout structure: ${numFirstRoundMatches} first-round matches (${totalQualifiedPlayers} players)`);
 
           if (categoryKnockoutStage === 'round_of_16') {
             // 16 jogadores → 4 oitavos → 2 meias → 3° + final (sem quartos)
             const numRo16 = numFirstRoundMatches;
-            console.log(`[SCHEDULE] Creating ${numRo16} round_of_16 matches (${totalQualifiedPlayers} players)`);
             
             for (let i = 0; i < numRo16; i++) {
               addKoMatch('round_of_16', courtName(i % numberOfCourts));
@@ -5570,7 +5351,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             advanceKoTime();
 
             const numSemis = Math.max(2, Math.ceil(numRo16 / 2));
-            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (após oitavos)`);
             
             for (let i = 0; i < numSemis; i++) {
               addKoMatch('semifinal', courtName(i % numberOfCourts));
@@ -5579,7 +5359,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           } else if (categoryKnockoutStage === 'quarterfinals') {
             // Quarterfinals → Semifinals → 3rd place + Final
             const numQuarters = numFirstRoundMatches;
-            console.log(`[SCHEDULE] Creating ${numQuarters} quarterfinal matches`);
             
             for (let i = 0; i < numQuarters; i++) {
               addKoMatch('quarterfinal', courtName(i % numberOfCourts));
@@ -5587,20 +5366,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             advanceKoTime();
 
             const numSemis = Math.max(1, Math.ceil(numQuarters / 2));
-            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (from ${numQuarters} quarterfinal winners = ${numQuarters * 2} players)`);
             
             for (let i = 0; i < numSemis; i++) {
               addKoMatch('semifinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
 
-            console.log(`[SCHEDULE] Creating 1 consolation match for QF losers`);
             addKoMatch('consolation', courtName(numSemis % numberOfCourts));
             advanceKoTime();
           } else if (categoryKnockoutStage === 'semifinals') {
             // Direct to semifinals (no quarters)
             const numSemis = numFirstRoundMatches;
-            console.log(`[SCHEDULE] Creating ${numSemis} semifinal matches (no quarters)`);
             
             for (let i = 0; i < numSemis; i++) {
               addKoMatch('semifinal', courtName(i % numberOfCourts));
@@ -5608,7 +5384,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             advanceKoTime();
           } else if (categoryKnockoutStage === 'final') {
             // Direct to final (no quarters, no semis)
-            console.log(`[SCHEDULE] Creating final match only`);
           }
 
           const hasThirdPlace = categories.length > 0 ? ((categories[0] as any).has_third_place_match ?? true) : true;
@@ -5617,14 +5392,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
           if (hasThirdPlace && categoryKnockoutStage !== 'final') {
             addKoMatch('3rd_place', courtName(1 % numberOfCourts));
-            console.log('[SCHEDULE] Added 3rd/4th place match');
           }
 
-          console.log(`[SCHEDULE] Individual Groups Knockout: ${groupOnlyMatches.length} group matches + knockout (stage: ${categoryKnockoutStage}, 3rd/4th: ${hasThirdPlace}). Total: ${matchesToInsert.length}`);
         
       } else if (schedFormat === 'round_robin' && schedRoundRobinType === 'teams') {
         // Equipas Round Robin - por categoria se existirem categorias
-        console.log('[SCHEDULE] Using Teams Round Robin scheduler with', teams.length, 'teams');
         
         // Verificar se há categorias com equipas
         const teamsWithCategory = teams.filter(t => t.category_id);
@@ -5632,7 +5404,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         if (hasCategories) {
           // Round Robin POR CATEGORIA - usando método do círculo para rondas perfeitas
-          console.log('[SCHEDULE] Categories detected! Generating round robin per category (circle method)');
           let globalMatchNumber = 1;
           
           const [startHour, startMinute] = startTime.split(':').map(Number);
@@ -5650,7 +5421,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           for (const category of categories) {
             const categoryTeams = teams.filter(t => t.category_id === category.id);
-            console.log(`[SCHEDULE] Category "${category.name}": ${categoryTeams.length} teams`);
             
             if (categoryTeams.length < 2) {
               console.warn(`[SCHEDULE] Category "${category.name}" has fewer than 2 teams, skipping`);
@@ -5797,13 +5567,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           // Log outdoor distribution
           if (hasOutdoorCourts) {
-            console.log('[SCHEDULE] Outdoor court distribution per team:');
             teamOutdoorCount.forEach((count, teamId) => {
-              console.log(`[SCHEDULE]   Team ${teamId.substring(0, 8)}: ${count} outdoor games`);
             });
           }
           
-          console.log(`[SCHEDULE] Scheduled ${totalMatchCount} matches across categories using circle method`);
           
         } else {
           // Sem categorias - round robin normal (todas vs todas)
@@ -5837,12 +5604,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
       } else if (schedFormat === 'crossed_playoffs_teams') {
         // PLAYOFFS CRUZADOS PARA EQUIPAS: Gerar jogos de grupo para cada categoria + 8 matches knockout (R1+R2+R3)
-        console.log('[SCHEDULE] ====================================');
-        console.log('[SCHEDULE] CROSSED PLAYOFFS TEAMS FORMAT DETECTED');
-        console.log('[SCHEDULE] Using Crossed Playoffs Teams scheduler with', teams.length, 'teams');
-        console.log('[SCHEDULE] Number of courts:', numberOfCourts);
-        console.log('[SCHEDULE] Number of categories:', categories.length);
-        console.log('[SCHEDULE] Crossed Playoffs Teams mode - generating group matches for categories');
         
         const sortedCategories = [...categories].sort((a, b) => a.name.localeCompare(b.name));
         
@@ -5870,7 +5631,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             categoryCourtAssignments.set(category.id, courts);
           }
           
-          console.log(`[SCHEDULE] Category ${sortedCategories[catIdx].name} FIXED courts: [${categoryCourtAssignments.get(category.id)!.join(', ')}]`);
         }
         
         // 2. Gerar pares round-robin para cada categoria
@@ -5888,7 +5648,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const categoryTeams = teams.filter(t => t.category_id === category.id);
           const groupName = String.fromCharCode(65 + catIdx); // A, B, C
           
-          console.log(`[SCHEDULE] Category ${category.name} (Group ${groupName}): ${categoryTeams.length} teams`);
           
           if (categoryTeams.length < 2) {
             console.warn(`[SCHEDULE] Category ${category.name} has fewer than 2 teams, skipping`);
@@ -5910,10 +5669,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           categoryGroupMatches.set(category.id, catMatches);
           totalGroupMatchCount += catMatches.length;
-          console.log(`[SCHEDULE] Category ${category.name}: ${categoryTeams.length} teams, ${catMatches.length} group matches`);
         }
         
-        console.log(`[SCHEDULE] Total group matches from all categories: ${totalGroupMatchCount}`);
         
         // 3. Agendar jogos de grupo em paralelo - cada categoria nos seus campos FIXOS
         matchesToInsert = [];
@@ -5943,7 +5700,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const [startHr, startMin] = daySchedule.start.split(':').map(Number);
         let currentTime = new Date(startYear, startMonth - 1, startDay, startHr, startMin, 0, 0);
         
-        console.log(`[SCHEDULE] Starting group matches on ${currentDateStr} at ${daySchedule.start} (ends ${daySchedule.end})`);
         
         let slotNumber = 0;
         const MAX_SLOTS = 100; // Segurança contra loops infinitos
@@ -5971,7 +5727,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const minutes = String(currentTime.getMinutes()).padStart(2, '0');
           const scheduledTimeStr = currentTime.toISOString();
           
-          console.log(`[SCHEDULE] Slot ${slotNumber}: ${hours}:${minutes} on ${day}/${month}/${year}`);
           
           // Para CADA categoria, preencher os seus campos FIXOS
           for (const cat of sortedCategories) {
@@ -5994,7 +5749,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   teamsPlayingThisSlot.add(m.team2_id);
                   
                   const courtName = catCourts[courtIdx];
-                  console.log(`[SCHEDULE]   Court ${courtName}: ${m.round} - Team ${m.team1_id} vs Team ${m.team2_id}`);
                   
                   matchesToInsert.push({
                     tournament_id: currentTournament.id,
@@ -6050,11 +5804,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
         }
         
-        console.log(`[SCHEDULE] Scheduled ${matchesToInsert.length} group matches across ${slotNumber} time slots`);
         
         // 3. AGORA GERAR AUTOMATICAMENTE OS PLAYOFFS CRUZADOS COM TBD
         // Ler configurações das categorias para determinar número de jogos
-        console.log('[SCHEDULE] Generating Crossed Playoffs Teams matches with TBD (v2)...');
         
         // Calcular número total de equipas qualificadas baseado nas configurações das categorias
         // Fallback: categoria → torneio → auto-cálculo baseado em número de equipas
@@ -6078,7 +5830,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           } else {
             const ksGuess = catKS || tournamentKS || 'semifinals';
             qualifiedPerGroup = calculateTeamQualificationConfig(categories.length, ksGuess).qualifiedPerGroup;
-            console.log(`[SCHEDULE] WARNING: qualified_per_group not set, derived ${qualifiedPerGroup} from knockout_stage=${ksGuess}. Please re-save categories!`);
           }
           
           if (catKS && catKS !== 'null') {
@@ -6091,15 +5842,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             if (totalQ >= 8) knockoutStage = 'quarterfinals';
             else if (totalQ >= 4) knockoutStage = 'semifinals';
             else knockoutStage = 'final';
-            console.log(`[SCHEDULE] WARNING: knockout_stage not set, auto-calculated to ${knockoutStage}. Please re-save categories!`);
           }
           
           totalQualifiedTeams = categories.length * qualifiedPerGroup;
           totalTeamsInCategories = categories.reduce((sum, c) => sum + teams.filter(t => t.category_id === c.id).length, 0);
           nonQualifiedTeams = Math.max(totalTeamsInCategories - totalQualifiedTeams, 0);
-          console.log(`[SCHEDULE] Categories config: ${categories.length} categories, ${qualifiedPerGroup} qualified per category, knockout_stage: ${knockoutStage}`);
-          console.log(`[SCHEDULE] Total qualified teams: ${totalQualifiedTeams}`);
-          console.log(`[SCHEDULE] Total teams: ${totalTeamsInCategories}, Non-qualified teams: ${nonQualifiedTeams}`);
         }
         
         // Calcular número de jogos na primeira ronda baseado no knockout_stage
@@ -6134,7 +5881,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           numR2Matches = 0;
         }
         
-        console.log(`[SCHEDULE] Knockout structure: R1=${numR1Matches} matches (quarters), R2=${numR2Matches} matches (semis), R3=${numR3Matches} matches (final+3rd), R4=${numR4Matches} matches (5-6), R5=${numR5Matches} matches (7-8)`);
         
         // Calcular o tempo para começar os playoffs (depois do último jogo de grupo)
         let playoffsTime = currentTime;
@@ -6338,18 +6084,15 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
         
         const totalPlayoffMatches = numR1Matches + numR2Matches + numR3Matches + numR4Matches + numR5Matches;
-        console.log(`[SCHEDULE] Crossed Playoffs Teams: Added ${totalPlayoffMatches} playoff matches (R1:${numR1Matches} quarters + R2:${numR2Matches} semis + R3:${numR3Matches} final+3rd + R4:${numR4Matches} 5-6 + R5:${numR5Matches} 7-8) with TBD. Total matches: ${matchesToInsert.length}`);
         
       } else {
         // Torneios de equipas standard (round_robin, single_elimination, groups_knockout)
-        console.log('[SCHEDULE] Using standard Tournament scheduler with', teams.length, 'teams');
         
         // Se há categorias e não é round_robin puro, gerar quadros separados por categoria
         const hasCategories = categories.length > 0 && teams.some(t => t.category_id);
         const isRoundRobin = schedFormat === 'round_robin' && !schedRoundRobinType;
         
         if (hasCategories && !isRoundRobin) {
-          console.log('[SCHEDULE] Generating separate brackets for', categories.length, 'categories using multiCategoryScheduler');
           
           // Construir os court names do torneio
           const tournamentCourtNames: string[] = (currentTournament as any).court_names || [];
@@ -6362,7 +6105,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             .filter(category => {
               const categoryTeams = teams.filter(t => t.category_id === category.id);
               if (categoryTeams.length === 0) {
-                console.log(`[SCHEDULE] Skipping category ${category.name} - no teams`);
                 return false;
               }
               return true;
@@ -6391,10 +6133,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   id: `TBD_${category.id}_${i}`,
                   name: `TBD ${i + 1}`
                 }));
-                console.log(`[SCHEDULE] Category ${category.name}: creating ${numKnockoutTeams} TBD knockout teams for ${catKnockoutStage}`);
               }
               
-              console.log(`[SCHEDULE] Category ${category.name}: ${categoryTeams.length} teams, format: ${catFormat}, knockout: ${catKnockoutStage}, schedule entries: ${catSchedule?.length || 0}, duration: ${catMatchDuration || matchDuration}min`);
               
               return {
                 categoryId: category.id,
@@ -6448,9 +6188,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             });
           });
           
-          console.log(`[SCHEDULE] Multi-category scheduler produced ${matchesToInsert.length} matches across ${categories.length} categories`);
         } else {
-          console.log('[SCHEDULE] Generating single bracket for all teams');
           const tournamentKnockoutStage = (currentTournament as any).knockout_stage || 'semifinals';
           const teamMatches = generateTournamentSchedule(
             teams,
@@ -6500,7 +6238,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           ].filter(Boolean).sort().join('|'))
       );
       if (completedIndividualCombos.size > 0) {
-        console.log(`[SCHEDULE] ${completedIndividualCombos.size} completed individual match combinations to skip`);
       }
       
       const beforeFilter = matchesToInsert.length;
@@ -6519,7 +6256,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         return !completedPairs.has(key);
       });
       if (matchesToInsert.length < beforeFilter) {
-        console.log(`[SCHEDULE] Filtered out ${beforeFilter - matchesToInsert.length} matches (pairs already completed)`);
       }
 
       // Ajustar match_number para nao colidir com completed
@@ -6529,7 +6265,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         });
       }
 
-      console.log('[SCHEDULE] Generated', matchesToInsert.length, 'matches');
       
       if (matchesToInsert.length > 0) {
         // Pre-insert validation: block inserts that violate structural rules
@@ -6575,7 +6310,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
         const { error } = await supabase.from('matches').insert(matchesToInsert);
         if (error) throw error;
-        console.log('[SCHEDULE] Inserted matches into database');
       }
       
       await fetchTournamentData();
@@ -6721,11 +6455,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     try {
       // 1. Calculate final positions
       if (isIndividualFormat()) {
-        console.log('[FINALIZE] Calculating individual final positions...');
         // Se o torneio tem categorias, calcular posições para TODAS as categorias
         if (categories.length > 0) {
           for (const cat of categories) {
-            console.log('[FINALIZE] Calculating positions for category:', cat.name, '(', cat.id, ')');
             await calculateIndividualFinalPositions(tournament.id, cat.id);
           }
           // Também calcular para jogadores sem categoria (se existirem)
@@ -6736,7 +6468,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             .is('category_id', null)
             .limit(1);
           if (playersWithoutCategory && playersWithoutCategory.length > 0) {
-            console.log('[FINALIZE] Calculating positions for players without category');
             await calculateIndividualFinalPositions(tournament.id, 'no-category');
           }
         } else {
@@ -6745,7 +6476,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       } else if (currentTournament.format === 'crossed_playoffs_teams') {
         // Crossed Playoffs Teams: positions determined by bracket results
-        console.log('[FINALIZE] Calculating crossed_playoffs_teams positions from bracket...');
 
         const { data: allCompletedMatches } = await supabase
           .from('matches')
@@ -6776,7 +6506,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               const { winner, loser } = getMatchWinnerLoser(match);
               if (winner) teamPositions.set(winner, pm.winnerPos);
               if (loser) teamPositions.set(loser, pm.loserPos);
-              console.log(`[FINALIZE] ${pm.round}: winner=${winner} (${pm.winnerPos}°), loser=${loser} (${pm.loserPos}°)`);
             }
           }
 
@@ -6804,10 +6533,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
           }
 
-          console.log('[FINALIZE] Updated', teamPositions.size, 'team positions from bracket results');
         }
       } else if (currentTournament.format === 'groups_knockout') {
-        console.log('[FINALIZE] Calculating groups_knockout positions from knockout bracket...');
 
         const { data: allCompletedMatches } = await supabase
           .from('matches')
@@ -6843,7 +6570,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               const { winner, loser } = getMatchWL(match);
               if (winner && !teamPositions.has(winner)) teamPositions.set(winner, pm.winnerPos);
               if (loser && !teamPositions.has(loser)) teamPositions.set(loser, pm.loserPos);
-              console.log(`[FINALIZE] ${pm.round}: winner=${winner} (${pm.winnerPos}°), loser=${loser} (${pm.loserPos}°)`);
             }
           }
 
@@ -6916,11 +6642,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             }
           }
 
-          console.log('[FINALIZE] Updated', teamPositions.size, 'team positions from groups_knockout bracket');
         }
       } else {
         // For other team tournaments, calculate team positions from match results
-        console.log('[FINALIZE] Calculating team final positions from match results...');
         
         // Get completed group/round_robin matches
         const { data: completedMatches } = await supabase
@@ -6933,7 +6657,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           m.round === 'round_robin' || m.round?.startsWith('group_')
         ) || [];
 
-        console.log('[FINALIZE] Group/Round robin matches found:', groupMatches.length);
 
         // Get all teams
         const { data: tournamentTeams } = await supabase
@@ -7012,7 +6735,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           const teamOrder = new Map(tournamentTeams.map((t, i) => [t.id, i]));
           const sortedStats = sortTeamsByTiebreaker(teamStatsForSort, matchDataForSort, teamOrder);
 
-          console.log('[FINALIZE] Team standings (com confronto direto):', sortedStats);
 
           for (let i = 0; i < sortedStats.length; i++) {
             const position = i + 1;
@@ -7022,7 +6744,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               .eq('id', sortedStats[i].id);
           }
 
-          console.log('[FINALIZE] Updated', teamStats.length, 'team positions');
 
           // Propagate final_position to players (each player inherits team position)
           for (const team of tournamentTeams) {
@@ -7036,14 +6757,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               }
             }
           }
-          console.log('[FINALIZE] Propagated positions to players');
         } else {
-          console.log('[FINALIZE] No teams or matches found');
         }
       }
 
       // 2. Update tournament status to completed FIRST
-      console.log('[FINALIZE] Updating tournament status to completed...');
       const { error } = await supabase
         .from('tournaments')
         .update({ status: 'completed' })
@@ -7052,15 +6770,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (error) throw error;
 
       // 3. Now update league standings (after status is 'completed')
-      console.log('[FINALIZE] Updating league standings...');
       await updateLeagueStandings(tournament.id);
 
       // 4. Process ratings ONLY for matches in THIS tournament (not all tournaments!)
-      console.log('[FINALIZE] Processing player ratings for tournament:', tournament.id);
       let ratingInfo = '';
       try {
         const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
-        console.log('[FINALIZE] Rating processing result:', ratingResult);
         ratingInfo = `\n\n📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.errors} erros de ${ratingResult.total} jogos`;
       } catch (ratingErr) {
         console.error('[FINALIZE] Error processing ratings:', ratingErr);
@@ -7068,15 +6783,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
 
       // 5. Award reward points to all tournament participants
-      console.log('[FINALIZE] Awarding tournament reward points...');
       let rewardInfo = '';
       try {
         const rewardResult = await awardTournamentRewardPoints(tournament.id);
-        console.log('[FINALIZE] Reward result:', rewardResult);
         if (rewardResult.awarded > 0 || rewardResult.skipped > 0 || rewardResult.errors > 0) {
           rewardInfo = `\n\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
           if (rewardResult.details.length > 0) {
-            console.log('[FINALIZE] Reward details:', rewardResult.details.join('\n'));
           }
         } else if (rewardResult.details.length > 0) {
           rewardInfo = `\n\nℹ️ Rewards: ${rewardResult.details[0]}`;
@@ -8385,8 +8097,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                   });
                                   
                                   const groupNames = Object.keys(byGroup).sort();
-                                  console.log('[ASSIGN-QUALIFIED] Groups:', groupNames);
-                                  console.log('[ASSIGN-QUALIFIED] Standings by group:', byGroup);
                                   
                                   // Atribuir às fases finais
                                   const semiFinals = catConfrontations.filter(c => c.round === 'semi_final');
