@@ -161,8 +161,6 @@ Deno.serve(async (req: Request) => {
       const defaultPassword = `Player${last4Digits}!`;
 
       console.log('[DEBUG] Account phone:', accountPhone);
-      console.log('[DEBUG] Last 4 digits:', last4Digits);
-      console.log('[DEBUG] Default password:', defaultPassword);
 
       // Check if an auth user with this email already exists
       const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
@@ -246,7 +244,6 @@ Deno.serve(async (req: Request) => {
             .upsert({ user_id: newUser.user.id, role: 'player', logo_url: null }, { onConflict: 'user_id' });
 
           console.log('[DEBUG] Created auth user:', newUser.user.id);
-          console.log('[DEBUG] Password set to:', defaultPassword);
         }
       }
     }

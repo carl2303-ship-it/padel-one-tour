@@ -217,8 +217,6 @@ Deno.serve(async (req: Request) => {
     const standardPassword = `Player${last4Digits}!`;
     
     console.log('[DEBUG] Account phone:', accountPhone);
-    console.log('[DEBUG] Last 4 digits:', last4Digits);
-    console.log('[DEBUG] Generated password:', standardPassword);
     console.log('[DEBUG] User ID:', playerAccount.user_id);
 
     // Update the user's password using admin client
@@ -244,7 +242,6 @@ Deno.serve(async (req: Request) => {
     // by confirming the email matches
     const finalEmail = authEmail || playerAccount.email;
     console.log('[DEBUG] Login should use email:', finalEmail);
-    console.log('[DEBUG] Login should use password:', standardPassword);
 
     return new Response(
       JSON.stringify({
