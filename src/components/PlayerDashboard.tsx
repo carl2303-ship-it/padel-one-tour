@@ -1548,6 +1548,7 @@ export default function PlayerDashboard() {
                       <p className="text-gray-500">{t.playerDashboard.noStandingsData}</p>
                     </div>
                   ) : (
+                    <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead className="bg-gray-50 sticky top-0">
                         <tr>
@@ -1587,6 +1588,7 @@ export default function PlayerDashboard() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </>
               )}
@@ -1678,6 +1680,7 @@ export default function PlayerDashboard() {
                   <p className="text-gray-500">{t.playerDashboard.noStandingsData}</p>
                 </div>
               ) : (
+                <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
@@ -1723,6 +1726,7 @@ export default function PlayerDashboard() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           </div>
