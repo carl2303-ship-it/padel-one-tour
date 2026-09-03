@@ -6,7 +6,6 @@ import { useAuth } from '../lib/authContext';
 import RichTextEditor from './RichTextEditor';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
-import { processAllUnratedMatches } from '../lib/ratingEngine';
 import { parseClubIds } from '../lib/parseClubIds';
 import { geocodeAddress } from '../lib/geocoding';
 import { notifyTournamentPlayers } from '../lib/notifyTournament';
@@ -55,7 +54,6 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
     ) as 'finals' | 'swiss' | 'placement',
   });
   const [loading, setLoading] = useState(false);
-  const [reprocessLoading, setReprocessLoading] = useState(false);
   const [error, setError] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>(tournament.image_url || '');
@@ -1348,44 +1346,15 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
             <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Acções avançadas</p>
             <button
               type="button"
-              disabled={reprocessLoading}
-              onClick={async () => {
-                if (!confirm('⚠️ ATENÇÃO: Isto vai recalcular os ratings de TODOS os torneios!\n\n1. Reset de todos os contadores (rated_matches, wins, losses)\n2. Reprocessar todos os jogos por ordem cronológica\n\nOs níveis base que definiste serão mantidos.\n\nContinuar?')) return;
-                setReprocessLoading(true);
-                try {
-                  const { error: resetPlayersErr } = await supabase
-                    .from('player_accounts')
-                    .update({ rated_matches: 0, wins: 0, losses: 0 })
-                    .gte('id', '00000000-0000-0000-0000-000000000000');
-                  if (resetPlayersErr) console.error('[REPROCESS-ALL] Error resetting player counters:', resetPlayersErr);
-
-                  const { error: resetMatchesErr } = await supabase
-                    .from('matches')
-                    .update({ rating_processed: false })
-                    .eq('status', 'completed');
-                  if (resetMatchesErr) console.error('[REPROCESS-ALL] Error resetting match flags:', resetMatchesErr);
-
-                  const ratingResult = await processAllUnratedMatches(undefined, (current, total, info) => {
-                    console.log(`[REPROCESS-ALL] ${current}/${total}: ${info}`);
-                  });
-
-                  let msg = `Recálculo GLOBAL concluído!\n\n`;
-                  msg += `Jogos processados: ${ratingResult.processed}\n`;
-                  msg += `Jogos saltados: ${ratingResult.skipped}\n`;
-                  msg += `Erros: ${ratingResult.errors}\n`;
-                  msg += `Total de jogos: ${ratingResult.total}`;
-                  alert(msg);
-                } catch (err) {
-                  console.error('[REPROCESS-ALL] Error:', err);
-                  alert('Erro ao recalcular. Ver consola para detalhes.');
-                } finally {
-                  setReprocessLoading(false);
-                }
+              disabled
+              title="Desativado temporariamente: esta operação reseta contadores e reprocessa ratings de TODOS os torneios da plataforma sem desfazer com segurança os deltas já aplicados anteriormente (duplicava rating a cada execução). Requer correcção arquitetural antes de ser reactivado."
+              onClick={() => {
+                alert('Esta função foi desativada temporariamente por segurança: recalculava ratings de TODOS os torneios sem desfazer os deltas anteriores, duplicando pontos a cada execução. Contacta o suporte técnico se precisares de recalcular ratings.');
               }}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-300 text-gray-500 rounded-lg cursor-not-allowed opacity-60"
             >
               <TrendingUp className="w-4 h-4" />
-              {reprocessLoading ? 'A recalcular...' : 'Recalcular TODOS os Torneios'}
+              Recalcular TODOS os Torneios (desativado)
             </button>
           </div>
 
