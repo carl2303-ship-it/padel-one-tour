@@ -16,7 +16,7 @@
  */
 
 import { supabase } from './supabase'
-import { logLevelChange } from './levelHistory'
+import { reverseRatingForSource } from './levelHistory'
 
 // ============================================
 // Types
@@ -448,20 +448,23 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
       const currentReliability = cache?.get(rp.id)?.currentReliability ?? acctData?.level_reliability_percent ?? 0
       const protectedReliability = calculateProtectedReliability(formulaReliability, currentReliability)
 
-      const levelBefore = acctData?.level ?? (rp.rating - rp.delta)
-
       const { error } = await supabase.rpc('update_player_rating', {
         p_player_account_id: rp.id,
         p_new_level: rp.rating,
         p_new_reliability: protectedReliability,
         p_match_won: rp.won,
+        p_source_id: matchId,
+        p_match_type: 'tournament',
       })
 
       if (error) {
         console.error('[RatingEngine] Error updating player:', rp.id, error)
         updateErrors++
       } else {
-        logLevelChange(rp.id, levelBefore, rp.rating, rp.delta, 'tournament', rp.won)
+        // Nota: o histórico (player_level_history) já é gravado dentro do RPC
+        // update_player_rating com o source_id do jogo — não duplicar aqui
+        // com uma segunda chamada client-side (isso impedia reverseRatingForSource
+        // de encontrar/desfazer o delta certo ao reprocessar).
         if (cache) {
           cache.set(rp.id, {
             id: rp.id,
@@ -508,6 +511,100 @@ function getKFactorForLog(matches: number): number {
   if (matches < 40) return 0.15
   if (matches < 60) return 0.10
   return 0.06
+}
+
+/**
+ * Desfaz o rating aplicado anteriormente para este jogo (via histórico) e
+ * volta a aplicá-lo com os scores actuais.
+ *
+ * Segurança: se o jogo já tinha sido processado antes mas não foi possível
+ * encontrar/desfazer o histórico correspondente (source_id em falta — ex.:
+ * jogos processados antes desta função existir), o reprocessamento é
+ * BLOQUEADO em vez de reaplicar um novo delta em cima do nível já alterado
+ * (o que duplicaria/corromperia nível, jogos e V/D a cada reprocessamento).
+ */
+export async function reprocessMatchRating(matchId: string, cache?: PlayerCache): Promise<RatingResult | null> {
+  const { data: match } = await supabase
+    .from('matches')
+    .select('id, rating_processed')
+    .eq('id', matchId)
+    .maybeSingle()
+
+  const wasProcessed = !!match?.rating_processed
+  const reversed = await reverseRatingForSource(matchId)
+  console.log(`[RatingEngine] Reversed ${reversed} history rows for match ${matchId}`)
+
+  if (wasProcessed && reversed === 0) {
+    console.error(`[RatingEngine] BLOCKED reprocess for match ${matchId}: already rated but no history found to reverse safely.`)
+    return { skipped: true, message: 'Reprocessamento bloqueado: histórico do jogo não encontrado para reverter em segurança.' }
+  }
+
+  await supabase
+    .from('matches')
+    .update({ rating_processed: false })
+    .eq('id', matchId)
+
+  return processMatchRating(matchId, cache)
+}
+
+/**
+ * Reprocessa (com reversão segura por jogo) todos os jogos completos de um
+ * torneio, por ordem cronológica. Substitui o padrão antigo de "reset em
+ * massa da flag + processAllUnratedMatches", que reaplicava o delta em cima
+ * do nível já alterado sem nunca o desfazer primeiro.
+ */
+export async function reprocessTournamentRatings(
+  tournamentId: string,
+  onProgress?: (current: number, total: number, info: string) => void,
+): Promise<{ processed: number; skipped: number; blocked: number; errors: number; total: number }> {
+  const { data: matches, error } = await supabase
+    .from('matches')
+    .select('id, scheduled_time')
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .order('scheduled_time', { ascending: true })
+
+  if (error) {
+    console.error('[RatingEngine] Error fetching tournament matches:', error)
+    return { processed: 0, skipped: 0, blocked: 0, errors: 1, total: 0 }
+  }
+
+  if (!matches || matches.length === 0) {
+    return { processed: 0, skipped: 0, blocked: 0, errors: 0, total: 0 }
+  }
+
+  const cache: PlayerCache = new Map()
+  let processed = 0
+  let skipped = 0
+  let blocked = 0
+  let errors = 0
+
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i]
+    try {
+      const result = await reprocessMatchRating(m.id, cache)
+      if (!result) {
+        errors++
+      } else if (result.skipped) {
+        if (result.message?.startsWith('Reprocessamento bloqueado')) {
+          blocked++
+        } else {
+          skipped++
+        }
+      } else {
+        processed++
+      }
+    } catch (err) {
+      console.error('[RatingEngine] Error reprocessing match:', m.id, err)
+      errors++
+    }
+
+    if ((i + 1) % 5 === 0 || i === matches.length - 1) {
+      onProgress?.(i + 1, matches.length, `Processados: ${processed} | Saltados: ${skipped} | Bloqueados: ${blocked} | Erros: ${errors}`)
+    }
+  }
+
+  return { processed, skipped, blocked, errors, total: matches.length }
 }
 
 export async function processAllUnratedMatches(

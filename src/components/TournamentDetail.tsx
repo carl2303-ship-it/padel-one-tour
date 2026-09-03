@@ -22,7 +22,7 @@ import ManageCategoriesModal from './ManageCategoriesModal';
 import ManageInvitesModal from './ManageInvitesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
-import { processAllUnratedMatches, awardTournamentRewardPoints } from '../lib/ratingEngine';
+import { processAllUnratedMatches, reprocessTournamentRatings, awardTournamentRewardPoints } from '../lib/ratingEngine';
 import { generateTournamentSchedule } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
@@ -7245,17 +7245,13 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   if (!confirm('Reprocessar ratings e rewards para todos os jogos deste torneio?')) return;
                   setLoading(true);
                   try {
-                    // Reset rating_processed flag for all matches in this tournament
-                    const { error: resetErr } = await supabase
-                      .from('matches')
-                      .update({ rating_processed: false })
-                      .eq('tournament_id', tournament.id);
-                    if (resetErr) console.error('[REPROCESS] Error resetting flags:', resetErr);
-
-                    const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
+                    // Reverte com segurança o delta de cada jogo (via histórico)
+                    // antes de o reaplicar — evita duplicar/corromper nível,
+                    // jogos e V/D a cada clique em "Reprocessar".
+                    const ratingResult = await reprocessTournamentRatings(tournament.id);
                     const rewardResult = await awardTournamentRewardPoints(tournament.id);
-                    
-                    let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.errors} erros`;
+
+                    let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.blocked} bloqueados (sem histórico p/ reverter em segurança), ${ratingResult.errors} erros`;
                     msg += `\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
                     if (rewardResult.details.length > 0) {
                       msg += '\n\nDetalhes:\n' + rewardResult.details.join('\n');
