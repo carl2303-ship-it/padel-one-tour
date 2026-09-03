@@ -32,7 +32,6 @@ export function generateAmericanSchedule(
   outdoorCourtIndices: Set<number> = new Set(),
   existingMatches: ExistingMatch[] = []
 ): AmericanMatch[] {
-  console.log('[AMERICAN] Generating schedule for', players.length, 'players, requested', matchesPerPlayer, 'matches per player, existing:', existingMatches.length);
 
   if (players.length < 4) {
     console.error('[AMERICAN] Need at least 4 players');
@@ -48,7 +47,6 @@ export function generateAmericanSchedule(
       if (((matchesPerPlayer + delta) * n) % 4 === 0) { best = matchesPerPlayer + delta; break; }
       if (matchesPerPlayer - delta > 0 && ((matchesPerPlayer - delta) * n) % 4 === 0) { best = matchesPerPlayer - delta; break; }
     }
-    console.log(`[AMERICAN] Adjusted matchesPerPlayer from ${matchesPerPlayer} to ${best} for balanced distribution (${best} * ${n} = ${best * n} slots, ${best * n / 4} total matches)`);
     matchesPerPlayer = best;
   }
 
@@ -91,7 +89,6 @@ export function generateAmericanSchedule(
       // Count matches per player
       [p1, p2, p3, p4].forEach(pid => playerMatchCount.set(pid, (playerMatchCount.get(pid) || 0) + 1));
     }
-    console.log('[AMERICAN] Pre-seeded with', existingMatches.length, 'existing matches. Current counts:', Array.from(playerMatchCount.entries()).map(([id, c]) => `${players.find(p=>p.id===id)?.name}:${c}`).join(', '));
   }
 
   const getPartnershipCount = (p1: string, p2: string): number => {
@@ -141,15 +138,12 @@ export function generateAmericanSchedule(
   let roundNumber = 1;
 
   const maxRounds = matchesPerPlayer * 2;
-  console.log('[AMERICAN] Will generate up to', maxRounds, 'rounds');
 
   while (roundNumber <= maxRounds) {
     const minMatches = Math.min(...Array.from(playerMatchCount.values()));
     if (minMatches >= matchesPerPlayer) {
-      console.log('[AMERICAN] All players have reached', matchesPerPlayer, 'matches. Stopping.');
       break;
     }
-    console.log('[AMERICAN] Generating round', roundNumber);
 
     // Find players who haven't played this round yet AND haven't reached their target
     const availablePlayers = players.filter(p => {
@@ -161,7 +155,6 @@ export function generateAmericanSchedule(
     });
 
     if (availablePlayers.length < 4) {
-      console.log('[AMERICAN] Not enough players for another match in round', roundNumber);
       roundNumber++;
       continue;
     }
@@ -218,19 +211,15 @@ export function generateAmericanSchedule(
         court: ''
       });
     } else {
-      console.log('[AMERICAN] No valid match found in round', roundNumber);
       roundNumber++;
     }
   }
 
   // Log match count per player
-  console.log('[AMERICAN] Matches per player:');
   playerMatchCount.forEach((count, playerId) => {
     const player = players.find(p => p.id === playerId);
-    console.log(`  ${player?.name}: ${count} matches`);
   });
 
-  console.log('[AMERICAN] Generated', matches.length, 'matches across', roundNumber - 1, 'rounds');
 
   const [startHour, startMinute] = startTime.split(':').map(Number);
   const [endHour, endMinute] = endTime.split(':').map(Number);
@@ -339,8 +328,6 @@ export function generateAmericanSchedule(
     }
   }
 
-  console.log('[AMERICAN] Final schedule:', matches.length, 'matches');
-  console.log('[AMERICAN] First match:', matches[0]);
 
   return matches;
 }

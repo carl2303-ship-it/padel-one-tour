@@ -94,7 +94,6 @@ export async function recalculateSeedsByLevel(
   tournamentId: string,
   categoryId?: string | null
 ): Promise<{ teamSeeds: Map<string, number>; playerSeeds: Map<string, number> }> {
-  console.log('[LEVEL_SEEDING] Recalculating seeds for tournament', tournamentId, 'category', categoryId || '(all)');
 
   let teamsQuery = supabase
     .from('teams')
@@ -150,14 +149,6 @@ export async function recalculateSeedsByLevel(
         if (sumB !== sumA) return sumB - sumA;
         return (a.name || '').localeCompare(b.name || '');
       });
-      console.log(
-        '[LEVEL_SEEDING] Doubles ranking:',
-        ranked.map((t, i) => ({
-          cs: i + 1,
-          name: t.name,
-          sum: (levels.get(t.player1_id) || 0) + (levels.get(t.player2_id) || 0),
-        }))
-      );
       const seeds = await applyRankedSeeds('teams', ranked);
       seeds.forEach((seed, id) => teamSeeds.set(id, seed));
     }
@@ -180,10 +171,6 @@ export async function recalculateSeedsByLevel(
         if (levelB !== levelA) return levelB - levelA;
         return (a.name || '').localeCompare(b.name || '');
       });
-      console.log(
-        '[LEVEL_SEEDING] Individual ranking:',
-        ranked.map((p, i) => ({ cs: i + 1, name: p.name, level: levels.get(p.id) || 0 }))
-      );
       const seeds = await applyRankedSeeds('players', ranked);
       seeds.forEach((seed, id) => playerSeeds.set(id, seed));
     }

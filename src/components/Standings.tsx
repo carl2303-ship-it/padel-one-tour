@@ -72,17 +72,14 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
   const isCrossedPlayoffsTeams = format === 'crossed_playoffs_teams';
 
   useEffect(() => {
-    console.log('[STANDINGS] Component mounted, fetching standings...');
     fetchStandings();
   }, [tournamentId, categoryId, roundRobinType, refreshKey]);
 
   const fetchStandings = async () => {
-    console.log('[STANDINGS] Fetching standings for tournament:', tournamentId, 'category:', categoryId, 'type:', roundRobinType);
     setLoading(true);
 
     // For individual groups knockout, fetch individual players with groups
     if (isIndividualGroupsKnockout) {
-      console.log('[STANDINGS-INDIVIDUAL-GROUPS] Fetching individual players for tournament:', tournamentId);
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('id, name, group_name, category_id, final_position')
@@ -328,8 +325,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           m.round === 'consolation' && m.status === 'completed'
         );
 
-        console.log('[STANDINGS] Knockout: total=' + knockoutMatches.length + 
-          ' rounds=' + knockoutMatches.map(m => m.round + ':' + m.status).join(', '));
 
         const rankedPlayerIds = new Set<string>();
         let nextPos = 1;
@@ -351,8 +346,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         // 1°, 2° — VENCEDORES DA FINAL
         if (finalMatch) {
           const { winners, losers } = getMatchWinnerLoser(finalMatch);
-          console.log('[STANDINGS] Final winners:', winners.map((id: string) => playerMap.get(id)), 
-                       'losers:', losers.map((id: string) => playerMap.get(id)));
           addToRanking(winners);
 
           // 3°, 4° — VENCIDOS DA FINAL (vice-campeões)
@@ -394,7 +387,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
         // Guardar posições corretas na base de dados
         if (individualRankings.length > 0) {
-          console.log('[STANDINGS] Saving corrected final_position to database for', individualRankings.length, 'players');
           const updatePromises = individualRankings
             .filter(r => r.status === 'confirmed')
             .map(ranking =>
@@ -413,7 +405,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         return;
       } else {
         // categoryId is null - process ALL players across all categories
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Processing all players (no category filter)');
         
         const { data: matches } = await supabase
           .from('matches')
@@ -437,7 +428,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           }
         });
 
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Groups found:', Array.from(playersByGroup.keys()));
 
         const groupedStatsMap = new Map<string, IndividualPlayerStats[]>();
 
@@ -521,7 +511,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           groupedStatsMap.set(groupName, playerStats);
         });
 
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Grouped stats:', groupedStatsMap.size, 'groups');
         setGroupedTeams(groupedStatsMap as any);
 
         const globalPlayerStats = new Map<string, { wins: number; draws: number; gamesWon: number; gamesLost: number }>();
@@ -566,9 +555,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           const thirdPlaceMatch = matches.find(m => (m.round === '3rd_place' || m.round === 'mixed_3rd_place') && m.status === 'completed');
           const consolationMatch = matches.find(m => m.round === 'consolation' && m.status === 'completed');
 
-          console.log('[STANDINGS] Mixed knockout: final=' + (finalMatch ? 'completed' : 'not found') + 
-                       ', 3rd_place=' + (thirdPlaceMatch ? 'completed' : 'not found') +
-                       ', consolation=' + (consolationMatch ? 'completed' : 'not found'));
 
           const individualRankings: IndividualFinalRanking[] = [];
           const rankedIds = new Set<string>();
@@ -591,8 +577,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           // 1°, 2° — Vencedores da Final + 3°, 4° — Vencidos da Final
           if (finalMatch) {
             const { winners, losers } = getMatchWL(finalMatch);
-            console.log('[STANDINGS] Final: winners=', winners.map((id: string) => playerMap.get(id)), 
-                         'losers=', losers.map((id: string) => playerMap.get(id)));
             addToMixedRanking(winners);
             addToMixedRanking(losers);
           }
@@ -618,10 +602,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           }
 
           individualRankings.sort((a, b) => a.position - b.position);
-          console.log('[STANDINGS] Mixed final rankings:', individualRankings.map(r => r.position + '° ' + r.player.name));
           
           // Guardar final_position na base de dados para que o histórico do jogador mostre a classificação correta
-          console.log('[STANDINGS] Saving final_position to database for', individualRankings.length, 'players');
           const updatePromises = individualRankings.map(ranking => 
             supabase
               .from('players')
@@ -629,7 +611,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
               .eq('id', ranking.player.id)
           );
           await Promise.all(updatePromises);
-          console.log('[STANDINGS] Updated final_position for all players');
           
           setIndividualFinalRankings(individualRankings);
           setKnockoutRankings([]);
@@ -651,7 +632,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           m.round === 'consolation'
         );
 
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Knockout matches found:', knockoutMatches.length);
 
         const playerOrder = new Map<string, number>();
         playersData.forEach((player, index) => {
@@ -904,11 +884,9 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           }
         });
 
-        console.log('[STANDINGS-INDIVIDUAL-GROUPS] Final rankings:', individualRankings.length);
 
         // Guardar posições corretas na base de dados
         if (individualRankings.length > 0) {
-          console.log('[STANDINGS] Saving corrected final_position to database for', individualRankings.length, 'players');
           const updatePromises = individualRankings
             .filter(r => r.status === 'confirmed')
             .map(ranking =>
@@ -930,13 +908,11 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     // For Mixed American (Americano Misto), fetch ALL players from BOTH categories
     // Matches have category_id = null, so we don't filter by category
     if (isMixedAmerican) {
-      console.log('[STANDINGS-MIXED] Fetching all players for mixed american tournament:', tournamentId);
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('id, name, group_name, category_id, final_position')
         .eq('tournament_id', tournamentId);
 
-      console.log('[STANDINGS-MIXED] Players:', playersData?.length, 'Error:', playersError);
 
       // Fetch ALL completed matches (category_id is null for mixed matches)
       const { data: matches, error: matchesError } = await supabase
@@ -945,7 +921,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         .eq('tournament_id', tournamentId)
         .eq('status', 'completed');
 
-      console.log('[STANDINGS-MIXED] Completed matches:', matches?.length, 'Error:', matchesError);
 
       if (!playersData || !matches) {
         setLoading(false);
@@ -1021,7 +996,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         return b.gamesWon - a.gamesWon;
       });
 
-      console.log('[STANDINGS-MIXED] Setting', playerStats.length, 'players in standings');
       setIndividualPlayers(playerStats);
       setLoading(false);
       return;
@@ -1029,20 +1003,17 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
     // For individual round robin, fetch individual players instead of teams
     if (isIndividualRoundRobin) {
-      console.log('[STANDINGS-INDIVIDUAL] Fetching individual players for tournament:', tournamentId, 'categoryId:', categoryId);
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('id, name, group_name, category_id, final_position')
         .eq('tournament_id', tournamentId);
 
-      console.log('[STANDINGS-INDIVIDUAL] Players data:', playersData?.length, 'Error:', playersError);
 
       // Filter players by category if a category is selected
       const filteredPlayersData = categoryId
         ? (playersData || []).filter(p => p.category_id === categoryId)
         : (playersData || []);
 
-      console.log('[STANDINGS-INDIVIDUAL] Filtered players for category:', filteredPlayersData.length);
 
       let matchesQuery = supabase
         .from('matches')
@@ -1055,11 +1026,8 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       }
 
       const { data: matches, error: matchesError } = await matchesQuery;
-      console.log('[STANDINGS-INDIVIDUAL] Matches:', matches?.length, 'Error:', matchesError);
-      console.log('[STANDINGS-INDIVIDUAL] First match:', matches?.[0]);
 
       if (!filteredPlayersData || filteredPlayersData.length === 0 || !matches) {
-        console.log('[STANDINGS-INDIVIDUAL] Missing data - players:', filteredPlayersData?.length, 'matches:', !!matches);
         if (!matches) {
           setLoading(false);
           return;
@@ -1069,7 +1037,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       // Calculate individual player stats - ONLY for filtered players (by category)
       const playerStatsMap = new Map<string, IndividualPlayerStats>();
 
-      console.log('[STANDINGS-INDIVIDUAL] Players for stats:', filteredPlayersData.map(p => ({ id: p.id, name: p.name, cat: p.category_id })));
 
       filteredPlayersData.forEach(player => {
         playerStatsMap.set(player.id, {
@@ -1096,14 +1063,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         const team2Games = (match.team2_score_set1 || 0) + (match.team2_score_set2 || 0) + (match.team2_score_set3 || 0);
         const isDraw = team1Games === team2Games;
 
-        console.log(`[STANDINGS-INDIVIDUAL] Match ${idx + 1}:`, {
-          player1Id, player2Id, player3Id, player4Id,
-          team1Games, team2Games, isDraw,
-          hasPlayer1: playerStatsMap.has(player1Id),
-          hasPlayer2: playerStatsMap.has(player2Id),
-          hasPlayer3: playerStatsMap.has(player3Id),
-          hasPlayer4: playerStatsMap.has(player4Id)
-        });
 
         // Team 1 players (player1 and player2)
         if (player1Id && playerStatsMap.has(player1Id)) {
@@ -1150,7 +1109,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
       const playerStats = Array.from(playerStatsMap.values());
 
-      console.log('[STANDINGS-INDIVIDUAL] Final stats:', playerStats);
 
       // Sort by: 1. Wins, 2. Points (V=2, E=1, D=0), 3. Game difference, 4. Games won
       playerStats.sort((a, b) => {
@@ -1164,7 +1122,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         return b.gamesWon - a.gamesWon;
       });
 
-      console.log('[STANDINGS-INDIVIDUAL] Setting', playerStats.length, 'players in standings');
       setIndividualPlayers(playerStats);
       setLoading(false);
       return;
@@ -1174,7 +1131,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
     // CROSSED PLAYOFFS TEAMS: group standings + final classification from knockout
     // ═══════════════════════════════════════════════════════════════
     if (isCrossedPlayoffsTeams) {
-      console.log('[STANDINGS-CROSSED-TEAMS] Processing crossed_playoffs_teams format');
 
       // Fetch teams with players
       const { data: teamsData } = await supabase
@@ -1204,7 +1160,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       const categories = categoriesData || [];
       const allTeams = teamsData as unknown as TeamWithPlayers[];
 
-      console.log('[STANDINGS-CROSSED-TEAMS] Teams:', allTeams.length, 'Completed matches:', completedMatches.length, 'Categories:', categories.length);
 
       // ── GROUP STANDINGS per category ──
       const grouped = new Map<string, TeamWithPlayers[]>();
@@ -1305,7 +1260,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       }
 
       finalPositions.sort((a, b) => a.position - b.position);
-      console.log('[STANDINGS-CROSSED-TEAMS] Final positions:', finalPositions);
 
       // Build final classification with ALL match stats (group + knockout)
       const calcAllStats = (team: any) => {
@@ -1540,7 +1494,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
     const { data: matches } = await matchesQuery;
 
-    console.log('[STANDINGS] Found', matches?.length || 0, 'completed matches');
 
     const calculateTeamStats = (team: any, matchFilter?: (match: any) => boolean) => {
       let wins = 0;
@@ -1556,7 +1509,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         ? matches?.filter(matchFilter)
         : matches;
 
-      console.log(`[STANDINGS] Calculating stats for team ${team.name} (group: ${team.group_name}), relevant matches:`, relevantMatches?.length || 0);
 
       relevantMatches?.forEach((match) => {
         if (match.team1_id === team.id || match.team2_id === team.id) {
@@ -1580,7 +1532,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
           if ((match.team1_score_set3 || 0) > (match.team2_score_set3 || 0)) team1SetsCount++;
           else if ((match.team1_score_set3 || 0) < (match.team2_score_set3 || 0)) team2SetsCount++;
 
-          console.log(`[STANDINGS]   Match: ${match.team1_id === team.id ? 'THIS TEAM' : match.team1_id} vs ${match.team2_id === team.id ? 'THIS TEAM' : match.team2_id}, scores: ${team1Games}-${team2Games}, sets: ${team1SetsCount}-${team2SetsCount}`);
 
           if (isDraw) {
             draws++;
@@ -1604,7 +1555,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
         }
       });
 
-      console.log(`[STANDINGS]   Final stats: W:${wins} D:${draws} L:${losses} MP:${matchesPlayed} Games:${gamesWon}-${gamesLost}`);
 
       return { wins, draws, losses, matchesPlayed, setsWon, setsLost, gamesWon, gamesLost };
     };
@@ -1760,7 +1710,6 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
       });
 
       classification.sort((a, b) => a.position - b.position);
-      console.log('[STANDINGS-GK] Final classification:', classification.map(c => `${c.position}. ${c.team.name}`));
       setTeamFinalClassification(classification);
 
       const knockoutTeams = allTeamsArr

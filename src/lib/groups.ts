@@ -122,7 +122,6 @@ export function sortTeamsByTiebreaker(
  * @returns Array of teams with group_name assigned (A, B, C, etc.)
  */
 export function assignTeamsToGroups(teams: Team[], numberOfGroups: number): Team[] {
-  console.log('[ASSIGN GROUPS] Input - Teams:', teams.length, 'Number of groups:', numberOfGroups);
 
   const groupNames = Array.from({ length: numberOfGroups }, (_, i) =>
     String.fromCharCode(65 + i)
@@ -132,8 +131,6 @@ export function assignTeamsToGroups(teams: Team[], numberOfGroups: number): Team
   const unseeded = teams.filter(t => !t.seed || t.seed <= 0).sort(() => Math.random() - 0.5);
   const ordered = [...seeded, ...unseeded];
 
-  console.log('[ASSIGN GROUPS] Seeded teams:', seeded.map(t => ({ name: t.name, seed: t.seed })));
-  console.log('[ASSIGN GROUPS] Unseeded teams:', unseeded.length);
 
   const result = ordered.map((team, index) => {
     const row = Math.floor(index / numberOfGroups);
@@ -142,10 +139,6 @@ export function assignTeamsToGroups(teams: Team[], numberOfGroups: number): Team
     return { ...team, group_name: groupNames[groupIndex] };
   });
 
-  console.log('[ASSIGN GROUPS] Result - Groups distribution:',
-    groupNames.map(g => ({ group: g, count: result.filter(t => t.group_name === g).length, 
-      teams: result.filter(t => t.group_name === g).map(t => ({ name: t.name, seed: t.seed })) }))
-  );
 
   return result;
 }
@@ -259,7 +252,6 @@ export async function getQualifiedTeamsByKnockoutStage(
   const guaranteedPerGroup = Math.floor(targetTeams / numGroups);
   const needBestThirds = targetTeams - (guaranteedPerGroup * numGroups);
 
-  console.log('[KNOCKOUT] Target:', targetTeams, 'Groups:', numGroups, 'Per group:', guaranteedPerGroup, 'Best 3rds needed:', needBestThirds);
 
   // Get all completed matches
   const { data: matches, error: matchesError } = await supabase
@@ -350,10 +342,8 @@ export async function getQualifiedTeamsByKnockoutStage(
 
     const bestThirds = thirdPlaceTeams.slice(0, needBestThirds);
     qualified.push(...bestThirds.map(t => t.id));
-    console.log('[KNOCKOUT] Added best 3rd place teams:', bestThirds.map(t => t.id));
   }
 
-  console.log('[KNOCKOUT] Final qualified teams:', qualified);
   return qualified;
 }
 
@@ -453,7 +443,6 @@ export async function getQualifiedTeamsFromGroups(
     teamsByGroup.get(team.group_name)!.push(team);
   });
 
-  console.log('[KNOCKOUT] Found', teamsByGroup.size, 'groups');
 
   const qualified: Array<{ id: string; group: string; rank: number }> = [];
   const sortedGroups = Array.from(teamsByGroup.keys()).sort();
@@ -478,16 +467,9 @@ export async function getQualifiedTeamsFromGroups(
 
     const sorted = sortTeamsByTiebreaker(groupTeams, groupMatches, teamOrder);
 
-    console.log(`[KNOCKOUT] Group ${groupName} standings (with tiebreaker):`, sorted.map(t => ({
-      id: t.id,
-      wins: t.wins,
-      diff: t.gamesWon - t.gamesLost,
-      gamesWon: t.gamesWon
-    })));
 
     sorted.slice(0, qualifiedPerGroup).forEach((team, rank) => {
       qualified.push({ id: team.id, group: groupName, rank: rank + 1 });
-      console.log(`[KNOCKOUT] Group ${groupName} - Rank ${rank + 1}: ${team.id}`);
     });
   });
 
@@ -500,7 +482,6 @@ export async function getQualifiedTeamsFromGroups(
   const totalQualified = orderedQualified.length;
   const nextPowerOf2 = Math.pow(2, Math.ceil(Math.log2(totalQualified)));
 
-  console.log('[KNOCKOUT] Total qualified:', totalQualified, 'Next power of 2:', nextPowerOf2);
 
   if (totalQualified < nextPowerOf2 && qualifiedPerGroup === 2) {
     const thirdPlaceTeams: Array<{ id: string; stats: TeamStats }> = [];
@@ -523,11 +504,9 @@ export async function getQualifiedTeamsFromGroups(
     const teamsNeeded = nextPowerOf2 - totalQualified;
     const bestThirds = sortedThirds.slice(0, teamsNeeded);
 
-    console.log('[KNOCKOUT] Adding', teamsNeeded, 'best third-place teams:', bestThirds.map(t => t.id));
     orderedQualified.push(...bestThirds.map(t => t.id));
   }
 
-  console.log('[KNOCKOUT] Final qualified teams:', orderedQualified);
   return orderedQualified;
 }
 
@@ -542,7 +521,6 @@ export type IndividualPlayer = {
 };
 
 export function assignPlayersToGroups(players: IndividualPlayer[], numberOfGroups: number): IndividualPlayer[] {
-  console.log('[ASSIGN PLAYERS TO GROUPS] Input - Players:', players.length, 'Number of groups:', numberOfGroups);
 
   const groupNames = Array.from({ length: numberOfGroups }, (_, i) =>
     String.fromCharCode(65 + i)
@@ -552,8 +530,6 @@ export function assignPlayersToGroups(players: IndividualPlayer[], numberOfGroup
   const unseeded = players.filter(p => !p.seed || p.seed <= 0).sort(() => Math.random() - 0.5);
   const ordered = [...seeded, ...unseeded];
 
-  console.log('[ASSIGN PLAYERS TO GROUPS] Seeded players:', seeded.map(p => ({ name: p.name, seed: p.seed })));
-  console.log('[ASSIGN PLAYERS TO GROUPS] Unseeded players:', unseeded.length);
 
   const result = ordered.map((player, index) => {
     const row = Math.floor(index / numberOfGroups);
@@ -562,10 +538,6 @@ export function assignPlayersToGroups(players: IndividualPlayer[], numberOfGroup
     return { ...player, group_name: groupNames[groupIndex] };
   });
 
-  console.log('[ASSIGN PLAYERS TO GROUPS] Result - Groups distribution:',
-    groupNames.map(g => ({ group: g, count: result.filter(p => p.group_name === g).length,
-      players: result.filter(p => p.group_name === g).map(p => ({ name: p.name, seed: p.seed })) }))
-  );
 
   return result;
 }
@@ -684,7 +656,6 @@ export async function getQualifiedPlayersFromGroups(
     playersByGroup.get(player.group_name)!.push(player);
   });
 
-  console.log('[INDIVIDUAL KNOCKOUT] Found', playersByGroup.size, 'groups');
 
   const qualified: Array<{ id: string; group: string; rank: number }> = [];
   const sortedGroups = Array.from(playersByGroup.keys()).sort();
@@ -700,11 +671,9 @@ export async function getQualifiedPlayersFromGroups(
       return b.gamesWon - a.gamesWon;
     });
 
-    console.log(`[INDIVIDUAL KNOCKOUT] Group ${groupName} standings:`, sorted.map(p => ({ id: p.id, wins: p.wins, diff: p.gamesWon - p.gamesLost })));
 
     sorted.slice(0, qualifiedPerGroup).forEach((player, rank) => {
       qualified.push({ id: player.id, group: groupName, rank: rank + 1 });
-      console.log(`[INDIVIDUAL KNOCKOUT] Group ${groupName} - Rank ${rank + 1}: ${player.id}`);
     });
   });
 
@@ -717,7 +686,6 @@ export async function getQualifiedPlayersFromGroups(
   const numGroups = sortedGroups.length;
   const totalQualified = orderedQualified.length;
 
-  console.log('[INDIVIDUAL KNOCKOUT] Total qualified:', totalQualified, 'Extra best needed:', extraBestNeeded);
 
   if (extraBestNeeded > 0) {
     const extraPosition = qualifiedPerGroup + 1;
@@ -746,11 +714,9 @@ export async function getQualifiedPlayersFromGroups(
 
     const bestExtra = extraPlacePlayers.slice(0, extraBestNeeded);
 
-    console.log(`[INDIVIDUAL KNOCKOUT] Adding ${extraBestNeeded} best ${extraPosition}th-place players:`, bestExtra.map(p => p.id));
     orderedQualified.push(...bestExtra.map(p => p.id));
   }
 
-  console.log('[INDIVIDUAL KNOCKOUT] Final qualified players:', orderedQualified);
   return orderedQualified;
 }
 
@@ -849,7 +815,6 @@ async function populateDirectFinals(
     .sort((a, b) => a.match_number - b.match_number);
 
   if (directFinalRounds.length === 0) {
-    console.log('[POPULATE_DIRECT_FINALS] No direct final/placement matches found');
     return;
   }
 
@@ -858,7 +823,6 @@ async function populateDirectFinals(
     m.player3_individual_id && m.player3_individual_id !== 'TBD'
   );
   if (alreadyPopulated) {
-    console.log('[POPULATE_DIRECT_FINALS] Already populated, skipping');
     return;
   }
 
@@ -925,7 +889,6 @@ async function populateDirectFinals(
       return diffB - diffA;
     });
     rankedByGroup.set(groupName, sorted.map(p => p.id));
-    console.log(`[POPULATE_DIRECT_FINALS] Group ${groupName} ranking:`, sorted.map((p, i) => `${i + 1}. ${p.name}`));
   });
 
   const maxPlayersPerGroup = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
@@ -937,7 +900,6 @@ async function populateDirectFinals(
     if (startRank >= maxPlayersPerGroup) break;
 
     if (match.player1_individual_id && match.player1_individual_id !== 'TBD') {
-      console.log(`[POPULATE_DIRECT_FINALS] Match ${match.round} already populated, skipping`);
       continue;
     }
 
@@ -970,7 +932,6 @@ async function populateDirectFinals(
       if (error) {
         console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
       } else {
-        console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: ${groupA}${startRank + 1}+${groupB}${startRank + 2} vs ${groupB}${startRank + 1}+${groupA}${startRank + 2}`);
       }
     } else {
       // 3+ grupos: cruzamento G[startRank] + (G+1)[startRank+1]
@@ -1018,20 +979,17 @@ async function populateDirectFinals(
         if (error) {
           console.error(`[POPULATE_DIRECT_FINALS] Error updating ${match.round}:`, error);
         } else {
-          console.log(`[POPULATE_DIRECT_FINALS] ${match.round}: cruzamento rotativo`);
         }
       }
     }
   }
 
-  console.log('[POPULATE_DIRECT_FINALS] Done populating direct finals');
 }
 
 export async function populatePlacementMatches(
   tournamentId: string,
   categoryId?: string
 ): Promise<void> {
-  console.log('[POPULATE_PLACEMENT] Starting for tournament:', tournamentId, 'category:', categoryId);
 
   const { data: allMatches, error: matchesError } = await supabase
     .from('matches')
@@ -1055,7 +1013,6 @@ export async function populatePlacementMatches(
     !m.player1_individual_id && !m.player3_individual_id
   );
 
-  console.log(`[POPULATE_PLACEMENT] Found ${allRo16.length} round_of_16 matches, unpopulated: ${hasUnpopulatedRo16}`);
 
   // ====================================================================
   // QUARTERFINALS: Check if there are quarterfinal matches to populate
@@ -1069,7 +1026,6 @@ export async function populatePlacementMatches(
     !m.player1_individual_id && !m.player3_individual_id
   );
 
-  console.log(`[POPULATE_PLACEMENT] Found ${allQuarterfinals.length} quarterfinal matches, unpopulated: ${hasUnpopulatedQF}`);
 
   const tierPrefixes = ['1st', '5th', '9th', '13th', '17th', '21st'];
   const allSemifinalRounds = [
@@ -1081,10 +1037,8 @@ export async function populatePlacementMatches(
     .filter(m => allSemifinalRounds.includes(m.round))
     .sort((a, b) => a.match_number - b.match_number);
 
-  console.log('[POPULATE_PLACEMENT] Found', allSemis.length, 'total semifinal matches across all tiers');
 
   if (allSemis.length === 0 && allQuarterfinals.length === 0 && allRo16.length === 0) {
-    console.log('[POPULATE_PLACEMENT] No semifinal, quarterfinal or round_of_16 matches found, checking for direct finals/placement matches');
     await populateDirectFinals(tournamentId, allMatches, categoryId);
     return;
   }
@@ -1103,7 +1057,6 @@ export async function populatePlacementMatches(
   // If no players with group_name found, fetch ALL players and assign them to a default group "A"
   // This handles mixed_american and other single-group formats where group assignment was skipped
   if (!players || players.length === 0) {
-    console.log('[POPULATE_PLACEMENT] No players with group_name, fetching ALL players and treating as single group');
     const { data: allPlayers, error: allPlayersError } = await supabase
       .from('players')
       .select('id, name, group_name, category_id')
@@ -1122,7 +1075,6 @@ export async function populatePlacementMatches(
       .in('id', playerIds);
 
     players = allPlayers.map(p => ({ ...p, group_name: 'A' }));
-    console.log(`[POPULATE_PLACEMENT] Auto-assigned group "A" to ${players.length} players`);
   }
 
   const groupMatches = allMatches.filter(m => m.round.startsWith('group_') && m.status === 'completed');
@@ -1195,19 +1147,16 @@ export async function populatePlacementMatches(
       return b.gamesWon - a.gamesWon;
     });
     rankedByGroup.set(groupName, sorted.map(p => p.id));
-    console.log(`[POPULATE_PLACEMENT] Group ${groupName} ranking:`, sorted.map((p, i) => `${i + 1}. ${p.name}`));
   });
 
   const maxPlayersPerGroup = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
   const totalPlayers = players.length;
 
-  console.log(`[POPULATE_PLACEMENT] ${sortedGroups.length} groups, max ${maxPlayersPerGroup} per group, ${totalPlayers} total`);
 
   // ====================================================================
   // ROUND OF 16 POPULATION: If round_of_16 exist and are unpopulated
   // ====================================================================
   if (allRo16.length > 0 && hasUnpopulatedRo16) {
-    console.log('[POPULATE_PLACEMENT] Populating round_of_16 matches...');
 
     const unpopulatedRo16 = allRo16
       .filter(m => !m.player1_individual_id && !m.player3_individual_id)
@@ -1218,7 +1167,6 @@ export async function populatePlacementMatches(
     const qualPerGroup = Math.floor(totalSlotsNeeded / nGroupsRo16);
     const extraNeeded = totalSlotsNeeded - qualPerGroup * nGroupsRo16;
 
-    console.log(`[POPULATE_PLACEMENT] RO16: ${unpopulatedRo16.length} jogos × 4 = ${totalSlotsNeeded} jogadores, ${qualPerGroup}/grupo + ${extraNeeded} melhor(es) ${qualPerGroup + 1}°`);
 
     const filteredRankings = new Map<string, string[]>();
     sortedGroups.forEach(g => {
@@ -1291,7 +1239,6 @@ export async function populatePlacementMatches(
       }
     }
 
-    console.log(`[POPULATE_PLACEMENT] Formed ${allPairsRo16.length} pairs for RO16`);
 
     for (let i = 0; i < unpopulatedRo16.length && (i * 2 + 1) < allPairsRo16.length; i++) {
       const pair1 = allPairsRo16[i * 2];
@@ -1304,7 +1251,6 @@ export async function populatePlacementMatches(
         player3_individual_id: pair2[0],
         player4_individual_id: pair2[1],
       }).eq('id', unpopulatedRo16[i].id);
-      console.log(`[POPULATE_PLACEMENT] RO16 Match ${i + 1}: cruzamento rotativo`);
     }
 
     // Delete extra empty RO16 matches
@@ -1317,19 +1263,16 @@ export async function populatePlacementMatches(
     if (updatedRo16) {
       const emptyRo16 = updatedRo16.filter(m => !m.player1_individual_id && !m.player3_individual_id);
       if (emptyRo16.length > 0) {
-        console.log(`[POPULATE_PLACEMENT] Removing ${emptyRo16.length} extra empty round_of_16 matches`);
         for (const empty of emptyRo16) {
           await supabase.from('matches').delete().eq('id', empty.id);
         }
       }
     }
 
-    console.log('[POPULATE_PLACEMENT] Round of 16 population done');
     return;
   }
 
   if (allRo16.length > 0) {
-    console.log('[POPULATE_PLACEMENT] Round of 16 already populated; later rounds come from winners, not group standings');
     return;
   }
 
@@ -1337,7 +1280,6 @@ export async function populatePlacementMatches(
   // QUARTERFINALS POPULATION: If quarterfinals exist and are unpopulated
   // ====================================================================
   if (allQuarterfinals.length > 0 && hasUnpopulatedQF) {
-    console.log('[POPULATE_PLACEMENT] Populating quarterfinal matches...');
     
     const unpopulatedQFs = allQuarterfinals
       .filter(m => !m.player1_individual_id && !m.player3_individual_id)
@@ -1358,7 +1300,6 @@ export async function populatePlacementMatches(
           player3_individual_id: ranking[base + 2],
           player4_individual_id: ranking[base + 3],
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${base + 1}°+${base + 2}° vs ${base + 3}°+${base + 4}°`);
       }
     } else if (sortedGroups.length === 2) {
       const groupA = sortedGroups[0];
@@ -1385,7 +1326,6 @@ export async function populatePlacementMatches(
           player3_individual_id: b1,
           player4_individual_id: a2,
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: ${groupA}${pos1 + 1}°+${groupB}${pos2 + 1}° vs ${groupB}${pos1 + 1}°+${groupA}${pos2 + 1}°`);
       }
     } else {
       // 3+ grupos: cruzamento rotativo
@@ -1435,7 +1375,6 @@ export async function populatePlacementMatches(
       }
       const crossPairs = allPairs;
 
-      console.log(`[POPULATE_PLACEMENT] Formed ${crossPairs.length} cross pairs for QFs`);
 
       for (let i = 0; i < unpopulatedQFs.length && (i * 2 + 1) < crossPairs.length; i++) {
         const pair1 = crossPairs[i * 2];
@@ -1448,7 +1387,6 @@ export async function populatePlacementMatches(
           player3_individual_id: pair2[0],
           player4_individual_id: pair2[1],
         }).eq('id', unpopulatedQFs[i].id);
-        console.log(`[POPULATE_PLACEMENT] QF${i + 1}: cross pair vs cross pair`);
       }
     }
     
@@ -1466,27 +1404,23 @@ export async function populatePlacementMatches(
     if (updatedQFs) {
       const emptyQFs = updatedQFs.filter(m => !m.player1_individual_id && !m.player3_individual_id);
       if (emptyQFs.length > 0) {
-        console.log(`[POPULATE_PLACEMENT] Removing ${emptyQFs.length} extra empty quarterfinal matches`);
         for (const emptyQF of emptyQFs) {
           await supabase.from('matches').delete().eq('id', emptyQF.id);
         }
       }
     }
     
-    console.log('[POPULATE_PLACEMENT] Quarterfinal population done');
 
     return;
   }
 
   if (allQuarterfinals.length > 0) {
-    console.log('[POPULATE_PLACEMENT] Quarterfinals already populated; semifinals come from QF winners, not group standings');
     return;
   }
 
   // SINGLE GROUP (e.g. mixed_american): populate semifinals with top 4 directly
   if (isSingleGroup) {
     const singleGroupRanking = rankedByGroup.get(sortedGroups[0])!;
-    console.log(`[POPULATE_PLACEMENT] Single group mode: ${singleGroupRanking.length} players ranked`);
 
     // Find the semifinal matches (look for both 'semifinal' and '1st_semifinal')
     const semifinalMatches = allSemis.filter(m =>
@@ -1511,7 +1445,6 @@ export async function populatePlacementMatches(
             player4_individual_id: p4,
           })
           .eq('id', semifinalMatches[0].id);
-        console.log(`[POPULATE_PLACEMENT] SF1: 1st+2nd vs 3rd+4th`);
 
         if (singleGroupRanking.length >= 8) {
           // With 8+ players, SF2 gets players 5-8
@@ -1525,7 +1458,6 @@ export async function populatePlacementMatches(
               player4_individual_id: p8 || p7,
             })
             .eq('id', semifinalMatches[1].id);
-          console.log(`[POPULATE_PLACEMENT] SF2: 5th+6th vs 7th+8th`);
         } else {
           // With 4-7 players, SF2 uses different pairings of same top 4
           await supabase
@@ -1537,12 +1469,10 @@ export async function populatePlacementMatches(
               player4_individual_id: p4,
             })
             .eq('id', semifinalMatches[1].id);
-          console.log(`[POPULATE_PLACEMENT] SF2: 1st+3rd vs 2nd+4th`);
         }
       }
     }
 
-    console.log('[POPULATE_PLACEMENT] Single group population done');
     return;
   }
 
@@ -1560,7 +1490,6 @@ export async function populatePlacementMatches(
     }
 
     if (tierSemis.length < 2) {
-      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: not enough semifinals (${tierSemis.length})`);
       return;
     }
 
@@ -1575,7 +1504,6 @@ export async function populatePlacementMatches(
     }
 
     if (neededPlayers.length < 4) {
-      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: not enough players (${neededPlayers.length}/4)`);
       return;
     }
 
@@ -1584,7 +1512,6 @@ export async function populatePlacementMatches(
       m.player3_individual_id && m.player4_individual_id
     );
     if (alreadyPopulated) {
-      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: already populated, skipping`);
       return;
     }
 
@@ -1615,7 +1542,6 @@ export async function populatePlacementMatches(
       if (sf1Error) {
         console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF1:`, sf1Error);
       } else {
-        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF1: ${groupA}${startRank + 1}°+${groupB}${startRank + 2}° vs ${groupB}${startRank + 1}°+${groupA}${startRank + 2}°`);
       }
 
       // SF2: (A1+A2) vs (B1+B2) - mesmos do grupo juntos para variar confrontos
@@ -1632,7 +1558,6 @@ export async function populatePlacementMatches(
       if (sf2Error) {
         console.error(`[POPULATE_PLACEMENT] Error updating ${tierPrefix} SF2:`, sf2Error);
       } else {
-        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF2: ${groupA}${startRank + 1}°+${groupA}${startRank + 2}° vs ${groupB}${startRank + 1}°+${groupB}${startRank + 2}°`);
       }
     } else {
       // 3+ grupos: cruzamento G[startRank] + (G+1)[startRank+1]
@@ -1699,10 +1624,8 @@ export async function populatePlacementMatches(
           usedTier.add(bestExtras[ei + 1].id);
         }
 
-        console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: added ${bestExtras.length} best ${extraRank + 1}th-place players, now ${tierPairs.length} pairs`);
       }
 
-      console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: formed ${tierPairs.length} pairs`);
 
       for (let i = 0; i < tierSemis.length && (i * 2 + 1) < tierPairs.length; i++) {
         const pair1 = tierPairs[i * 2];
@@ -1716,11 +1639,9 @@ export async function populatePlacementMatches(
             player4_individual_id: pair2[1],
           })
           .eq('id', tierSemis[i].id);
-        console.log(`[POPULATE_PLACEMENT] ${tierPrefix} SF${i + 1}: cruzamento rotativo`);
       }
     }
 
-    console.log(`[POPULATE_PLACEMENT] Tier ${tierPrefix}: populated successfully`);
   };
 
   for (let i = 0; i < tierPrefixes.length; i++) {
@@ -1729,7 +1650,6 @@ export async function populatePlacementMatches(
     await populateTier(i, tierPrefixes[i]);
   }
 
-  console.log('[POPULATE_PLACEMENT] Done populating all placement tiers');
 }
 
 export async function advanceKnockoutWinner(
@@ -1737,7 +1657,6 @@ export async function advanceKnockoutWinner(
   completedMatchId: string,
   categoryId?: string
 ): Promise<void> {
-  console.log('[ADVANCE_WINNER] Processing completed match:', completedMatchId);
 
   const { data: completedMatch, error: matchError } = await supabase
     .from('matches')
@@ -1753,10 +1672,8 @@ export async function advanceKnockoutWinner(
   const round = completedMatch.round;
   const isIndividual = completedMatch.player1_individual_id !== null;
 
-  console.log('[ADVANCE_WINNER] Match round:', round, 'isIndividual:', isIndividual);
 
   if (round.startsWith('group_')) {
-    console.log('[ADVANCE_WINNER] Group match, no advancement needed');
     return;
   }
 
@@ -1764,7 +1681,6 @@ export async function advanceKnockoutWinner(
   const team2Games = (completedMatch.team2_score_set1 || 0) + (completedMatch.team2_score_set2 || 0) + (completedMatch.team2_score_set3 || 0);
 
   if (team1Games === team2Games) {
-    console.log('[ADVANCE_WINNER] Match is a draw, cannot determine winner');
     return;
   }
 
@@ -1791,7 +1707,6 @@ export async function advanceKnockoutWinner(
     }
   }
 
-  console.log('[ADVANCE_WINNER] Winner:', winnerIds, 'Loser:', loserIds);
 
   let matchesQuery = supabase
     .from('matches')
@@ -1840,7 +1755,6 @@ export async function advanceKnockoutWinner(
             updateData.player4_individual_id = winnerIds.p2;
           }
           await supabase.from('matches').update(updateData).eq('id', quarterfinalMatches[targetQFIndex].id);
-          console.log('[ADVANCE_WINNER] Updated QF', targetQFIndex + 1, 'with winner from RO16', matchIndex + 1);
         } else {
           const updateData: any = {};
           if (isFirstInPair) {
@@ -1849,17 +1763,14 @@ export async function advanceKnockoutWinner(
             updateData.team2_id = winnerIds.team;
           }
           await supabase.from('matches').update(updateData).eq('id', quarterfinalMatches[targetQFIndex].id);
-          console.log('[ADVANCE_WINNER] Updated QF', targetQFIndex + 1, 'with winner team from RO16', matchIndex + 1);
         }
       }
     } else {
       const allRo16Done = ro16Matches.every(m => m.status === 'completed');
       if (!allRo16Done) {
-        console.log(`[ADVANCE_WINNER] Non-standard bracket: waiting for all RO16 (${ro16Matches.filter(m => m.status === 'completed').length}/${ro16Matches.length})`);
         return;
       }
 
-      console.log('[ADVANCE_WINNER] All RO16 complete, batch advancing to QFs');
 
       if (isIndividual) {
         const ro16Results: Array<{ winners: { p1: string; p2: string }; winnerGameDiff: number }> = [];
@@ -1888,7 +1799,6 @@ export async function advanceKnockoutWinner(
             player3_individual_id: pair2.p1,
             player4_individual_id: pair2.p2,
           }).eq('id', quarterfinalMatches[i].id);
-          console.log(`[ADVANCE_WINNER] QF${i + 1}: RO16 winner pair${i * 2 + 1} vs pair${i * 2 + 2}`);
         }
       }
     }
@@ -1902,7 +1812,6 @@ export async function advanceKnockoutWinner(
     const completedSemifinals = semifinalMatches.filter(m => m.status === 'completed');
 
     const matchIndex = semifinalMatches.findIndex(m => m.id === completedMatchId);
-    console.log('[ADVANCE_WINNER] Semifinal match index:', matchIndex, 'Completed semis:', completedSemifinals.length);
 
     const finalMatch = allMatches.find(m => m.round === 'final');
     const thirdPlaceMatch = allMatches.find(m => m.round === '3rd_place');
@@ -1926,7 +1835,6 @@ export async function advanceKnockoutWinner(
         if (error) {
           console.error('[ADVANCE_WINNER] Error updating final:', error);
         } else {
-          console.log('[ADVANCE_WINNER] Updated final with winner from SF', matchIndex + 1);
         }
       } else {
         const updateData: any = {};
@@ -1944,7 +1852,6 @@ export async function advanceKnockoutWinner(
         if (error) {
           console.error('[ADVANCE_WINNER] Error updating final:', error);
         } else {
-          console.log('[ADVANCE_WINNER] Updated final with winner team from SF', matchIndex + 1);
         }
       }
     }
@@ -1968,7 +1875,6 @@ export async function advanceKnockoutWinner(
         if (error) {
           console.error('[ADVANCE_WINNER] Error updating 3rd place:', error);
         } else {
-          console.log('[ADVANCE_WINNER] Updated 3rd place with loser from SF', matchIndex + 1);
         }
       } else {
         const updateData: any = {};
@@ -1986,7 +1892,6 @@ export async function advanceKnockoutWinner(
         if (error) {
           console.error('[ADVANCE_WINNER] Error updating 3rd place:', error);
         } else {
-          console.log('[ADVANCE_WINNER] Updated 3rd place with loser team from SF', matchIndex + 1);
         }
       }
     }
@@ -2020,7 +1925,6 @@ export async function advanceKnockoutWinner(
             updateData.player4_individual_id = winnerIds.p2;
           }
           await supabase.from('matches').update(updateData).eq('id', semifinalMatches[targetSemifinalIndex].id);
-          console.log('[ADVANCE_WINNER] Updated SF', targetSemifinalIndex + 1, 'with winner from QF', matchIndex + 1);
         } else {
           const updateData: any = {};
           if (isFirstInPair) {
@@ -2029,7 +1933,6 @@ export async function advanceKnockoutWinner(
             updateData.team2_id = winnerIds.team;
           }
           await supabase.from('matches').update(updateData).eq('id', semifinalMatches[targetSemifinalIndex].id);
-          console.log('[ADVANCE_WINNER] Updated SF', targetSemifinalIndex + 1, 'with winner team from QF', matchIndex + 1);
         }
       }
 
@@ -2046,7 +1949,6 @@ export async function advanceKnockoutWinner(
             updateData.player4_individual_id = loserIds.p2;
           }
           await supabase.from('matches').update(updateData).eq('id', consolationMatch.id);
-          console.log('[ADVANCE_WINNER] Updated consolation with loser from QF', matchIndex + 1);
         } else {
           const updateData: any = {};
           if (isFirstInPair) {
@@ -2055,7 +1957,6 @@ export async function advanceKnockoutWinner(
             updateData.team2_id = loserIds.team;
           }
           await supabase.from('matches').update(updateData).eq('id', consolationMatch.id);
-          console.log('[ADVANCE_WINNER] Updated consolation with loser team from QF', matchIndex + 1);
         }
       }
     } else {
@@ -2063,11 +1964,9 @@ export async function advanceKnockoutWinner(
       // Wait until ALL QFs are complete before advancing
       const allQFsDone = quarterfinalMatches.every(m => m.status === 'completed');
       if (!allQFsDone) {
-        console.log(`[ADVANCE_WINNER] Non-standard bracket: waiting for all QFs (${quarterfinalMatches.filter(m => m.status === 'completed').length}/${quarterfinalMatches.length})`);
         return;
       }
 
-      console.log('[ADVANCE_WINNER] All QFs complete, batch advancing to SFs + consolation');
 
       if (isIndividual) {
         // Collect winners and losers from all QFs
@@ -2152,13 +2051,6 @@ export async function advanceKnockoutWinner(
           return wonB - wonA;
         });
 
-        console.log('[ADVANCE_WINNER] Losing teams sorted by QF match stats (diff, games won):', sortedLosers.map((r, idx) => {
-          const stats = losingTeamStats.find(s => 
-            (s.losers.p1 === r.losers.p1 && s.losers.p2 === r.losers.p2) ||
-            (s.losers.p1 === r.losers.p2 && s.losers.p2 === r.losers.p1)
-          );
-          return `${idx + 1}°: diff=${stats?.gameDiff || 0}, won=${stats?.gamesWon || 0}`;
-        }));
 
         // Build SF qualifiers: all winners + best losers to fill SFs
         const sfPairs: Array<{ p1: string; p2: string }> = sortedWinners.map(r => r.winners);
@@ -2178,7 +2070,6 @@ export async function advanceKnockoutWinner(
           loserIdx++;
         }
 
-        console.log(`[ADVANCE_WINNER] SF qualifiers: ${sfPairs.length} pairs, Consolation: ${consolationPairs.length} pairs`);
 
         // Populate SF matches
         for (let i = 0; i < semifinalMatches.length && i * 2 + 1 < sfPairs.length; i++) {
@@ -2190,7 +2081,6 @@ export async function advanceKnockoutWinner(
             player3_individual_id: pair2.p1,
             player4_individual_id: pair2.p2,
           }).eq('id', semifinalMatches[i].id);
-          console.log(`[ADVANCE_WINNER] SF${i + 1}: pair${i * 2 + 1} vs pair${i * 2 + 2}`);
         }
 
         // Populate consolation match with QF losers
@@ -2203,7 +2093,6 @@ export async function advanceKnockoutWinner(
               player3_individual_id: consolationPairs[1].p1,
               player4_individual_id: consolationPairs[1].p2,
             }).eq('id', consolationMatch.id);
-            console.log('[ADVANCE_WINNER] Consolation match populated');
           } else if (consolationMatch && consolationPairs.length === 1) {
             await supabase.from('matches').update({
               player1_individual_id: consolationPairs[0].p1,
@@ -2217,7 +2106,6 @@ export async function advanceKnockoutWinner(
     }
   }
 
-  console.log('[ADVANCE_WINNER] Done processing advancement');
 }
 
 export type TeamQualificationConfig = {
@@ -2315,7 +2203,6 @@ export async function populateTeamPlacementMatches(
   tournamentId: string,
   categoryId?: string | null
 ): Promise<void> {
-  console.log('[POPULATE_TEAM_PLACEMENT] Start tournament:', tournamentId, 'category:', categoryId || '(all)');
 
   const { data: allMatches, error: matchesError } = await supabase
     .from('matches')
@@ -2342,7 +2229,6 @@ export async function populateTeamPlacementMatches(
     : Array.from(new Set(allTeams.map(t => t.category_id).filter(Boolean) as string[]));
 
   if (categoryIds.length === 0) {
-    console.log('[POPULATE_TEAM_PLACEMENT] No categories with teams found, nothing to do');
     return;
   }
 
@@ -2350,7 +2236,6 @@ export async function populateTeamPlacementMatches(
     await populateTeamPlacementForCategory(catId, allMatches, allTeams);
   }
 
-  console.log('[POPULATE_TEAM_PLACEMENT] Done');
 }
 
 async function populateTeamPlacementForCategory(
@@ -2360,14 +2245,12 @@ async function populateTeamPlacementForCategory(
 ): Promise<void> {
   const catTeams = allTeams.filter(t => t.category_id === categoryId);
   if (catTeams.length < 2) {
-    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: only ${catTeams.length} team(s), skip`);
     return;
   }
 
   const catMatches = allMatches.filter(m => m.category_id === categoryId);
   const groupMatches = catMatches.filter(m => typeof m.round === 'string' && m.round.startsWith('group_'));
   if (groupMatches.length === 0) {
-    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: no group matches, skip`);
     return;
   }
 
@@ -2402,11 +2285,9 @@ async function populateTeamPlacementForCategory(
   };
   if (!allGroupsDone) {
     const done = groupMatches.filter(hasResult).length;
-    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: groups not all done (${done}/${groupMatches.length}) -> clearing unplayed knockouts`);
     let cleared = 0;
     for (const m of ko) {
       if (hasRealScores(m)) {
-        console.log(`[POPULATE_TEAM_PLACEMENT] Skip ${m.round} #${m.match_number} - has real scores`);
         continue;
       }
       if (!m.team1_id && !m.team2_id) continue;
@@ -2418,15 +2299,12 @@ async function populateTeamPlacementForCategory(
         console.error(`[POPULATE_TEAM_PLACEMENT] Error clearing ${m.round} #${m.match_number}:`, updErr);
       } else {
         cleared++;
-        console.log(`[POPULATE_TEAM_PLACEMENT] Cleared ${m.round} #${m.match_number}`);
       }
     }
-    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: cleared ${cleared} knockout match(es)`);
     return;
   }
 
   if (ko.length === 0) {
-    console.log(`[POPULATE_TEAM_PLACEMENT] Category ${categoryId}: no knockout matches, skip`);
     return;
   }
 
@@ -2484,7 +2362,6 @@ async function populateTeamPlacementForCategory(
       return b.gf - a.gf;
     });
     rankedByGroup.set(g, arr);
-    console.log(`[POPULATE_TEAM_PLACEMENT] Cat ${categoryId} group ${g}:`, arr.map((t, i) => `${i + 1}° ${t.name} (W${t.wins}/GD${t.gd})`));
   });
 
   const { data: categoryRow } = await supabase
@@ -2504,10 +2381,6 @@ async function populateTeamPlacementForCategory(
     categoryRow?.qualified_per_group
   );
 
-  console.log(
-    `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: ${qualConfig.qualifiedPerGroup}/grupo, ` +
-    `total=${qualConfig.totalQualified}, 1ª eliminatória=${qualConfig.entryRoundMatchCount} jogos`
-  );
 
   const qualifiedByGroup = new Map<string, Stats[]>();
   sortedGroupNames.forEach(g => {
@@ -2530,10 +2403,6 @@ async function populateTeamPlacementForCategory(
     });
     extraQualified.push(...extraCandidates.slice(0, qualConfig.extraBestNeeded));
     if (extraQualified.length > 0) {
-      console.log(
-        `[POPULATE_TEAM_PLACEMENT] Melhores ${qualConfig.extraFromPosition}°:`,
-        extraQualified.map(t => t.name)
-      );
     }
   }
 
@@ -2581,7 +2450,6 @@ async function populateTeamPlacementForCategory(
         .from('matches')
         .update({ team1_id: null, team2_id: null, winner_id: null, status: 'scheduled' })
         .eq('id', m.id);
-      console.log(`[POPULATE_TEAM_PLACEMENT] Cleared stale ${label} #${m.match_number}`);
     }
   };
 
@@ -2594,7 +2462,6 @@ async function populateTeamPlacementForCategory(
       if (!a || !b) continue;
       if (m.team1_id === a.id && m.team2_id === b.id) continue;
       await supabase.from('matches').update({ team1_id: a.id, team2_id: b.id }).eq('id', m.id);
-      console.log(`[POPULATE_TEAM_PLACEMENT] ${label} ${m.match_number}: ${a.name} vs ${b.name}`);
     }
   };
 
@@ -2627,7 +2494,6 @@ async function populateTeamPlacementForCategory(
       if (target[field] === winnerId) continue;
       await supabase.from('matches').update({ [field]: winnerId }).eq('id', target.id);
       (target as any)[field] = winnerId;
-      console.log(`[POPULATE_TEAM_PLACEMENT] ${label}: winner of ${src.round} #${src.match_number} → ${target.round} #${target.match_number} ${field}`);
     }
   };
 
@@ -2638,9 +2504,6 @@ async function populateTeamPlacementForCategory(
   const minQualifiedTeams = Math.max(2, entryCount * 2);
 
   if (overallQualified.length < minQualifiedTeams) {
-    console.log(
-      `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: only ${overallQualified.length} qualified, need ${minQualifiedTeams} — skip knockout fill`
-    );
     return;
   }
 
@@ -2694,11 +2557,6 @@ async function populateTeamPlacementForCategory(
 
   const entry = resolveEntryRound();
   if (!entry) {
-    console.log(
-      `[POPULATE_TEAM_PLACEMENT] Cat ${categoryId}: bracket mismatch — ` +
-      `format=${categoryRow?.format || 'n/a'}, cfgGroups=${configuredGroupCount}, ` +
-      `entry=${entryCount}, RO16=${ro16.length}, QF=${qfs.length}, SF=${semis.length}, F=${finals.length}`
-    );
     return;
   }
 

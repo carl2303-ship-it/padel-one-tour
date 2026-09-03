@@ -327,11 +327,6 @@ export default function LiveTournamentView() {
           catData || []
         );
         setStandings(newStandings);
-        console.log(
-          `[LIVE-TV] Refreshed: ${matchesData.length} matches, ` +
-          `${(teamsData || []).length} teams, ${(playersData || []).length} players, ` +
-          `${(catData || []).length} cats -> ${newStandings.length} standings`
-        );
       }
 
       setLastUpdate(new Date());
@@ -359,7 +354,6 @@ export default function LiveTournamentView() {
         table: 'matches',
         filter: `tournament_id=eq.${tournamentId}`,
       }, (payload) => {
-        console.log('[LIVE-TV] Realtime matches:', (payload as any).eventType);
         fetchTournamentData();
       })
       .on('postgres_changes', {
@@ -368,7 +362,6 @@ export default function LiveTournamentView() {
         table: 'teams',
         filter: `tournament_id=eq.${tournamentId}`,
       }, (payload) => {
-        console.log('[LIVE-TV] Realtime teams:', (payload as any).eventType);
         fetchTournamentData();
       })
       .on('postgres_changes', {
@@ -377,11 +370,9 @@ export default function LiveTournamentView() {
         table: 'players',
         filter: `tournament_id=eq.${tournamentId}`,
       }, (payload) => {
-        console.log('[LIVE-TV] Realtime players:', (payload as any).eventType);
         fetchTournamentData();
       })
       .subscribe((status, err) => {
-        console.log('[LIVE-TV] Channel', channelName, 'status:', status, err || '');
       });
 
     // Polling de seguranca: se o realtime falhar (RLS, rede,

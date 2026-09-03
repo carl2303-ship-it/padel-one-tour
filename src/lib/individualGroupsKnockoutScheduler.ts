@@ -39,7 +39,6 @@ function generateAmericanMatchesForGroup(
 
   // Americano Padel: each player plays n-1 matches (one per round, different partner each round)
   const matchesPerPlayer = n - 1;
-  console.log(`[AMERICAN GROUP ${groupName}] Generating schedule for ${n} players, ${matchesPerPlayer} matches/player (n-1), ${completedGroupMatches.length} existing completed`);
 
   // If all matches already completed, nothing to generate
   const playerIds = new Set(players.map(p => p.id));
@@ -51,7 +50,6 @@ function generateAmericanMatchesForGroup(
     m.player1_id === p.id || m.player2_id === p.id || m.player3_id === p.id || m.player4_id === p.id
   ).length));
   if (maxCompleted >= matchesPerPlayer) {
-    console.log(`[AMERICAN GROUP ${groupName}] All players have ${maxCompleted}/${matchesPerPlayer} matches already. Skipping.`);
     return [];
   }
 
@@ -75,7 +73,6 @@ function generateAmericanMatchesForGroup(
     player4_id: m.player4_id,
   }));
 
-  console.log(`[AMERICAN GROUP ${groupName}] Generated ${result.length} matches using americanScheduler`);
 
   return result;
 }
@@ -97,9 +94,6 @@ export function generateIndividualGroupsKnockoutSchedule(
   knockoutStage: 'semifinals' | 'quarterfinals' | 'round_of_16' | 'final' = 'semifinals',
   completedMatches: ExistingMatch[] = []
 ): IndividualMatch[] {
-  console.log('=== NEW ROTATION CODE v2 ===', new Date().toISOString());
-  console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Starting schedule generation');
-  console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Players:', players.length, 'Groups:', numberOfGroups);
 
   if (players.length < 4) {
     console.error('[INDIVIDUAL_GROUPS_KNOCKOUT] Need at least 4 players');
@@ -114,7 +108,6 @@ export function generateIndividualGroupsKnockoutSchedule(
   const hasExistingGroups = players.some(p => p.group_name);
 
   if (hasExistingGroups) {
-    console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Using existing group assignments');
     players.forEach(player => {
       if (player.group_name) {
         if (!groups.has(player.group_name)) {
@@ -125,10 +118,8 @@ export function generateIndividualGroupsKnockoutSchedule(
     });
 
     groups.forEach((groupPlayers, groupName) => {
-      console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Group ${groupName}: ${groupPlayers.length} players`);
     });
   } else {
-    console.log('[INDIVIDUAL_GROUPS_KNOCKOUT] Creating new random group assignments');
     const playersPerGroup = Math.ceil(players.length / numberOfGroups);
     const shuffledPlayers = shuffle([...players]);
 
@@ -141,7 +132,6 @@ export function generateIndividualGroupsKnockoutSchedule(
       });
 
       groups.set(groupName, groupPlayers);
-      console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Group ${groupName}: ${groupPlayers.length} players`);
     }
   }
 
@@ -199,7 +189,6 @@ export function generateIndividualGroupsKnockoutSchedule(
   const numGroups = sortedGroupNames.length;
   let slotNumber = 0;
 
-  console.log(`[SCHEDULING] ${numGroups} groups, ${numberOfCourts} courts per slot`);
 
   const lastPlayedSlot = new Map<string, number>();
   sortedGroupNames.forEach(g => lastPlayedSlot.set(g, -999));
@@ -234,7 +223,6 @@ export function generateIndividualGroupsKnockoutSchedule(
       return lastA - lastB;
     });
 
-    console.log(`[SLOT ${slotNumber}] Groups with matches sorted by rest: ${orderedGroups.join(',')}`);
 
     // Use player-based conflict checking instead of group-based constraint.
     // This allows multiple matches from the same group in one slot when players don't overlap
@@ -257,7 +245,6 @@ export function generateIndividualGroupsKnockoutSchedule(
         slot.push(match);
         groupMatchIndices.set(g, idx + 1);
         lastPlayedSlot.set(g, slotNumber);
-        console.log(`  Court ${slot.length}: Group ${g}`);
         added = true;
       }
     }
@@ -277,15 +264,11 @@ export function generateIndividualGroupsKnockoutSchedule(
     totalGroupMatches += slot.length;
   });
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Total group stage matches: ${totalGroupMatches}`);
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Time slots: ${timeSlots.length}`);
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Groups balanced across ${sortedGroupNames.length} groups`);
 
   for (let slotIdx = 0; slotIdx < timeSlots.length; slotIdx++) {
     const slot = timeSlots[slotIdx];
     const slotTime = currentTime.toISOString();
 
-    console.log(`[SLOT ${slotIdx}] Time: ${slotTime}, Matches: ${slot.map(m => m.group).join(', ')}`);
 
     for (let courtIdx = 0; courtIdx < slot.length; courtIdx++) {
       const groupMatch = slot[courtIdx];
@@ -317,13 +300,10 @@ export function generateIndividualGroupsKnockoutSchedule(
   }
 
   const totalQualified = numberOfGroups * qualifiedPerGroup;
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Total qualified players: ${totalQualified} (${qualifiedPerGroup} per group)`);
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Knockout stage: ${knockoutStage} (knockout matches will be created separately)`);
 
   // Note: Knockout matches (quarterfinals, semifinals, final) are created separately
   // in TournamentDetail.tsx after group stage is completed.
   // This scheduler only creates group stage matches.
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT] Total group matches generated: ${matches.length}`);
   return matches;
 }

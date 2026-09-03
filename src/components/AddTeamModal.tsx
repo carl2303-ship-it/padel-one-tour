@@ -291,7 +291,6 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
 
     if (error) throw error;
 
-    console.log(`[ADD_TEAM] Jogador "${existingPlayer.name}" copiado para o torneio atual`);
 
     // Enviar email de boas-vindas
     if (newPlayer.email && tournament) {

@@ -186,10 +186,6 @@ export async function exportTournamentPDF(
   _categories: TournamentCategory[],
   t: any
 ): Promise<void> {
-  console.log('[PDF] ====================================');
-  console.log('[PDF] Starting export for tournament:', tournament.name);
-  console.log('[PDF] Format:', tournament.format);
-  console.log('[PDF] Round Robin Type:', tournament.round_robin_type);
 
   // ═══════════════════════════════════════════════════════════════
   // FETCH FRESH DATA from DB (same source as Standings.tsx)
@@ -225,20 +221,13 @@ export async function exportTournamentPDF(
   const matches = (matchesResult.data || []) as MatchWithTeams[];
   const categories = (categoriesResult.data || []) as TournamentCategory[];
 
-  console.log('[PDF] Fresh data from DB:');
-  console.log('[PDF] Teams:', teams.length);
-  console.log('[PDF] Players:', players.length);
-  console.log('[PDF] Matches:', matches.length);
-  console.log('[PDF] Categories:', categories.length);
   
   // Debug: show team/player groups
   if (teams.length > 0) {
     const teamGroups = [...new Set(teams.map(t => t.group_name || 'null'))];
-    console.log('[PDF] Team groups:', teamGroups);
   }
   if (players.length > 0) {
     const playerGroups = [...new Set(players.map(p => p.group_name || 'null'))];
-    console.log('[PDF] Player groups:', playerGroups);
   }
   
   // Debug: show match statuses
@@ -246,13 +235,11 @@ export async function exportTournamentPDF(
     acc[m.status || 'undefined'] = (acc[m.status || 'undefined'] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
-  console.log('[PDF] Match statuses:', matchStatuses);
 
   // Tournament format is the single source of truth
   const format = (tournament as { format: string }).format;
   const roundRobinType = tournament.round_robin_type ?? null;
 
-  console.log('[PDF] Tipo do torneio: format=', format, 'round_robin_type=', roundRobinType);
 
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -309,11 +296,8 @@ export async function exportTournamentPDF(
   const groupMatches = completedMatches.filter(m => isGroupRoundFn(m.round || ''));
   const knockoutMatches = completedMatches.filter(m => isKnockoutRoundFn(m.round || ''));
 
-  console.log('[PDF] Completed:', completedMatches.length, 'Group matches:', groupMatches.length, 'Knockout matches:', knockoutMatches.length);
-  console.log('[PDF] Rounds presentes:', [...new Set(matches.map(m => m.round))]);
   
   if (completedMatches.length > 0) {
-    console.log('[PDF] Sample match:', completedMatches[0]);
   }
 
   // Escolha do PDF = exactamente o tipo definido nas definições do torneio (sem inferências)
@@ -353,7 +337,6 @@ export async function exportTournamentPDF(
   // Save
   const fileName = `${tournament.name}_resultados.pdf`.replace(/\s+/g, '_');
   doc.save(fileName);
-  console.log('[PDF] Saved:', fileName);
 }
 
 // ============================================================
@@ -805,9 +788,6 @@ function exportCrossedPlayoffsTeamsTournament(
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  console.log('[PDF-CROSSED-TEAMS] Teams:', teams.length);
-  console.log('[PDF-CROSSED-TEAMS] Matches:', matches.length);
-  console.log('[PDF-CROSSED-TEAMS] Categories:', categories.length);
 
   // Separate group matches and knockout matches
   const groupMatches = matches.filter(m => {
@@ -819,7 +799,6 @@ function exportCrossedPlayoffsTeamsTournament(
     return r.startsWith('crossed_');
   });
 
-  console.log('[PDF-CROSSED-TEAMS] Group matches:', groupMatches.length, 'Knockout matches:', knockoutMatches.length);
 
   // ── FINAL CLASSIFICATION from knockout results ──
   const getWinnerLoser = (match: MatchWithTeams) => {
@@ -1294,9 +1273,6 @@ function exportNonStopTournament(
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  console.log('[PDF-NONSTOP] Teams:', teams.length);
-  console.log('[PDF-NONSTOP] Matches:', matches.length);
-  console.log('[PDF-NONSTOP] Categories:', categories.length);
 
   // Group teams by category if exists
   const teamsByCategory = new Map<string, TeamWithPlayers[]>();
@@ -1497,8 +1473,6 @@ function exportAmericanTournament(
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  console.log('[PDF-AMERICAN] Teams:', teams.length);
-  console.log('[PDF-AMERICAN] Matches:', matches.length);
 
   // Section title
   doc.setFontSize(14);
@@ -1669,7 +1643,6 @@ function exportAmericanTournament(
     }
   });
 
-  console.log('[PDF-AMERICAN] Unique players found:', playerMap.size);
 
   // Calculate individual stats
   matches.forEach(match => {
@@ -1793,17 +1766,8 @@ function exportAmericanIndividualTournament(
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth();
 
-  console.log('[PDF-AMERICAN-IND] Players:', players.length);
-  console.log('[PDF-AMERICAN-IND] Players IDs:', players.map(p => p.id));
-  console.log('[PDF-AMERICAN-IND] Matches:', matches.length);
   if (matches.length > 0) {
     const sampleMatch = matches[0] as any;
-    console.log('[PDF-AMERICAN-IND] Sample match player IDs:', {
-      p1: sampleMatch.player1_individual_id,
-      p2: sampleMatch.player2_individual_id,
-      p3: sampleMatch.player3_individual_id,
-      p4: sampleMatch.player4_individual_id
-    });
   }
 
   // Section title
@@ -2127,7 +2091,6 @@ async function exportTeamsTournament(
           await supabase.from('teams').update({ final_position: fp.position }).eq('id', fp.teamId);
         }
       }
-      console.log('[PDF] Wrote final_position to', finalPositions.length, 'teams for league integration');
     }
 
     const teamsByGroup = new Map<string, TeamWithPlayers[]>();

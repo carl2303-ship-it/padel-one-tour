@@ -324,7 +324,6 @@ function generateRoundRobinSchedule(
   const matchesPerRound = n / 2;
   const hasOutdoor = outdoorCourtIndices.size > 0;
 
-  console.log('[SCHEDULER V3] Circle rotation:', teamCount, 'teams,', rounds, 'rounds,', matchesPerRound, 'matches per round');
   if (hasOutdoor) console.log('[SCHEDULER V3] Outdoor courts:', [...outdoorCourtIndices]);
 
   let matchNumber = 1;
@@ -346,7 +345,6 @@ function generateRoundRobinSchedule(
   };
 
   for (let round = 0; round < rounds; round++) {
-    console.log('[SCHEDULER V3] Round', round + 1);
 
     const roundMatches: Array<{ team1_id: string; team2_id: string }> = [];
 
@@ -439,7 +437,6 @@ function generateRoundRobinSchedule(
           scheduled_time: scheduledTime.toISOString(),
           court: bestAssignment[i].toString()
         });
-        console.log('[SCHEDULER V3] Slot', timeSlotIndex, 'Court', bestAssignment[i], ':', slotMatches[i].team1_id, 'vs', slotMatches[i].team2_id);
       }
 
       timeSlotIndex++;
@@ -455,7 +452,6 @@ function generateRoundRobinSchedule(
     }
   }
 
-  console.log('[SCHEDULER V3] COMPLETE! Total matches scheduled:', matches.length);
   return matches;
 }
 
@@ -470,7 +466,6 @@ function generateGroupStageSchedule(
   knockoutStage: string = 'semifinals',
   outdoorCourtIndices: Set<number> = new Set()
 ): ScheduledMatch[] {
-  console.log('[GROUP STAGE] Starting group stage scheduling for', teams.length, 'teams');
 
   const teamsByGroup = new Map<string, Team[]>();
   teams.forEach(team => {
@@ -482,7 +477,6 @@ function generateGroupStageSchedule(
     }
   });
 
-  console.log('[GROUP STAGE] Found', teamsByGroup.size, 'groups');
 
   // Generate matches for each group
   const sortedGroups = Array.from(teamsByGroup.keys()).sort();
@@ -529,9 +523,6 @@ function generateGroupStageSchedule(
     });
   });
 
-  console.log('[GROUP STAGE V4] Total matches to schedule:', allMatches.length);
-  console.log('[GROUP STAGE V4] Groups:', sortedGroups);
-  console.log('[GROUP STAGE V4] Courts:', numberOfCourts);
 
   let timeSlotIndex = 0;
   let scheduledCount = 0;
@@ -556,7 +547,6 @@ function generateGroupStageSchedule(
   while (scheduledCount < allMatches.length && timeSlotIndex < maxSlots) {
     const teamsPlayingThisSlot = new Set<string>();
 
-    console.log(`[GROUP STAGE V4] === TIME SLOT ${timeSlotIndex} === (${scheduledCount}/${allMatches.length} scheduled)`);
 
     // Collect eligible matches for this slot
     type SlotEntry = { matchItem: typeof allMatches[0]; team1Id: string; team2Id: string; forced: boolean };
@@ -587,7 +577,6 @@ function generateGroupStageSchedule(
 
     // Second pass: force without rest if nothing was found
     if (slotEntries.length === 0 && scheduledCount < allMatches.length) {
-      console.log('[GROUP STAGE V4] ⚠️ Forcing matches without rest for slot', timeSlotIndex);
       for (let i = 0; i < allMatches.length && slotEntries.length < numberOfCourts; i++) {
         const matchItem = allMatches[i];
         if (matchItem.scheduled) continue;
@@ -676,7 +665,6 @@ function generateGroupStageSchedule(
         });
 
         const label = forced ? '⚠️' : '✅';
-        console.log(`[GROUP STAGE V4] ${label} Slot ${timeSlotIndex} Court ${court}: Group ${matchItem.group} - ${matchItem.match.team1.name} vs ${matchItem.match.team2.name}${forced ? ' (FORCED)' : ''}`);
 
         teamLastPlayed.set(team1Id, timeSlotIndex);
         teamLastPlayed.set(team2Id, timeSlotIndex);
@@ -688,9 +676,7 @@ function generateGroupStageSchedule(
     timeSlotIndex++;
   }
 
-  console.log('[GROUP STAGE V4] ✅ COMPLETE! Total group matches scheduled:', scheduledMatches.length);
   
-  console.log('[GROUP STAGE V4] Adding knockout stage matches for stage:', knockoutStage);
 
   const lastGroupMatchTime = scheduledMatches.length > 0
     ? new Date(scheduledMatches[scheduledMatches.length - 1].scheduled_time)
@@ -749,8 +735,6 @@ function generateGroupStageSchedule(
   addKnockoutMatch('final', '2');
 
   const knockoutCount = scheduledMatches.length - matchesBefore;
-  console.log(`[GROUP STAGE V4] Added ${knockoutCount} knockout matches (stage: ${knockoutStage})`);
-  console.log('[GROUP STAGE V4] TOTAL matches (group + knockout):', scheduledMatches.length);
   
   return scheduledMatches;
 }

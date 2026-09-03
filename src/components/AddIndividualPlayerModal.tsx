@@ -300,7 +300,6 @@ export default function AddIndividualPlayerModal({
         wants_dinner: wantsDinner,
       };
 
-      console.log('[PLAYER INSERT - EXISTING] Inserindo jogador existente:', insertData);
 
       // Use a fresh client without auth headers for anonymous inserts
       const clientToUse = user
@@ -378,7 +377,6 @@ export default function AddIndividualPlayerModal({
       }
       if (normalizedPhone) insertData.phone_number = normalizedPhone;
 
-      console.log('[PLAYER INSERT - NEW] Inserindo novo jogador:', insertData);
 
       // Use a fresh client without auth headers for anonymous inserts
       const clientToUse = user

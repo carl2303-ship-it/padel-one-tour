@@ -88,7 +88,6 @@ async function advanceWinnerToNextRound(
   const isFirstSlot = matchPosition % 2 === 0;
   const updateField = isFirstSlot ? 'team1_id' : 'team2_id';
 
-  console.log(`[ADVANCE] Match ${currentMatchNumber} (position ${matchPosition}) -> next match position ${nextMatchPosition}, slot: ${updateField}`);
 
   await supabase
     .from('matches')
@@ -160,7 +159,6 @@ async function advanceLoserToClassificationRound(
   if (classificationRound === '3rd_place') {
     const match = classificationMatches[0];
     const updateField = !match.team1_id ? 'team1_id' : 'team2_id';
-    console.log(`[CLASSIFICATION] Loser from ${currentRound} match ${currentMatchNumber} -> ${classificationRound}, slot: ${updateField}`);
     await supabase
       .from('matches')
       .update({ [updateField]: loserId })
@@ -172,7 +170,6 @@ async function advanceLoserToClassificationRound(
     const classificationMatch = classificationMatches[nextMatchPosition];
     const isFirstSlot = matchPosition % 2 === 0;
     const updateField = isFirstSlot ? 'team1_id' : 'team2_id';
-    console.log(`[CLASSIFICATION] QF loser from match ${currentMatchNumber} (pos ${matchPosition}) -> 5th_semi[${nextMatchPosition}], slot: ${updateField}`);
     await supabase
       .from('matches')
       .update({ [updateField]: loserId })
@@ -185,7 +182,6 @@ async function advanceLoserToClassificationRound(
     const classificationMatch = classificationMatches[nextMatchPosition];
     const isFirstSlot = matchPosition % 2 === 0;
     const updateField = isFirstSlot ? 'team1_id' : 'team2_id';
-    console.log(`[CLASSIFICATION] Loser from ${currentRound} match ${currentMatchNumber} (position ${matchPosition}) -> ${classificationRound} position ${nextMatchPosition}, slot: ${updateField}`);
     await supabase
       .from('matches')
       .update({ [updateField]: loserId })
@@ -230,7 +226,6 @@ async function advanceClassificationWinner(
 
   const match = nextMatches[0];
   const updateField = !match.team1_id ? 'team1_id' : 'team2_id';
-  console.log(`[CLASSIFICATION] Winner from ${currentRound} match ${currentMatchNumber} -> ${nextRound}, slot: ${updateField}`);
   await supabase
     .from('matches')
     .update({ [updateField]: winnerId })
@@ -262,7 +257,6 @@ async function advanceCrossedPlayoffTeam(
     const sfSlot = qfNumber % 2 === 1 ? 'team1_id' : 'team2_id';
     const sfRound = `crossed_r2_j${sfNumber}`;
     
-    console.log(`[CROSSED-ADVANCE] QF${qfNumber} winner → ${sfRound} ${sfSlot}`);
     
     // Find and update the semifinal match
     const { data: sfMatch } = await supabase
@@ -278,7 +272,6 @@ async function advanceCrossedPlayoffTeam(
         .from('matches')
         .update({ [sfSlot]: winnerId })
         .eq('id', sfMatch.id);
-      console.log(`[CROSSED-ADVANCE] Updated ${sfRound} ${sfSlot} with winner`);
     }
     
     // Losers of QF go to classification:
@@ -287,7 +280,6 @@ async function advanceCrossedPlayoffTeam(
     const classRound = qfNumber <= 2 ? 'crossed_r4_5th' : 'crossed_r5_7th';
     const classSlot = qfNumber % 2 === 1 ? 'team1_id' : 'team2_id';
     
-    console.log(`[CROSSED-ADVANCE] QF${qfNumber} loser → ${classRound} ${classSlot}`);
     
     const { data: classMatch } = await supabase
       .from('matches')
@@ -302,7 +294,6 @@ async function advanceCrossedPlayoffTeam(
         .from('matches')
         .update({ [classSlot]: loserId })
         .eq('id', classMatch.id);
-      console.log(`[CROSSED-ADVANCE] Updated ${classRound} ${classSlot} with loser`);
     }
     
   } else if (r2Match) {
@@ -312,7 +303,6 @@ async function advanceCrossedPlayoffTeam(
     // SF1 winner → Final team1, SF2 winner → Final team2
     const finalSlot = sfNumber === 1 ? 'team1_id' : 'team2_id';
     
-    console.log(`[CROSSED-ADVANCE] SF${sfNumber} winner → crossed_r3_final ${finalSlot}`);
     
     const { data: finalMatch } = await supabase
       .from('matches')
@@ -327,13 +317,11 @@ async function advanceCrossedPlayoffTeam(
         .from('matches')
         .update({ [finalSlot]: winnerId })
         .eq('id', finalMatch.id);
-      console.log(`[CROSSED-ADVANCE] Updated final ${finalSlot} with winner`);
     }
     
     // SF loser → 3rd place
     const thirdSlot = sfNumber === 1 ? 'team1_id' : 'team2_id';
     
-    console.log(`[CROSSED-ADVANCE] SF${sfNumber} loser → crossed_r3_3rd_place ${thirdSlot}`);
     
     const { data: thirdMatch } = await supabase
       .from('matches')
@@ -348,7 +336,6 @@ async function advanceCrossedPlayoffTeam(
         .from('matches')
         .update({ [thirdSlot]: loserId })
         .eq('id', thirdMatch.id);
-      console.log(`[CROSSED-ADVANCE] Updated 3rd place ${thirdSlot} with loser`);
     }
   }
 }
@@ -422,7 +409,6 @@ async function populateTierFinals(
   const { data: semifinalMatches } = await semifinalQuery;
 
   if (!semifinalMatches || semifinalMatches.length !== 2) {
-    console.log(`[MATCH_MODAL] Not enough ${semifinalRound} matches completed (${semifinalMatches?.length || 0}/2)`);
     return;
   }
 
@@ -431,12 +417,10 @@ async function populateTierFinals(
   const losers1 = getMatchLoserPlayers(semifinalMatches[0]);
   const losers2 = getMatchLoserPlayers(semifinalMatches[1]);
 
-  console.log(`[MATCH_MODAL] ${semifinalRound} results:`, { winners1, winners2, losers1, losers2 });
 
   if (winners1.length > 0 && winners2.length > 0) {
     const allWinners = [...winners1, ...winners2];
     const shuffledWinners = shuffleArray(allWinners);
-    console.log(`[MATCH_MODAL] Shuffled winners for ${finalRound}:`, shuffledWinners);
 
     let finalQuery = supabase
       .from('matches')
@@ -463,14 +447,12 @@ async function populateTierFinals(
         })
         .eq('id', finalMatch.id);
 
-      console.log(`[MATCH_MODAL] Populated ${finalRound} match with shuffled winners`);
     }
   }
 
   if (losers1.length > 0 && losers2.length > 0) {
     const allLosers = [...losers1, ...losers2];
     const shuffledLosers = shuffleArray(allLosers);
-    console.log(`[MATCH_MODAL] Shuffled losers for ${thirdPlaceRound}:`, shuffledLosers);
 
     let thirdPlaceQuery = supabase
       .from('matches')
@@ -497,7 +479,6 @@ async function populateTierFinals(
         })
         .eq('id', thirdPlaceMatch.id);
 
-      console.log(`[MATCH_MODAL] Populated ${thirdPlaceRound} match with shuffled losers`);
     }
   }
 }
@@ -734,13 +715,11 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
   }, [tournamentId, matchId]);
 
   const fetchTeams = async () => {
-    console.log('[MatchModal] Fetching teams for tournament:', tournamentId);
     const { data, error } = await supabase
       .from('teams')
       .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)')
       .eq('tournament_id', tournamentId);
 
-    console.log('[MatchModal] Teams fetch result:', { data, error, count: data?.length });
     if (error) {
       console.error('[MatchModal] Teams fetch error:', error);
     }
@@ -752,14 +731,12 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
   const fetchMatch = async () => {
     if (!matchId) return;
 
-    console.log('[MatchModal] Fetching match:', matchId);
     const { data, error } = await supabase
       .from('matches')
       .select('*')
       .eq('id', matchId)
       .single();
 
-    console.log('[MatchModal] Match fetch result:', { data, error, team1_id: data?.team1_id, team2_id: data?.team2_id });
     if (error) {
       console.error('[MatchModal] Match fetch error:', error);
     }
@@ -864,10 +841,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
     const currentScheduled = norm(formData.scheduled_time);
     const scheduledChanged = currentScheduled !== initialScheduled;
     const courtChanged = (formData.court || '') !== (initialCourt || '');
-    console.log('[MATCH_MODAL] schedule diff check:', {
-      initialScheduled, currentScheduled, scheduledChanged,
-      initialCourt, currentCourt: formData.court, courtChanged,
-    });
     if (scheduledChanged) {
       matchData.scheduled_time = formData.scheduled_time
         ? new Date(formData.scheduled_time).toISOString()
@@ -950,10 +923,8 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
             return m.status === 'completed' || t1 > 0 || t2 > 0;
           };
           if (groupMatches && groupMatches.length > 0 && groupMatches.every(hasResult)) {
-            console.log('[MATCH_MODAL] All group matches done — populating knockout');
             await populateTeamPlacementMatches(tournamentId, currentMatch.category_id || null);
           } else {
-            console.log('[MATCH_MODAL] Group match saved — knockout sync deferred until groups finish');
           }
         } catch (err) {
           console.error('[MATCH_MODAL] populateTeamPlacementMatches failed:', err);
@@ -1017,7 +988,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         
         if (isCrossedKnockout) {
           const loserId = winner === formData.team1_id ? formData.team2_id : formData.team1_id;
-          console.log(`[MATCH_MODAL] Crossed playoffs teams match completed: ${currentMatch.round}, winner: ${winner}, loser: ${loserId}`);
           
           await advanceCrossedPlayoffTeam(
             tournamentId,
@@ -1030,7 +1000,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         // Handle final/3rd/classification rounds for position calculation
         const crossedFinalRounds = ['crossed_r3_final', 'crossed_r3_3rd_place', 'crossed_r4_5th', 'crossed_r5_7th'];
         if (crossedFinalRounds.includes(currentMatch.round)) {
-          console.log('[MATCH_MODAL] Crossed playoff final/classification match completed, calculating positions');
           await calculateIndividualFinalPositions(tournamentId, null);
         }
       }
@@ -1052,9 +1021,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
               // Para mixed_american, NÃO usar populatePlacementMatches genérica
               // O auto-fill correto (com cruzamento F+M) é feito no fetchTournamentData / handleMatchRealtime
               if (resolvedFormat === 'mixed_american') {
-                console.log('[MATCH_MODAL] All group matches completed (mixed format) - knockout will be populated by fetchTournamentData');
               } else {
-                console.log('[MATCH_MODAL] All group matches completed, populating knockout brackets');
                 await populatePlacementMatches(tournamentId);
               }
             }
@@ -1069,7 +1036,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         ];
 
         if (knockoutRoundsForIndividual.includes(currentMatch.round)) {
-          console.log('[MATCH_MODAL] Individual Groups+Knockout match completed, advancing winner/loser');
           await advanceKnockoutWinner(
             tournamentId,
             theMatchId,
@@ -1084,7 +1050,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
 
         if (allSemifinalRounds.includes(currentMatch.round)) {
           const roundToUse = currentMatch.round === 'semifinal' ? '1st_semifinal' : currentMatch.round;
-          console.log(`[MATCH_MODAL] ${currentMatch.round} completed, checking if we can populate finals`);
           await populateSemifinalAndPlacementMatches(tournamentId, currentMatch.category_id, roundToUse);
         }
 
@@ -1097,12 +1062,10 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         ];
 
         if (allFinalRounds.includes(currentMatch.round)) {
-          console.log('[MATCH_MODAL] Knockout match completed, calculating positions');
           await calculateIndividualFinalPositions(tournamentId, currentMatch.category_id);
         }
 
         if (currentMatch.round?.startsWith('crossed_r3_')) {
-          console.log('[MATCH_MODAL] Crossed playoff R3 match completed, calculating all positions');
           await calculateIndividualFinalPositions(tournamentId, null);
         }
       }
@@ -1221,7 +1184,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         '13th_place', '15th_place', '17th_place', '19th_place', '21st_place', '23rd_place'
       ];
       if (isKnockoutRound && knockoutPositionRounds.includes(matchData.round)) {
-        console.log('[MATCH_MODAL] Reverting knockout position match, clearing final positions');
         await clearIndividualFinalPositions(tournamentId, matchData.category_id);
       }
 
@@ -1252,7 +1214,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
                   ? { player1_individual_id: null, player2_individual_id: null }
                   : { player3_individual_id: null, player4_individual_id: null };
                 await supabase.from('matches').update(clearData).eq('id', sfMatches[targetIdx].id);
-                console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared SF${targetIdx + 1} ${isFirst ? 'team1' : 'team2'}`);
               }
             }
 
@@ -1265,7 +1226,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
                 ? { player1_individual_id: null, player2_individual_id: null }
                 : { player3_individual_id: null, player4_individual_id: null };
               await supabase.from('matches').update(clearData).eq('id', consolMatches[0].id);
-              console.log(`[MATCH_MODAL] Reverted QF${matchIndex + 1}: cleared consolation ${isFirst ? 'team1' : 'team2'}`);
             }
           }
         }
@@ -1281,7 +1241,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         matchData.round.startsWith('group_')
       ) {
         try {
-          console.log('[MATCH_MODAL] Group match reverted, refreshing knockouts (defensive)');
           await populateTeamPlacementMatches(tournamentId, matchData.category_id || null);
         } catch (err) {
           console.error('[MATCH_MODAL] populateTeamPlacementMatches (revert) failed:', err);
@@ -1298,7 +1257,6 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         const classRound = qfNum <= 2 ? 'crossed_r4_5th' : 'crossed_r5_7th';
         const classSlot = qfNum % 2 === 1 ? 'team1_id' : 'team2_id';
         
-        console.log(`[MATCH_MODAL] Reverting crossed QF${qfNum}: clearing ${sfRound} ${sfSlot} and ${classRound} ${classSlot}`);
         
         await supabase.from('matches').update({ [sfSlot]: null }).eq('tournament_id', tournamentId).eq('round', sfRound).is('category_id', null);
         await supabase.from('matches').update({ [classSlot]: null }).eq('tournament_id', tournamentId).eq('round', classRound).is('category_id', null);
@@ -1307,13 +1265,11 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
         const sfNum = parseInt(matchData.round.match(/j(\d+)/)?.[1] || '0');
         const slot = sfNum === 1 ? 'team1_id' : 'team2_id';
         
-        console.log(`[MATCH_MODAL] Reverting crossed SF${sfNum}: clearing final and 3rd_place ${slot}`);
         
         await supabase.from('matches').update({ [slot]: null }).eq('tournament_id', tournamentId).eq('round', 'crossed_r3_final').is('category_id', null);
         await supabase.from('matches').update({ [slot]: null }).eq('tournament_id', tournamentId).eq('round', 'crossed_r3_3rd_place').is('category_id', null);
       }
 
-      console.log('[MATCH_MODAL] Match reverted successfully');
       onSuccess();
     } catch (err) {
       console.error('[MATCH_MODAL] Error reverting match:', err);

@@ -111,7 +111,6 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
     setError('');
 
     try {
-      console.log(`[DELETE-PLAYER] Iniciando remoção do jogador ${player.id} (${player.name})`);
 
       // 1) Encontrar e remover matches individuais que referenciam este jogador
       const [match1, match2, match3, match4] = await Promise.all([
@@ -129,7 +128,6 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
       ])];
 
       if (individualMatchIds.length > 0) {
-        console.log(`[DELETE-PLAYER] Removendo ${individualMatchIds.length} match(es) individuais...`);
         for (const matchId of individualMatchIds) {
           await supabase.from('matches').delete().eq('id', matchId);
         }
@@ -148,7 +146,6 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
 
       if (teamsWithPlayer.length > 0) {
         const teamIds = teamsWithPlayer.map(t => t.id);
-        console.log(`[DELETE-PLAYER] Removendo ${teamsWithPlayer.length} equipa(s) e os seus matches...`);
 
         // Remover matches das equipas primeiro
         const [mTeam1, mTeam2] = await Promise.all([
@@ -183,7 +180,6 @@ export default function EditIndividualPlayerModal({ player, tournamentId, onClos
         setError(deleteError.message);
         setLoading(false);
       } else {
-        console.log(`[DELETE-PLAYER] ✅ Jogador ${player.name} removido com sucesso`);
         await recalculateSeedsByLevel(tournamentId);
         onSuccess();
       }

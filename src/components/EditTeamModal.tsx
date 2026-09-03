@@ -203,7 +203,6 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
 
     if (error) throw error;
 
-    console.log(`[EDIT-TEAM] Jogador "${existingPlayer.name}" copiado para o torneio atual`);
     await fetchPlayers();
     return newPlayer.id;
   };
@@ -226,14 +225,6 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     }
 
     try {
-      console.log('[EDIT-TEAM] Updating team:', {
-        id: team.id,
-        name: teamName,
-        old_player1_id: team.player1_id,
-        new_player1_id: player1Id,
-        old_player2_id: team.player2_id,
-        new_player2_id: player2Id
-      });
 
       // Guardar IDs antigos antes de atualizar
       const oldPlayer1Id = team.player1_id;
@@ -276,18 +267,15 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
         .eq('id', team.id)
         .select('*, player1:players!teams_player1_id_fkey(*), player2:players!teams_player2_id_fkey(*)');
 
-      console.log('[EDIT-TEAM] Update result:', { data, error: updateError });
 
       if (updateError) {
         setError(updateError.message);
         setLoading(false);
       } else {
-        console.log('[EDIT-TEAM] Team updated successfully');
 
         await recalculateSeedsByLevel(tournamentId);
         await fetchPlayers();
 
-        console.log('[EDIT-TEAM] Calling onSuccess');
         onSuccess();
       }
     } catch (err) {

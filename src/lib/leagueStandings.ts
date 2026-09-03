@@ -2,7 +2,6 @@ import { supabase } from './supabase';
 
 // Função para calcular posições finais dos playoffs cruzados
 async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<boolean> {
-  console.log('[CROSSED_POSITIONS] Calculating positions for crossed playoffs');
 
   // Buscar todos os jogos de playoffs cruzados completados
   const { data: crossedMatches } = await supabase
@@ -13,7 +12,6 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
     .like('round', 'crossed_%');
 
   if (!crossedMatches || crossedMatches.length === 0) {
-    console.log('[CROSSED_POSITIONS] No crossed playoff matches found');
     return false;
   }
 
@@ -87,7 +85,6 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
     const result = getMatchWinnerLoser(finalMatch);
     const sortedWinners = sortByGroupCriteria(result.winners);
     for (const playerId of sortedWinners) {
-      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
       await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
       currentPosition++;
     }
@@ -96,7 +93,6 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
     if (!thirdPlaceMatch) {
       const sortedLosers = sortByGroupCriteria(result.losers);
       for (const playerId of sortedLosers) {
-        console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
         await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
         currentPosition++;
       }
@@ -108,13 +104,11 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
     const result = getMatchWinnerLoser(thirdPlaceMatch);
     const sortedWinners = sortByGroupCriteria(result.winners);
     for (const playerId of sortedWinners) {
-      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
       await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
       currentPosition++;
     }
     const sortedLosers = sortByGroupCriteria(result.losers);
     for (const playerId of sortedLosers) {
-      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
       await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
       currentPosition++;
     }
@@ -125,13 +119,11 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
     const result = getMatchWinnerLoser(fifthPlaceMatch);
     const sortedWinners = sortByGroupCriteria(result.winners);
     for (const playerId of sortedWinners) {
-      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
       await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
       currentPosition++;
     }
     const sortedLosers = sortByGroupCriteria(result.losers);
     for (const playerId of sortedLosers) {
-      console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for player ${playerId}`);
       await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
       currentPosition++;
     }
@@ -152,19 +144,16 @@ async function calculateCrossedPlayoffPositions(tournamentId: string): Promise<b
       
       if (!player?.final_position) {
         // Atribuir posições 7-12 para perdedores de R1 que não foram ao 5º/6º
-        console.log(`[CROSSED_POSITIONS] Setting position ${currentPosition} for R1 loser ${playerId}`);
         await supabase.from('players').update({ final_position: currentPosition }).eq('id', playerId);
         currentPosition++;
       }
     }
   }
 
-  console.log('[CROSSED_POSITIONS] Completed successfully');
   return true;
 }
 
 export async function clearIndividualFinalPositions(tournamentId: string, categoryId?: string | null) {
-  console.log('[CLEAR_POSITIONS] Clearing final positions for tournament:', tournamentId, 'category:', categoryId);
 
   let query = supabase
     .from('players')
@@ -182,14 +171,12 @@ export async function clearIndividualFinalPositions(tournamentId: string, catego
     return false;
   }
 
-  console.log('[CLEAR_POSITIONS] Positions cleared successfully');
   return true;
 }
 
 // Calcular posições finais para torneios round_robin individuais (americano)
 // baseado nas standings (vitórias, pontos, diferença de jogos)
 async function calculateRoundRobinIndividualPositions(tournamentId: string, categoryId?: string | null): Promise<boolean> {
-  console.log('[RR_POSITIONS] Calculating round robin individual positions for tournament:', tournamentId, 'category:', categoryId);
 
   // Buscar jogadores do torneio
   let playersQuery = supabase
@@ -204,7 +191,6 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
   const { data: players } = await playersQuery;
 
   if (!players || players.length === 0) {
-    console.log('[RR_POSITIONS] No players found');
     return false;
   }
 
@@ -222,11 +208,9 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
   const { data: completedMatches } = await matchesQuery;
 
   if (!completedMatches || completedMatches.length === 0) {
-    console.log('[RR_POSITIONS] No completed matches found');
     return false;
   }
 
-  console.log('[RR_POSITIONS] Found', players.length, 'players and', completedMatches.length, 'completed matches');
 
   // Calcular estatísticas de cada jogador
   const playerStats = new Map<string, {
@@ -311,7 +295,6 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
     const position = i + 1;
     const player = sortedPlayers[i];
     const points = player.wins * 2 + player.draws;
-    console.log(`[RR_POSITIONS] Position ${position}: ${player.name} (W:${player.wins} D:${player.draws} L:${player.losses} Pts:${points} GW:${player.gamesWon} GL:${player.gamesLost})`);
 
     await supabase
       .from('players')
@@ -319,12 +302,10 @@ async function calculateRoundRobinIndividualPositions(tournamentId: string, cate
       .eq('id', player.id);
   }
 
-  console.log('[RR_POSITIONS] Successfully assigned positions to', sortedPlayers.length, 'players');
   return true;
 }
 
 export async function calculateIndividualFinalPositions(tournamentId: string, categoryId?: string | null) {
-  console.log('[CALCULATE_POSITIONS] Starting for tournament:', tournamentId, 'category:', categoryId);
 
   const matchFilter: any = {
     tournament_id: tournamentId,
@@ -345,7 +326,6 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
 
   // Se houver playoffs cruzados, usar essa lógica
   if (crossedFinalMatch) {
-    console.log('[CALCULATE_POSITIONS] Found crossed playoffs final, using crossed playoffs logic');
     return await calculateCrossedPlayoffPositions(tournamentId);
   }
 
@@ -377,11 +357,9 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   }
 
   if (!finalMatch) {
-    console.log('[CALCULATE_POSITIONS] No final match found, trying round_robin individual standings...');
     return await calculateRoundRobinIndividualPositions(tournamentId, categoryId);
   }
   
-  console.log('[CALCULATE_POSITIONS] Found final match with round:', finalMatch.round);
 
   const getMatchWinner = (match: any): string[] => {
     const team1Score = (match?.team1_score_set1 || 0) + (match?.team1_score_set2 || 0) + (match?.team1_score_set3 || 0);
@@ -452,8 +430,6 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   const finalWinners = getMatchWinner(finalMatch);
   const finalLosers = getMatchLoser(finalMatch);
 
-  console.log('[CALCULATE_POSITIONS] Final winners:', finalWinners);
-  console.log('[CALCULATE_POSITIONS] Final losers:', finalLosers);
 
   let thirdPlaceMatch = null;
   const { data: normal3rd } = await supabase
@@ -511,7 +487,6 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   const sortedFinalWinners = rankWithinPair(finalWinners);
   for (let i = 0; i < sortedFinalWinners.length; i++) {
     await supabase.from('players').update({ final_position: nextPosition }).eq('id', sortedFinalWinners[i]);
-    console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${sortedFinalWinners[i]} (Final winner)`);
     nextPosition++;
   }
 
@@ -519,23 +494,19 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   const sortedFinalLosers = rankWithinPair(finalLosers);
   for (let i = 0; i < sortedFinalLosers.length; i++) {
     await supabase.from('players').update({ final_position: nextPosition }).eq('id', sortedFinalLosers[i]);
-    console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${sortedFinalLosers[i]} (Final loser)`);
     nextPosition++;
   }
 
   // 5°, 6°, 7°, 8° — Jogo de 3°/4° lugar (semi-finalistas)
   if (thirdPlaceMatch) {
-    console.log('[CALCULATE_POSITIONS] Found 3rd place match with round:', thirdPlaceMatch.round);
     const thirdWinners = rankWithinPair(getMatchWinner(thirdPlaceMatch));
     const thirdLosers = rankWithinPair(getMatchLoser(thirdPlaceMatch));
     for (let i = 0; i < thirdWinners.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', thirdWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${thirdWinners[i]} (3rd place winner)`);
       nextPosition++;
     }
     for (let i = 0; i < thirdLosers.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', thirdLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${thirdLosers[i]} (3rd place loser)`);
       nextPosition++;
     }
   }
@@ -544,15 +515,12 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   if (fifthPlaceMatch) {
     const fifthWinners = rankWithinPair(getMatchWinner(fifthPlaceMatch));
     const fifthLosers = rankWithinPair(getMatchLoser(fifthPlaceMatch));
-    console.log('[CALCULATE_POSITIONS] 5th place winners:', fifthWinners);
     for (let i = 0; i < fifthWinners.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', fifthWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${fifthWinners[i]} (5th place winner)`);
       nextPosition++;
     }
     for (let i = 0; i < fifthLosers.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', fifthLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${fifthLosers[i]} (5th place loser)`);
       nextPosition++;
     }
   }
@@ -561,15 +529,12 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   if (seventhPlaceMatch) {
     const seventhWinners = rankWithinPair(getMatchWinner(seventhPlaceMatch));
     const seventhLosers = rankWithinPair(getMatchLoser(seventhPlaceMatch));
-    console.log('[CALCULATE_POSITIONS] 7th place winners:', seventhWinners);
     for (let i = 0; i < seventhWinners.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', seventhWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${seventhWinners[i]} (7th place winner)`);
       nextPosition++;
     }
     for (let i = 0; i < seventhLosers.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', seventhLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${seventhLosers[i]} (7th place loser)`);
       nextPosition++;
     }
   }
@@ -578,20 +543,16 @@ export async function calculateIndividualFinalPositions(tournamentId: string, ca
   if (consolationMatch) {
     const consolationWinners = rankWithinPair(getMatchWinner(consolationMatch));
     const consolationLosers = rankWithinPair(getMatchLoser(consolationMatch));
-    console.log('[CALCULATE_POSITIONS] Consolation winners:', consolationWinners);
     for (let i = 0; i < consolationWinners.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', consolationWinners[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${consolationWinners[i]} (Consolation winner)`);
       nextPosition++;
     }
     for (let i = 0; i < consolationLosers.length; i++) {
       await supabase.from('players').update({ final_position: nextPosition }).eq('id', consolationLosers[i]);
-      console.log(`[CALCULATE_POSITIONS] ${nextPosition}° → ${consolationLosers[i]} (Consolation loser)`);
       nextPosition++;
     }
   }
 
-  console.log('[CALCULATE_POSITIONS] Completed successfully, assigned positions 1 to', nextPosition - 1);
   return true;
 }
 
@@ -692,7 +653,6 @@ async function updatePlayerStanding(
 }
 
 export async function updateLeagueStandings(tournamentId: string) {
-  console.log('[LEAGUE_UPDATE] updateLeagueStandings called for tournament:', tournamentId);
 
   const { data: tournament, error: tournamentError } = await supabase
     .from('tournaments')
@@ -700,11 +660,8 @@ export async function updateLeagueStandings(tournamentId: string) {
     .eq('id', tournamentId)
     .single();
 
-  console.log('[LEAGUE_UPDATE] Tournament data:', tournament);
-  console.log('[LEAGUE_UPDATE] Tournament error:', tournamentError);
 
   if (!tournament || tournament.status !== 'completed') {
-    console.log('[LEAGUE_UPDATE] Skipping - no tournament or not completed. Status:', tournament?.status);
     return;
   }
 
@@ -713,16 +670,12 @@ export async function updateLeagueStandings(tournamentId: string) {
     .select('league_id, league_category, group_filter')
     .eq('tournament_id', tournamentId);
 
-  console.log('[LEAGUE_UPDATE] Tournament leagues:', tournamentLeagues);
-  console.log('[LEAGUE_UPDATE] Tournament leagues error:', leaguesError);
   if (tournamentLeagues) {
     tournamentLeagues.forEach((tl: any) => {
-      console.log(`[LEAGUE_UPDATE] League ${tl.league_id}: category=${tl.league_category}, group_filter=${tl.group_filter}`);
     });
   }
 
   if (!tournamentLeagues || tournamentLeagues.length === 0) {
-    console.log('[LEAGUE_UPDATE] Skipping - no leagues associated with this tournament');
     return;
   }
 
@@ -738,23 +691,16 @@ export async function updateLeagueStandings(tournamentId: string) {
     `)
     .eq('tournament_id', tournamentId);
 
-  console.log('[LEAGUE_UPDATE] Teams found:', teams?.length || 0);
-  console.log('[LEAGUE_UPDATE] Teams with final_position:', teams?.filter(t => t.final_position).length || 0);
-  console.log('[LEAGUE_UPDATE] Teams data:', teams);
 
   // Verificar se os player IDs existem na tabela players e têm nomes
   if (teams && teams.length > 0) {
     const allPlayerIds = teams.flatMap(t => [t.player1_id, t.player2_id]).filter(Boolean);
-    console.log('[LEAGUE_UPDATE] Player IDs from teams:', allPlayerIds);
     
     const { data: playersFromIds, error: playersFromIdsError } = await supabase
       .from('players')
       .select('id, name, tournament_id')
       .in('id', allPlayerIds);
     
-    console.log('[LEAGUE_UPDATE] Players found by ID:', playersFromIds?.length || 0);
-    console.log('[LEAGUE_UPDATE] Players from IDs data:', playersFromIds);
-    console.log('[LEAGUE_UPDATE] Players with names:', playersFromIds?.filter(p => p.name).length || 0);
     
     if (playersFromIds && playersFromIds.length === 0) {
       console.warn('[LEAGUE_UPDATE] WARNING: No players found with the IDs from teams! This is why RPC fails.');
@@ -767,14 +713,10 @@ export async function updateLeagueStandings(tournamentId: string) {
     .select('id, name, final_position')
     .eq('tournament_id', tournamentId);
 
-  console.log('[LEAGUE_UPDATE] Players found:', players?.length || 0);
-  console.log('[LEAGUE_UPDATE] Players with final_position:', players?.filter(p => p.final_position).length || 0);
 
   const uniqueLeagueIds = [...new Set(tournamentLeagues.map(tl => tl.league_id))];
-  console.log('[LEAGUE_UPDATE] Associated leagues:', uniqueLeagueIds);
 
   for (const leagueId of uniqueLeagueIds) {
-    console.log('[LEAGUE_UPDATE] Calling recalculate_league_standings for:', leagueId);
     
     // Buscar dados da liga para ver o sistema de pontuação
     const { data: leagueData, error: leagueError } = await supabase
@@ -783,16 +725,12 @@ export async function updateLeagueStandings(tournamentId: string) {
       .eq('id', leagueId)
       .single();
     
-    console.log('[LEAGUE_UPDATE] Liga:', leagueData?.name);
-    console.log('[LEAGUE_UPDATE] scoring_system:', leagueData?.scoring_system);
-    console.log('[LEAGUE_UPDATE] category_scoring_systems:', leagueData?.category_scoring_systems);
     
     // Verificar standings ANTES da chamada RPC
     const { data: standingsBefore } = await supabase
       .from('league_standings')
       .select('*')
       .eq('league_id', leagueId);
-    console.log('[LEAGUE_UPDATE] Standings BEFORE RPC:', standingsBefore?.length || 0, 'entries');
     
     const { error, data } = await supabase.rpc('recalculate_league_standings_for_league', {
       league_uuid: leagueId
@@ -806,7 +744,6 @@ export async function updateLeagueStandings(tournamentId: string) {
     if (leagueCat && leagueData?.category_scoring_systems?.[leagueCat]) {
       effectiveScoring = leagueData.category_scoring_systems[leagueCat];
     }
-    console.log('[LEAGUE_UPDATE] Effective scoring for this tournament (category=' + leagueCat + '):', effectiveScoring);
     if (groupFilter) {
       console.warn('[LEAGUE_UPDATE] ⚠️ group_filter is SET:', groupFilter, '— players without matching group_name will be EXCLUDED');
     }
@@ -815,7 +752,6 @@ export async function updateLeagueStandings(tournamentId: string) {
     if (teams && teams.length > 0) {
       teams.filter(t => t.final_position).forEach(t => {
         const pts = effectiveScoring?.[String(t.final_position)] || 0;
-        console.log(`[LEAGUE_UPDATE] Team "${t.name || t.id}" pos=${t.final_position} → ${pts} pts (per player)`);
       });
     }
 
@@ -823,7 +759,6 @@ export async function updateLeagueStandings(tournamentId: string) {
       console.error('[LEAGUE_UPDATE] Error recalculating league standings:', error);
       console.error('[LEAGUE_UPDATE] Error details:', JSON.stringify(error));
     } else {
-      console.log('[LEAGUE_UPDATE] RPC executed for league:', leagueId);
       
       // Verificar standings DEPOIS da chamada RPC
       const { data: standingsAfter, error: standingsError } = await supabase
@@ -831,17 +766,13 @@ export async function updateLeagueStandings(tournamentId: string) {
         .select('*')
         .eq('league_id', leagueId);
       
-      console.log('[LEAGUE_UPDATE] Standings AFTER RPC:', standingsAfter?.length || 0, 'entries');
-      console.log('[LEAGUE_UPDATE] Standings error:', standingsError);
 
       // Show standings for players from this tournament
       if (standingsAfter && players) {
         const playerNames = new Set(players.map(p => p.name?.toLowerCase()).filter(Boolean));
         const relevantStandings = standingsAfter.filter(s => playerNames.has(s.entity_name?.toLowerCase()));
         if (relevantStandings.length > 0) {
-          console.log(`[LEAGUE_UPDATE] Standings for this tournament's players (${relevantStandings.length}):`);
           relevantStandings.forEach(s => {
-            console.log(`  → ${s.entity_name}: ${s.total_points} pts (${s.tournaments_played} tournaments, best: ${s.best_position}°)`);
           });
         } else {
           console.warn('[LEAGUE_UPDATE] ⚠️ No standings found for this tournament\'s players! Check group_filter or player names.');
@@ -850,11 +781,9 @@ export async function updateLeagueStandings(tournamentId: string) {
     }
   }
 
-  console.log('[LEAGUE_UPDATE] League standings updated for all associated leagues');
 }
 
 export async function recalculateLeagueStandingsForTournament(tournamentId: string) {
-  console.log('Recalculating standings for tournament:', tournamentId);
 
   const { data: tournamentLeagues } = await supabase
     .from('tournament_leagues')
@@ -862,15 +791,12 @@ export async function recalculateLeagueStandingsForTournament(tournamentId: stri
     .eq('tournament_id', tournamentId);
 
   if (!tournamentLeagues || tournamentLeagues.length === 0) {
-    console.log('No leagues associated');
     return;
   }
 
   const uniqueLeagueIds = [...new Set(tournamentLeagues.map(tl => tl.league_id))];
-  console.log('Recalculating for leagues:', uniqueLeagueIds);
 
   for (const leagueId of uniqueLeagueIds) {
-    console.log('Calling recalculate_league_standings for:', leagueId);
     const { error } = await supabase.rpc('recalculate_league_standings_for_league', {
       league_uuid: leagueId
     });
@@ -878,11 +804,9 @@ export async function recalculateLeagueStandingsForTournament(tournamentId: stri
     if (error) {
       console.error('Error recalculating league standings:', error);
     } else {
-      console.log('Recalculated standings for league:', leagueId);
     }
   }
 
-  console.log('Recalculation complete');
 }
 
 async function updateLeagueStandingsIncremental(tournamentId: string) {
@@ -1021,7 +945,6 @@ async function addToPlayerStanding(
 
 // Force recalculation when players are assigned to categories
 export async function recalculateLeagueStandingsForCategory(tournamentId: string, categoryId: string) {
-  console.log('[LEAGUE_RECALC_CATEGORY] Recalculating for tournament:', tournamentId, 'category:', categoryId);
 
   // First, recalculate final positions for players in this category
   await calculateIndividualFinalPositions(tournamentId, categoryId);
@@ -1032,7 +955,6 @@ export async function recalculateLeagueStandingsForCategory(tournamentId: string
 
 // Diagnostic function to check why players are not appearing
 export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueId: string) {
-  console.log('[DIAGNOSE] Checking league standings issue for tournament:', tournamentId, 'league:', leagueId);
 
   const { data: tournamentLeagues } = await supabase
     .from('tournament_leagues')
@@ -1041,14 +963,12 @@ export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueI
     .eq('league_id', leagueId);
 
   if (!tournamentLeagues || tournamentLeagues.length === 0) {
-    console.log('[DIAGNOSE] No tournament_leagues found');
     return { error: 'No tournament_leagues found' };
   }
 
   const tournamentLeague = tournamentLeagues[0];
   const leagueCategory = tournamentLeague.league_category;
 
-  console.log('[DIAGNOSE] League category:', leagueCategory);
 
   let categoryId = null;
   if (leagueCategory) {
@@ -1060,7 +980,6 @@ export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueI
       .maybeSingle();
     
     categoryId = category?.id || null;
-    console.log('[DIAGNOSE] Category ID:', categoryId);
   }
 
   let playersQuery = supabase
@@ -1074,14 +993,8 @@ export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueI
 
   const { data: players } = await playersQuery;
 
-  console.log('[DIAGNOSE] Total players:', players?.length || 0);
-  console.log('[DIAGNOSE] Players with final_position:', players?.filter(p => p.final_position).length || 0);
-  console.log('[DIAGNOSE] Players with category_id:', players?.filter(p => p.category_id).length || 0);
   
   if (categoryId) {
-    console.log('[DIAGNOSE] Players with matching category_id:', players?.filter(p => p.category_id === categoryId).length || 0);
-    console.log('[DIAGNOSE] Players with matching category_id AND final_position:', 
-      players?.filter(p => p.category_id === categoryId && p.final_position).length || 0);
   }
 
   const { data: standings } = await supabase
@@ -1089,7 +1002,6 @@ export async function diagnoseLeagueStandingsIssue(tournamentId: string, leagueI
     .select('*')
     .eq('league_id', leagueId);
 
-  console.log('[DIAGNOSE] Current standings count:', standings?.length || 0);
 
   return {
     tournamentLeague,

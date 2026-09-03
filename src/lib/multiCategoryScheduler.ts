@@ -161,14 +161,10 @@ export function scheduleMultipleCategories(
   dailySchedules: DailySchedule[] = [],
   allCourtNames: string[] = []
 ): Map<string, ScheduledMatch[]> {
-  console.log('[MULTI-CAT V6] Starting with category-specific courts + schedules');
-  console.log('[MULTI-CAT V6] All court names:', allCourtNames);
   const day1Info = calculateSlotsForDay(startDate, dailySchedules, dailyStartTime, dailyEndTime, matchDurationMinutes);
-  console.log(`[MULTI-CAT V6] Day 1 (${startDate}): slotsPerDay=${day1Info.slotsPerDay}, start=${day1Info.startHour}:${String(day1Info.startMinute).padStart(2,'0')}, matchDuration=${matchDurationMinutes}min`);
   
   // Check if any category has its own schedule
   const hasCategorySchedules = categories.some(cat => cat.categorySchedule && cat.categorySchedule.length > 0);
-  console.log('[MULTI-CAT V6] Has per-category schedules:', hasCategorySchedules);
   
   // Build a map of category -> allowed court numbers and names
   const categoryCourtMap = new Map<string, { courtNumbers: number[]; courtNames: string[] }>();
@@ -197,21 +193,17 @@ export function scheduleMultipleCategories(
       });
       
       categoryCourtMap.set(cat.categoryId, { courtNumbers, courtNames });
-      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: using courts ${courtNames.join(', ')} (${courtNumbers.join(', ')})`);
     } else {
       // Category uses all courts
       const allNumbers = Array.from({ length: numberOfCourts }, (_, i) => i + 1);
       categoryCourtMap.set(cat.categoryId, { courtNumbers: allNumbers, courtNames: allCourtNames });
-      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: using all ${numberOfCourts} courts`);
     }
     
     // Generate time slots if category has its own schedule
     if (cat.categorySchedule && cat.categorySchedule.length > 0) {
       const slots = generateCategoryTimeSlots(cat.categorySchedule, catDuration);
       categoryTimeSlotsMap.set(cat.categoryId, slots);
-      console.log(`[MULTI-CAT V6] Category ${cat.categoryId}: ${slots.length} own time slots across ${cat.categorySchedule.length} day(s)`);
       cat.categorySchedule.forEach(entry => {
-        console.log(`[MULTI-CAT V6]   ${entry.date}: ${entry.start_time} – ${entry.end_time}`);
       });
     }
   });
@@ -273,7 +265,6 @@ export function scheduleMultipleCategories(
     return canonicalCourt.get(raw) ?? raw;
   };
 
-  console.log('[SCHEDULER] canonicalCourt map:', Object.fromEntries(canonicalCourt));
 
   // Duration-aware court occupancy (interval-based).
   // Records real [startMs, endMs) busy windows per court.
@@ -303,7 +294,6 @@ export function scheduleMultipleCategories(
     _markCount++;
     if (_markCount <= 30) {
       const t = new Date(startMs);
-      console.log(`[MARK-BUSY] court="${court}" → key="${key}" ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')} +${durationMin}min`);
     }
     const arr = courtOccupancy.get(key);
     if (arr) arr.push({ start: startMs, end: endMs });
@@ -341,19 +331,12 @@ export function scheduleMultipleCategories(
   const allMatches: MatchWithCategory[] = [];
 
   categories.forEach(category => {
-    console.log(`[MULTI-CAT V2] Processing category ${category.categoryId}:`, {
-      format: category.format,
-      teams: category.teams.length,
-      knockoutTeams: category.knockoutTeams?.length || 0,
-      hasKnockoutTeams: !!category.knockoutTeams
-    });
 
     const calculatedRounds = category.isAmerican
       ? Math.max(category.teams.length - 1, 7)
       : (category.rounds || 7);
 
     const matches = generateCategoryMatches(category.teams, category.format, numberOfCourts, matchDurationMinutes, 0, category.isAmerican || false, calculatedRounds, startDate);
-    console.log(`[MULTI-CAT V2] Category ${category.categoryId}: Generated ${matches.length} group matches`);
     matches.forEach(match => {
       allMatches.push({
         ...match,
@@ -373,7 +356,6 @@ export function scheduleMultipleCategories(
         category.knockoutStage || 'semifinals',
         category.hasThirdPlace ?? true
       );
-      console.log(`[MULTI-CAT V2] Category ${category.categoryId}: Generated ${knockoutMatches.length} knockout matches from ${category.knockoutTeams.length} qualified teams (starting at match ${currentMatchCount + 1}), isIndividual: ${category.isIndividualFormat}, knockoutStage: ${category.knockoutStage}`);
       knockoutMatches.forEach(match => {
         allMatches.push({
           ...match,
@@ -412,10 +394,6 @@ export function scheduleMultipleCategories(
 
   // Include ALL categories (not just those with group matches) so knockout-only categories are also tracked
   const uniqueCategories = [...new Set(allMatches.map(m => m.categoryId))].sort();
-  console.log('[MULTI-CAT V3] Categories:', uniqueCategories);
-  console.log('[MULTI-CAT V3] Starting scheduler with', allMatches.length, 'matches across', categories.length, 'categories');
-  console.log(`[MULTI-CAT V3] ${groupMatches.length} group matches, ${knockoutMatches.length} knockout matches`);
-  console.log(`[MULTI-CAT V3] Courts available: ${numberOfCourts}`);
 
   // PHASE 1: Schedule group stage matches
   // If categories have their own schedules, schedule each category independently
@@ -427,7 +405,6 @@ export function scheduleMultipleCategories(
     // Categories are mixed: at each time slot we round-robin across categories
     // so that teams get rest between consecutive matches.
     // ============================
-    console.log('[MULTI-CAT V8] MODE A: Interleaved category scheduling');
 
     // Build a unified timeline: collect ALL distinct time slots across all
     // categories, sorted chronologically.  For each slot we record which
@@ -445,7 +422,6 @@ export function scheduleMultipleCategories(
     }
 
     const unifiedSlots = [...slotCategoryMap.keys()].sort();
-    console.log(`[MULTI-CAT V8] Unified timeline: ${unifiedSlots.length} distinct time slots`);
 
     // Remaining group matches per category (mutable queues)
     const catQueues = new Map<string, typeof groupMatches>();
@@ -526,7 +502,6 @@ export function scheduleMultipleCategories(
             });
             bumpCategoryMaxGroupTime(cId, timeStr);
 
-            console.log(`[MULTI-CAT V8] Slot ${timeStr.substring(11,16)} Court ${courtName}: Cat ${cId.substring(0, 8)} M${matchToSchedule.match_number}`);
             totalScheduled++;
             progress = true;
             break; // one match per category per pass
@@ -544,7 +519,6 @@ export function scheduleMultipleCategories(
       if (catSlots && catSlots.length > 0) continue; // already handled above
       if (catGroupMatches.every(m => scheduledMatchIds.has(`${m.categoryId}_${m.match_number}`))) continue;
 
-      console.log(`[MULTI-CAT V8] Category ${categoryId.substring(0, 8)}: no own schedule, using global slots`);
       const catDuration = categoryDurationMap.get(categoryId) || matchDurationMinutes;
       const categoryInfo = categoryCourtMap.get(categoryId);
       const catCourts = categoryInfo ? categoryInfo.courtNumbers : Array.from({ length: numberOfCourts }, (_, i) => i + 1);
@@ -622,14 +596,12 @@ export function scheduleMultipleCategories(
       }
     }
 
-    console.log('[MULTI-CAT V8] Interleaved group stage complete!', scheduledMatchIds.size, 'group matches scheduled, currentTimeSlot:', currentTimeSlot);
 
   } else {
     // ============================
     // MODE B: Shared Global Schedule (original behavior)
     // All categories share the same time slots
     // ============================
-    console.log('[MULTI-CAT V6] MODE B: Shared global schedule');
 
     while (iterations < maxIterations && scheduledMatchIds.size < groupMatches.length) {
       iterations++;
@@ -726,23 +698,19 @@ export function scheduleMultipleCategories(
           });
 
           const catShort = matchToSchedule.categoryId.substring(0, 8);
-          console.log(`[MULTI-CAT V6] Slot ${slotIndex} Court ${court}: Match ${matchToSchedule.match_number} Cat ${catShort}`);
           matchesScheduledThisSlot++;
           bumpCategoryMaxGroupTime(matchToSchedule.categoryId, timeStr);
         }
       }
 
-      console.log(`[MULTI-CAT V6] Slot ${slotIndex}: ${matchesScheduledThisSlot}/${dayCourtCount} courts filled`);
 
       currentTimeSlot++;
     }
 
-    console.log('[MULTI-CAT V6] Group stage complete!', scheduledMatchIds.size, 'group matches scheduled');
   }
 
   // PHASE 2: Schedule ALL knockout matches (including TBD placeholders)
   // TBD matches are scheduled with null team IDs and filled in after group stage completes
-  console.log(`[MULTI-CAT V7] Scheduling ${knockoutMatches.length} knockout matches (including TBD)`);
 
   // Bucket matches by round
   const roundBuckets = new Map<string, typeof knockoutMatches>();
@@ -773,7 +741,6 @@ export function scheduleMultipleCategories(
   const uncovered = activeRoundNames.filter(r => !coveredRounds.has(r)).sort((a, b) => roundPriority(a) - roundPriority(b));
   if (uncovered.length > 0) orderedTiers.push(uncovered);
 
-  console.log('[MULTI-CAT V7] Knockout schedule tiers:', orderedTiers);
 
   // Track latest knockout time per category so later rounds (e.g. final) are always AFTER earlier rounds (semis).
   const categoryLastKOTime = new Map<string, string>();
@@ -798,7 +765,6 @@ export function scheduleMultipleCategories(
 
   for (const tier of orderedTiers) {
     const roundMatches = tier.flatMap(r => roundBuckets.get(r) || []);
-    console.log(`[MULTI-CAT V7] Scheduling ${roundMatches.length} matches for tier: [${tier.join(', ')}]`);
 
     // Collect max time per category for this round; update categoryLastKOTime AFTER all matches in the round
     const roundMaxTimePerCat = new Map<string, string>();
@@ -844,7 +810,6 @@ export function scheduleMultipleCategories(
               koPlayerIds.forEach(id => busyPlayers.get(slot.time)!.add(id));
 
               scheduled = true;
-              console.log(`[MULTI-CAT V7] OK KO M${koMatch.match_number} (${koMatch.round}) Cat ${categoryId.substring(0, 8)} -> ${slot.time} court ${courtName}`);
               break;
             }
           }
@@ -890,7 +855,6 @@ export function scheduleMultipleCategories(
                   koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
 
                   scheduled = true;
-                  console.log(`[MULTI-CAT V7] OK KO (fallback) M${koMatch.match_number} (${koMatch.round}) Cat ${categoryId.substring(0, 8)} -> ${timeStr} court ${courtName}`);
                   break;
                 }
               }
@@ -943,7 +907,6 @@ export function scheduleMultipleCategories(
                 koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
 
                 scheduled = true;
-                console.log(`[MULTI-CAT V7] OK KO (global fallback) M${koMatch.match_number} (${koMatch.round}) Cat ${categoryId.substring(0, 8)} -> ${timeStr} court ${courtName}`);
                 break;
               }
             }
@@ -1027,7 +990,6 @@ export function scheduleMultipleCategories(
           koPlayerIds.forEach(id => busyPlayers.get(timeStr)!.add(id));
 
           anyScheduled = true;
-          console.log(`[MULTI-CAT V7] OK Global KO M${koMatch.match_number} (${koMatch.round}) -> ${timeStr} court ${courtName || assignedCourt}`);
         }
 
         pending.length = 0;
@@ -1048,7 +1010,6 @@ export function scheduleMultipleCategories(
     // Update categoryLastKOTime AFTER all matches in this tier are placed
     roundMaxTimePerCat.forEach((maxTime, catId) => {
       categoryLastKOTime.set(catId, maxTime);
-      console.log(`[MULTI-CAT V7] Tier [${tier.join(',')}] done: categoryLastKOTime[${catId.substring(0, 8)}] = ${maxTime}`);
     });
   }
 
@@ -1071,11 +1032,8 @@ export function scheduleMultipleCategories(
     return isTeamTBD && hasNoPlayers;
   });
 
-  console.log(`[MULTI-CAT V2] Found ${tbdMatches.length} TBD matches (null/null):`, tbdMatches.map(m => `M${m.match_number}(${m.round})`).join(', '));
-  console.log('[MULTI-CAT V2] TBD matches details:', tbdMatches.map(m => ({ match: m.match_number, round: m.round, t1: m.team1_id, t2: m.team2_id })));
 
   if (tbdMatches.length > 0) {
-    console.log(`[MULTI-CAT V2] Scheduling ${tbdMatches.length} TBD knockout matches after group stage (starting at slot ${currentTimeSlot})`);
 
     const knockoutScheduleGroups = [
       ['round_of_32'],
@@ -1090,7 +1048,6 @@ export function scheduleMultipleCategories(
       const matchesInGroup = tbdMatches.filter(m => roundGroup.includes(m.round));
       if (matchesInGroup.length === 0) continue;
 
-      console.log(`[MULTI-CAT V2] Scheduling ${matchesInGroup.length} TBD matches for rounds: ${roundGroup.join(', ')}`);
 
       const pendingMatches = [...matchesInGroup];
 
@@ -1146,25 +1103,20 @@ export function scheduleMultipleCategories(
           scheduledMatchIds.add(matchId);
 
           matchesScheduledThisSlot++;
-          console.log(`[MULTI-CAT V2] TBD Match ${tbdMatch.match_number} (${tbdMatch.round}) scheduled at ${timeStr} on court ${assignedCourt}`);
         }
 
         pendingMatches.length = 0;
         pendingMatches.push(...remainingMatches);
 
-        console.log(`[MULTI-CAT V2] Slot ${slotIndex}: ${matchesScheduledThisSlot} TBD matches scheduled, ${remainingMatches.length} remaining`);
         currentTimeSlot++;
       }
     }
   }
 
-  console.log('[MULTI-CAT V2] Final total:', scheduledMatchIds.size, 'matches scheduled (including TBD)');
 
   // Log what we're returning for each category
   categories.forEach(cat => {
     const matches = scheduledMatches.get(cat.categoryId) || [];
-    console.log(`[MULTI-CAT V2] Returning ${matches.length} matches for category ${cat.categoryId}`);
-    console.log(`[MULTI-CAT V2] Match rounds:`, matches.map(m => `${m.match_number}:${m.round}`).join(', '));
   });
 
   // Post-schedule self-check: detect any court collisions the scheduler may have missed.
@@ -1187,7 +1139,6 @@ export function scheduleMultipleCategories(
     }
   }
   if (seen.size === allFinal.length) {
-    console.log(`[SCHEDULER-CHECK] ✓ No court collisions detected across ${allFinal.length} matches.`);
   }
 
   return scheduledMatches;
@@ -1384,9 +1335,7 @@ export function validateGeneratedSchedule(
 }
 
 function generateCategoryMatches(teams: Team[], format: string, numberOfCourts: number, matchDurationMinutes: number, matchNumberOffset: number = 0, isAmerican: boolean = false, rounds: number = 7, startDate: string = '2024-01-01'): ScheduledMatch[] {
-  console.log(`[GEN_CAT_MATCHES] Format: ${format}, Teams: ${teams.length}, Offset: ${matchNumberOffset}`);
   if (format === 'single_elimination') {
-    console.log(`[GEN_CAT_MATCHES] Teams for knockout:`, teams.map(t => ({ id: t.id, name: t.team_name, seed: t.seed })));
   }
   const sortedTeams = [...teams].sort((a, b) => (a.seed || 0) - (b.seed || 0));
 
@@ -1471,13 +1420,11 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
   const matches: ScheduledMatch[] = [];
   let matchNumber = matchNumberOffset + 1;
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Generating with ${teams.length} players, starting match ${matchNumber}`);
 
   const teamsByGroup = new Map<string, Team[]>();
   const playersWithGroups = teams.filter(t => t.group_name);
 
   if (playersWithGroups.length === 0 && teams.length >= 4) {
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] No groups assigned, creating single group "A" with all ${teams.length} players`);
     teamsByGroup.set('A', [...teams]);
   } else {
     teams.forEach(team => {
@@ -1491,11 +1438,9 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
   }
 
   const sortedGroups = Array.from(teamsByGroup.keys()).sort();
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Found ${sortedGroups.length} groups:`, sortedGroups);
 
   sortedGroups.forEach(groupName => {
     const groupPlayers = teamsByGroup.get(groupName)!;
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Group ${groupName}: ${groupPlayers.length} players`);
 
     if (groupPlayers.length < 4) {
       console.warn(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Group ${groupName} has fewer than 4 players, skipping`);
@@ -1503,7 +1448,6 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
     }
 
     const groupMatches = generateUniquePartnershipMatches(groupPlayers);
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Group ${groupName}: Generated ${groupMatches.length} matches (each pair plays together once)`);
 
     groupMatches.forEach((match) => {
       matches.push({
@@ -1521,13 +1465,11 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
     });
   });
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total group matches generated: ${matches.length}`);
 
   // Calculate total qualified players (all players with groups)
   const totalPlayers = Array.from(teamsByGroup.values()).reduce((sum, g) => sum + g.length, 0);
   const numQFMatches = Math.floor(totalPlayers / 4);
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total players: ${totalPlayers}, potential first-round matches: ${numQFMatches}`);
 
   const addKoMatch = (round: string) => {
     matches.push({
@@ -1550,35 +1492,27 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
     for (let i = 0; i < numQFMatches; i++) {
       addKoMatch('quarterfinal');
     }
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added ${numQFMatches} quarterfinal matches`);
 
     // Consolation match for QF losers who don't advance to SFs
     addKoMatch('consolation');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added consolation match`);
 
     // 2 semifinals
     addKoMatch('semifinal');
     addKoMatch('semifinal');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 2 semifinal matches`);
 
     // Final (3rd/4th place match intentionally NOT generated)
     addKoMatch('final');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final match (no 3rd/4th place)`);
   } else if (numQFMatches >= 2) {
     // 8 players: just SFs → Final
     addKoMatch('semifinal');
     addKoMatch('semifinal');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added 2 semifinal matches`);
 
     addKoMatch('final');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final match (no 3rd/4th place)`);
   } else if (totalPlayers >= 4) {
     // 4 players: just Final
     addKoMatch('final');
-    console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Added final match`);
   }
 
-  console.log(`[INDIVIDUAL_GROUPS_KNOCKOUT_MULTI] Total matches (group + knockout + placement): ${matches.length}`);
   return matches;
 }
 
@@ -1609,8 +1543,6 @@ function generateSingleEliminationMatchesWithOptions(
     const naturalRounds = Math.ceil(Math.log2(Math.max(effectiveTeamCount, 2)));
     const rounds = Math.min(naturalRounds, maxRounds);
 
-    console.log(`[KNOCKOUT_OPTIONS] Individual 2v2 format: ${teamCount} players = ${effectiveTeamCount} matches worth, knockoutStage: ${knockoutStage}, rounds: ${rounds}`);
-    console.log(`[KNOCKOUT_OPTIONS] Players received:`, teams.map((t, i) => ({ index: i, id: t.id, name: t.team_name, seed: t.seed })));
 
     for (let round = rounds - 1; round >= 0; round--) {
       let roundName: string;
@@ -1626,7 +1558,6 @@ function generateSingleEliminationMatchesWithOptions(
       }
 
       const matchesInRound = Math.pow(2, round);
-      console.log(`[KNOCKOUT_OPTIONS] Round ${round} (${roundName}): generating ${matchesInRound} matches`);
 
       for (let i = 0; i < matchesInRound; i++) {
         let p1: string | null = null;
@@ -1640,7 +1571,6 @@ function generateSingleEliminationMatchesWithOptions(
           if (baseIdx + 1 < teamCount) p2 = teams[baseIdx + 1].id;
           if (baseIdx + 2 < teamCount) p3 = teams[baseIdx + 2].id;
           if (baseIdx + 3 < teamCount) p4 = teams[baseIdx + 3].id;
-          console.log(`[KNOCKOUT_OPTIONS] First round match ${i + 1}: p1=${p1}, p2=${p2} vs p3=${p3}, p4=${p4}`);
         }
 
         matches.push({
@@ -1664,8 +1594,6 @@ function generateSingleEliminationMatchesWithOptions(
     const naturalRounds = Math.ceil(Math.log2(teamCount));
     const rounds = Math.min(naturalRounds, maxRounds);
 
-    console.log(`[KNOCKOUT_OPTIONS] Team format: ${teamCount} teams, knockoutStage: ${knockoutStage}, rounds: ${rounds}`);
-    console.log(`[KNOCKOUT_OPTIONS] Teams received:`, teams.map((t, i) => ({ index: i, id: t.id, name: t.team_name, seed: t.seed })));
 
     for (let round = rounds - 1; round >= 0; round--) {
       let roundName: string;
@@ -1681,7 +1609,6 @@ function generateSingleEliminationMatchesWithOptions(
       }
 
       const matchesInRound = Math.pow(2, round);
-      console.log(`[KNOCKOUT_OPTIONS] Round ${round} (${roundName}): generating ${matchesInRound} matches`);
 
       for (let i = 0; i < matchesInRound; i++) {
         let team1Id: string | null = null;
@@ -1690,7 +1617,6 @@ function generateSingleEliminationMatchesWithOptions(
         if (round === rounds - 1) {
           if (i * 2 < teamCount) team1Id = teams[i * 2].id;
           if (i * 2 + 1 < teamCount) team2Id = teams[i * 2 + 1].id;
-          console.log(`[KNOCKOUT_OPTIONS] First round match ${i + 1}: team1=${team1Id}, team2=${team2Id}`);
         }
 
         matches.push({
@@ -1714,7 +1640,6 @@ function generateSingleEliminationMatchesWithOptions(
         scheduled_time: '',
         court: ''
       });
-      console.log(`[KNOCKOUT_OPTIONS] Added 3rd_place match for teams`);
     }
 
     // Classification matches for 5th-8th when there are quarterfinals (4+ QF matches = 8+ teams)
@@ -1736,7 +1661,6 @@ function generateSingleEliminationMatchesWithOptions(
         scheduled_time: '',
         court: ''
       });
-      console.log(`[KNOCKOUT_OPTIONS] Added 2 x 5th_semi matches`);
 
       // 5th place final + 7th place final
       matches.push({
@@ -1755,11 +1679,9 @@ function generateSingleEliminationMatchesWithOptions(
         scheduled_time: '',
         court: ''
       });
-      console.log(`[KNOCKOUT_OPTIONS] Added 5th_place and 7th_place matches`);
     }
   }
 
-  console.log(`[KNOCKOUT_OPTIONS] Total knockout matches generated: ${matches.length}`);
   return matches;
 }
 
@@ -1771,8 +1693,6 @@ function generateSingleEliminationMatches(teams: Team[], matchNumberOffset: numb
   const rounds = Math.ceil(Math.log2(teamCount));
   let matchNumber = matchNumberOffset + 1;
 
-  console.log(`[KNOCKOUT] Generating knockout with ${teamCount} teams, ${rounds} rounds, starting match ${matchNumber}`);
-  console.log(`[KNOCKOUT] Teams received:`, teams.map((t, i) => ({ index: i, id: t.id, name: t.team_name, seed: t.seed })));
 
   for (let round = rounds - 1; round >= 0; round--) {
     let roundName: string;
@@ -1789,7 +1709,6 @@ function generateSingleEliminationMatches(teams: Team[], matchNumberOffset: numb
 
     const matchesInRound = Math.pow(2, round);
 
-    console.log(`[KNOCKOUT] Round ${round} (${roundName}): generating ${matchesInRound} matches`);
 
     for (let i = 0; i < matchesInRound; i++) {
       let team1_id: string | null = null;
@@ -1798,7 +1717,6 @@ function generateSingleEliminationMatches(teams: Team[], matchNumberOffset: numb
       if (round === rounds - 1) {
         if (i * 2 < teamCount) team1_id = teams[i * 2].id;
         if (i * 2 + 1 < teamCount) team2_id = teams[i * 2 + 1].id;
-        console.log(`[KNOCKOUT] First round match ${i + 1}: team1_id=${team1_id}, team2_id=${team2_id}`);
       }
 
       matches.push({
@@ -1812,7 +1730,6 @@ function generateSingleEliminationMatches(teams: Team[], matchNumberOffset: numb
     }
   }
 
-  console.log(`[KNOCKOUT] Total knockout matches generated: ${matches.length}`);
   return matches;
 }
 
@@ -1823,7 +1740,6 @@ function generateRoundRobinMatches(teams: Team[], matchNumberOffset: number = 0,
 
   let matchNumber = matchNumberOffset + 1;
 
-  console.log(`[ROUND_ROBIN] Generating round robin with ${teamCount} teams/players, starting match ${matchNumber}, American: ${isAmerican}, Rounds: ${rounds}`);
 
   if (isAmerican && teamCount >= 4) {
     const players = teams.map(t => ({ id: t.id, name: t.team_name }));
@@ -1867,7 +1783,6 @@ function generateRoundRobinMatches(teams: Team[], matchNumberOffset: number = 0,
     });
   }
 
-  console.log(`[ROUND_ROBIN] Total matches generated: ${matches.length}`);
   return matches;
 }
 
@@ -1913,9 +1828,7 @@ function generateRoundRobinRounds(teams: Team[]): Array<Array<{team1: Team, team
     rounds.push(roundMatches);
   }
 
-  console.log(`[ROUND_ROBIN_ROUNDS] Generated ${rounds.length} rounds for ${n} teams`);
   rounds.forEach((r, i) => {
-    console.log(`[ROUND_ROBIN_ROUNDS] Round ${i + 1}: ${r.map(m => `${m.team1.team_name} vs ${m.team2.team_name}`).join(', ')}`);
   });
 
   return rounds;
@@ -1925,7 +1838,6 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
   const matches: ScheduledMatch[] = [];
   const teamsByGroup = new Map<string, Team[]>();
 
-  console.log('[MULTI-CAT V2] generateGroupKnockoutMatches called with', teams.length, 'teams');
 
   teams.forEach(team => {
     if (team.group_name) {
@@ -1938,14 +1850,12 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
 
   let matchNumber = 1;
   const sortedGroups = Array.from(teamsByGroup.keys()).sort();
-  console.log('[MULTI-CAT V2] Groups found:', sortedGroups);
 
   const roundsByGroup = new Map<string, Array<Array<{team1: Team, team2: Team}>>>();
   let maxRounds = 0;
 
   sortedGroups.forEach(groupName => {
     const groupTeams = teamsByGroup.get(groupName)!;
-    console.log(`[MULTI-CAT V2] Group ${groupName}: ${groupTeams.length} teams`);
 
     const rounds = generateRoundRobinRounds(groupTeams);
     roundsByGroup.set(groupName, rounds);
@@ -1971,6 +1881,5 @@ function generateGroupKnockoutMatches(teams: Team[], numberOfCourts: number, mat
     });
   }
 
-  console.log('[MULTI-CAT V2] Generated', matches.length, 'group matches organized by rounds');
   return matches;
 }
