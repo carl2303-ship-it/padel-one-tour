@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
 import { normalizePhoneKey } from '../lib/phoneUtils';
@@ -507,7 +507,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     setSavingLevel(null);
   };
 
-  const filteredPlayers = players.filter(player => {
+  const filteredPlayers = useMemo(() => players.filter(player => {
     const matchesSearch =
       searchQuery === '' ||
       player.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -524,7 +524,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       player.player_category === selectedCategory;
 
     return matchesSearch && matchesTournament && matchesCategory;
-  });
+  }), [players, searchQuery, selectedTournament, selectedCategory]);
 
   const exportToCSV = () => {
     const headers = ['Nome', 'Email', 'Telefone', 'Categoria', 'Torneios'];
