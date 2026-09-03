@@ -31,6 +31,32 @@ Deno.serve(async (req: Request) => {
       },
     });
 
+    // ── Autenticação: só um organizador com sessão válida pode chamar isto ──
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    const { data: callerData, error: callerError } = await supabaseAdmin.auth.getUser(token);
+    const callerId = callerData?.user?.id;
+
+    if (callerError || !callerId) {
+      return new Response(
+        JSON.stringify({ error: 'Not authenticated' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    const { data: organizerRow } = await supabaseAdmin
+      .from('organizers')
+      .select('id')
+      .eq('user_id', callerId)
+      .maybeSingle();
+
+    if (!organizerRow) {
+      return new Response(
+        JSON.stringify({ error: 'Only organizers can reset player passwords' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
     const { phone_number }: RequestBody = await req.json();
 
     if (!phone_number) {
@@ -89,6 +115,32 @@ Deno.serve(async (req: Request) => {
     console.log('[DEBUG] Found player_account user_id:', playerAccount.user_id);
     console.log('[DEBUG] Found player_account email:', playerAccount.email);
     console.log('[DEBUG] Found player_account phone:', playerAccount.phone_number);
+
+    // ── Ownership: o organizador só pode repor password de jogadores que
+    // geriu (contacto próprio ou inscrito nalgum torneio dele) ─────────────
+    const [{ data: ownContact }, { data: ownRegistration }] = await Promise.all([
+      supabaseAdmin
+        .from('organizer_players')
+        .select('id')
+        .eq('organizer_id', callerId)
+        .eq('phone_number', playerAccount.phone_number)
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('players')
+        .select('id, tournaments!inner(user_id)')
+        .eq('player_account_id', playerAccount.id)
+        .eq('tournaments.user_id', callerId)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (!ownContact && !ownRegistration) {
+      return new Response(
+        JSON.stringify({ error: 'This player is not linked to your organizer account' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     if (!playerAccount.user_id) {
       return new Response(

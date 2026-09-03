@@ -29,18 +29,34 @@ Deno.serve(async (req: Request) => {
       teamName,
       player1,
       player2,
-      organizerUserId,
       existingTeamId,
       checkoutIdempotencyKey,
     } = await req.json();
 
-    if (!tournamentId || !organizerUserId) {
+    if (!tournamentId) {
       throw new Error("Missing required fields");
     }
 
     if (!isIndividual && (!teamName || !player2)) {
       throw new Error("Team registrations require team name and two players");
     }
+
+    let amount = 0;
+    let description = isIndividual ? player1.name : teamName;
+
+    const { data: tournament } = await supabaseClient
+      .from("tournaments")
+      .select("user_id, registration_fee, member_price, non_member_price, name, registration_redirect_url, club_id")
+      .eq("id", tournamentId)
+      .maybeSingle();
+
+    if (!tournament) {
+      throw new Error("Tournament not found");
+    }
+
+    // O dono do Stripe é sempre derivado do torneio, nunca de um ID vindo do
+    // pedido do cliente — evita usar a secret_key de outro organizador.
+    const organizerUserId = tournament.user_id;
 
     const { data: stripeSettings } = await supabaseClient
       .from("user_stripe_settings")
@@ -50,19 +66,6 @@ Deno.serve(async (req: Request) => {
 
     if (!stripeSettings?.secret_key) {
       throw new Error("Tournament organizer has not configured Stripe");
-    }
-
-    let amount = 0;
-    let description = isIndividual ? player1.name : teamName;
-
-    const { data: tournament } = await supabaseClient
-      .from("tournaments")
-      .select("registration_fee, member_price, non_member_price, name, registration_redirect_url, club_id")
-      .eq("id", tournamentId)
-      .maybeSingle();
-
-    if (!tournament) {
-      throw new Error("Tournament not found");
     }
 
     let categoryName = tournament.name;
