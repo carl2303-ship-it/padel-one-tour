@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v4-20260716';
+const CACHE_VERSION = 'v5-20260903';
 const STATIC_CACHE = `padel-hub-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `padel-hub-dynamic-${CACHE_VERSION}`;
 

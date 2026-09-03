@@ -37,7 +37,6 @@ const sendWelcomeEmail = async (
       console.error('Failed to send welcome email:', error);
     } else {
       const result = await response.json();
-      console.log('Welcome email sent:', result);
     }
   } catch (error) {
     console.error('Error sending welcome email:', error);
@@ -1955,7 +1954,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">{tournament.name}</h1>
           {tournament.description && (
             <div
-              className="text-lg text-gray-600 max-w-2xl mx-auto [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-1 [&_a]:text-blue-600 [&_a]:underline [&_br]:block [&_p]:mb-2"
+              translate="no"
+              className="notranslate text-lg text-gray-600 max-w-2xl mx-auto [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-1 [&_a]:text-blue-600 [&_a]:underline [&_br]:block [&_p]:mb-2"
               dangerouslySetInnerHTML={{ __html: tournament.description }}
             />
           )}
