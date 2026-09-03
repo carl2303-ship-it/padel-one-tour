@@ -862,10 +862,11 @@ async function populateDirectFinals(
     const p3Stats = playerStats.get(match.player3_individual_id);
     const p4Stats = playerStats.get(match.player4_individual_id);
 
+    const team2Won = team2Games > team1Games;
     if (p1Stats) { p1Stats.gamesWon += team1Games; p1Stats.gamesLost += team2Games; if (team1Won) p1Stats.wins++; }
     if (p2Stats) { p2Stats.gamesWon += team1Games; p2Stats.gamesLost += team2Games; if (team1Won) p2Stats.wins++; }
-    if (p3Stats) { p3Stats.gamesWon += team2Games; p3Stats.gamesLost += team1Games; if (!team1Won) p3Stats.wins++; }
-    if (p4Stats) { p4Stats.gamesWon += team2Games; p4Stats.gamesLost += team1Games; if (!team1Won) p4Stats.wins++; }
+    if (p3Stats) { p3Stats.gamesWon += team2Games; p3Stats.gamesLost += team1Games; if (team2Won) p3Stats.wins++; }
+    if (p4Stats) { p4Stats.gamesWon += team2Games; p4Stats.gamesLost += team1Games; if (team2Won) p4Stats.wins++; }
   });
 
   const playersByGroup = new Map<string, Array<{ id: string; name: string; group_name: string; wins: number; gamesWon: number; gamesLost: number }>>();
@@ -1102,6 +1103,7 @@ export async function populatePlacementMatches(
     const p3Stats = playerStats.get(match.player3_individual_id);
     const p4Stats = playerStats.get(match.player4_individual_id);
 
+    const team2Won = team2Games > team1Games;
     if (p1Stats) {
       p1Stats.gamesWon += team1Games;
       p1Stats.gamesLost += team2Games;
@@ -1115,12 +1117,12 @@ export async function populatePlacementMatches(
     if (p3Stats) {
       p3Stats.gamesWon += team2Games;
       p3Stats.gamesLost += team1Games;
-      if (!team1Won) p3Stats.wins++;
+      if (team2Won) p3Stats.wins++;
     }
     if (p4Stats) {
       p4Stats.gamesWon += team2Games;
       p4Stats.gamesLost += team1Games;
-      if (!team1Won) p4Stats.wins++;
+      if (team2Won) p4Stats.wins++;
     }
   });
 
@@ -2164,7 +2166,7 @@ export function calculateTeamQualificationConfig(
  * A ordem J1/J2 e J3/J4 mantém o 1° e o 2° de cada grupo em metades
  * opostas do quadro, considerando que J1+J2 e J3+J4 alimentam as meias.
  */
-function buildTwoGroupKnockoutPairs<T extends { id: string }>(
+export function buildTwoGroupKnockoutPairs<T extends { id: string }>(
   rankA: T[],
   rankB: T[],
   numMatches: number
@@ -2320,6 +2322,7 @@ async function populateTeamPlacementForCategory(
     const t1g = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
     const t2g = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
     const t1Won = t1g > t2g;
+    const t2Won = t2g > t1g;
 
     let groupName = typeof m.round === 'string' && m.round !== 'group_stage'
       ? m.round.replace('group_', '')
@@ -2342,7 +2345,8 @@ async function populateTeamPlacementForCategory(
       if (!s2.group) s2.group = groupName;
       s2.gf += t2g;
       s2.gd += t2g - t1g;
-      if (!t1Won) s2.wins++;
+      // Empate (t1g === t2g): nenhuma equipa recebe vitória.
+      if (t2Won) s2.wins++;
     }
   });
 
@@ -2571,6 +2575,28 @@ async function populateTeamPlacementForCategory(
 
   if (entry.nextRound.length > 0) {
     await advanceWinnersToNextRound(entry.matches, entry.nextRound, `${entry.label}→next`);
+  }
+
+  // Perdedores das meias → 3º/4º lugar (reforço caso o MatchModal falhe / race)
+  const thirdPlaces = ko
+    .filter(m => m.round === '3rd_place')
+    .sort((a, b) => a.match_number - b.match_number);
+  if (semis.length >= 2 && thirdPlaces.length > 0) {
+    const third = thirdPlaces[0];
+    if (!hasRealScores(third)) {
+      for (let i = 0; i < Math.min(2, semis.length); i++) {
+        const src = semis[i];
+        if (!hasRealScores(src)) continue;
+        const winnerId = matchWinnerTeamId(src);
+        if (!winnerId) continue;
+        const loserId = winnerId === src.team1_id ? src.team2_id : src.team1_id;
+        if (!loserId) continue;
+        const field = i === 0 ? 'team1_id' : 'team2_id';
+        if (third[field] === loserId) continue;
+        await supabase.from('matches').update({ [field]: loserId }).eq('id', third.id);
+        (third as any)[field] = loserId;
+      }
+    }
   }
 }
 

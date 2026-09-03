@@ -104,7 +104,9 @@ async function advanceLoserToClassificationRound(
 ) {
   const classificationMapping: Record<string, string> = {
     'semi_final': '3rd_place',
+    'semifinal': '3rd_place',
     'quarter_final': '5th_semi',
+    'quarterfinal': '5th_semi',
     '5th_semi': '7th_place',
   };
 
@@ -113,11 +115,18 @@ async function advanceLoserToClassificationRound(
     return;
   }
 
+  const currentRoundAliases =
+    currentRound === 'semi_final' || currentRound === 'semifinal'
+      ? ['semi_final', 'semifinal']
+      : currentRound === 'quarter_final' || currentRound === 'quarterfinal'
+        ? ['quarter_final', 'quarterfinal']
+        : [currentRound];
+
   let currentRoundQuery = supabase
     .from('matches')
     .select('id, match_number')
     .eq('tournament_id', tournamentId)
-    .eq('round', currentRound)
+    .in('round', currentRoundAliases)
     .order('match_number', { ascending: true });
 
   if (categoryId) {
@@ -157,8 +166,10 @@ async function advanceLoserToClassificationRound(
   }
 
   if (classificationRound === '3rd_place') {
+    // Perdedor SF1 → team1, perdedor SF2 → team2 (slots fixos, sem race no 1.º slot vazio)
     const match = classificationMatches[0];
-    const updateField = !match.team1_id ? 'team1_id' : 'team2_id';
+    const updateField = matchPosition === 0 ? 'team1_id' : 'team2_id';
+    if (match[updateField] === loserId) return;
     await supabase
       .from('matches')
       .update({ [updateField]: loserId })
