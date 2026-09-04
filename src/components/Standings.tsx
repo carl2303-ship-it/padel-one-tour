@@ -12,6 +12,8 @@ type StandingsProps = {
   roundRobinType?: string | null;
   refreshKey?: number;
   qualifiedPerGroup?: number;
+  /** Quantos melhores da posição seguinte (ex. melhores 3.ºs) também qualificam */
+  extraBestNeeded?: number;
 };
 
 type IndividualPlayerStats = {
@@ -54,11 +56,12 @@ type TeamWithPlayers = Team & {
   gamesLost: number;
 };
 
-export default function Standings({ tournamentId, format, categoryId, roundRobinType, refreshKey, qualifiedPerGroup = 2 }: StandingsProps) {
+export default function Standings({ tournamentId, format, categoryId, roundRobinType, refreshKey, qualifiedPerGroup = 2, extraBestNeeded = 0 }: StandingsProps) {
   const { t } = useI18n();
   const [teams, setTeams] = useState<TeamWithPlayers[]>([]);
   const [groupedTeams, setGroupedTeams] = useState<Map<string, TeamWithPlayers[]>>(new Map());
   const [individualPlayers, setIndividualPlayers] = useState<IndividualPlayerStats[]>([]);
+  const [bestThirdQualifiedIds, setBestThirdQualifiedIds] = useState<Set<string>>(new Set());
   const [knockoutRankings, setKnockoutRankings] = useState<KnockoutRanking[]>([]);
   const [individualFinalRankings, setIndividualFinalRankings] = useState<IndividualFinalRanking[]>([]);
   const [crossedPlayoffResults, setCrossedPlayoffResults] = useState<any[]>([]);
@@ -198,6 +201,29 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
           groupedStatsMap.set(groupName, sortedPlayerStats);
         });
+
+        // Melhores 3.ºs (ou posição seguinte) que também qualificam
+        if (extraBestNeeded > 0) {
+          const thirdCandidates: IndividualPlayerStats[] = [];
+          groupedStatsMap.forEach((groupPlayers) => {
+            if (groupPlayers.length > qualifiedPerGroup) {
+              thirdCandidates.push(groupPlayers[qualifiedPerGroup]);
+            }
+          });
+          thirdCandidates.sort((a, b) => {
+            if (a.wins !== b.wins) return b.wins - a.wins;
+            const ptsA = a.wins * 2 + a.draws;
+            const ptsB = b.wins * 2 + b.draws;
+            if (ptsA !== ptsB) return ptsB - ptsA;
+            const diffA = a.gamesWon - a.gamesLost;
+            const diffB = b.gamesWon - b.gamesLost;
+            if (diffA !== diffB) return diffB - diffA;
+            return b.gamesWon - a.gamesWon;
+          });
+          setBestThirdQualifiedIds(new Set(thirdCandidates.slice(0, extraBestNeeded).map(p => p.id)));
+        } else {
+          setBestThirdQualifiedIds(new Set());
+        }
 
         // Store grouped stats for rendering
         setGroupedTeams(groupedStatsMap as any);
@@ -510,6 +536,28 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
 
           groupedStatsMap.set(groupName, playerStats);
         });
+
+        if (extraBestNeeded > 0) {
+          const thirdCandidates: IndividualPlayerStats[] = [];
+          groupedStatsMap.forEach((groupPlayers) => {
+            if (groupPlayers.length > qualifiedPerGroup) {
+              thirdCandidates.push(groupPlayers[qualifiedPerGroup]);
+            }
+          });
+          thirdCandidates.sort((a, b) => {
+            if (a.wins !== b.wins) return b.wins - a.wins;
+            const ptsA = a.wins * 2 + a.draws;
+            const ptsB = b.wins * 2 + b.draws;
+            if (ptsA !== ptsB) return ptsB - ptsA;
+            const diffA = a.gamesWon - a.gamesLost;
+            const diffB = b.gamesWon - b.gamesLost;
+            if (diffA !== diffB) return diffB - diffA;
+            return b.gamesWon - a.gamesWon;
+          });
+          setBestThirdQualifiedIds(new Set(thirdCandidates.slice(0, extraBestNeeded).map(p => p.id)));
+        } else {
+          setBestThirdQualifiedIds(new Set());
+        }
 
         setGroupedTeams(groupedStatsMap as any);
 
@@ -2057,7 +2105,9 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                   <div className="space-y-2">
                     {groupPlayers.map((player, idx) => {
                       const rank = idx + 1;
-                      const isQualified = rank <= qualifiedPerGroup;
+                      const isDirectQualified = rank <= qualifiedPerGroup;
+                      const isBestThird = bestThirdQualifiedIds.has(player.id);
+                      const isQualified = isDirectQualified || isBestThird;
                       const gameDiff = player.gamesWon - player.gamesLost;
 
                       return (
@@ -2065,7 +2115,9 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                           key={player.id}
                           className={`flex items-center justify-between p-2 rounded ${
                             isQualified
-                              ? 'bg-green-100 border border-green-300'
+                              ? isBestThird
+                                ? 'bg-amber-100 border border-amber-300'
+                                : 'bg-green-100 border border-green-300'
                               : 'bg-white border border-gray-200'
                           }`}
                         >
@@ -2082,9 +2134,14 @@ export default function Standings({ tournamentId, format, categoryId, roundRobin
                               </p>
                             </div>
                           </div>
-                          {isQualified && (
+                          {isDirectQualified && (
                             <span className="text-xs font-medium text-green-700 bg-green-200 px-2 py-1 rounded">
                               Q
+                            </span>
+                          )}
+                          {isBestThird && (
+                            <span className="text-xs font-medium text-amber-800 bg-amber-200 px-2 py-1 rounded">
+                              Melhor 3º
                             </span>
                           )}
                         </div>

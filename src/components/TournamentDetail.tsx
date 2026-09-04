@@ -2653,7 +2653,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     const categoryPlayers = individualPlayers.filter(p => p.category_id === categoryId);
 
     const uniqueGroups = new Set(categoryPlayers.map(p => p.group_name).filter(Boolean));
-    const numberOfGroups = uniqueGroups.size;
+    const numberOfGroups = uniqueGroups.size || (category as any).number_of_groups || 2;
     const knockoutStage = (category as any).knockout_stage || 'semifinals';
 
 
@@ -2729,7 +2729,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               stats.matches++;
               stats.gamesWon += team2Games;
               stats.gamesLost += team1Games;
-              if (!team1Won) stats.wins++;
+              if (team2Games > team1Games) stats.wins++;
             }
           });
         }
@@ -2819,7 +2819,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               stats.matches++;
               stats.gamesWon += team2Games;
               stats.gamesLost += team1Games;
-              if (!team1Won) stats.wins++;
+              if (team2Games > team1Games) stats.wins++;
             }
           });
         }
@@ -8032,11 +8032,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               categoryId={selectedCategory}
               roundRobinType={resolvedRoundRobinType}
               refreshKey={refreshKey}
-              qualifiedPerGroup={calculateQualifiedPerGroup(
-                currentTournament.number_of_groups || 2,
-                (currentTournament as any).knockout_stage || 'semifinals',
-                isIndividualFormat()
-              )}
+              {...(() => {
+                const actualGroups = new Set(
+                  filteredIndividualPlayers.map(p => p.group_name).filter(Boolean)
+                ).size || currentTournament.number_of_groups || 2;
+                const koStage = (currentTournament as any).knockout_stage || 'semifinals';
+                const cfg = calculateQualificationConfig(actualGroups, koStage, isIndividualFormat());
+                return {
+                  qualifiedPerGroup: cfg.qualifiedPerGroup,
+                  extraBestNeeded: cfg.extraBestNeeded,
+                };
+              })()}
             />
             )
           )}

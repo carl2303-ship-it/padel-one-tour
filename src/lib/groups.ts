@@ -1154,6 +1154,85 @@ export async function populatePlacementMatches(
   const maxPlayersPerGroup = Math.max(...Array.from(rankedByGroup.values()).map(g => g.length));
   const totalPlayers = players.length;
 
+  /**
+   * Top N por grupo + melhores da posição seguinte (ex.: 2 primeiros + 2 melhores 3.ºs)
+   * para preencher exactamente `totalSlotsNeeded` lugares no knockout.
+   */
+  const selectQualifiedRankings = (
+    totalSlotsNeeded: number,
+    qualifiedPerGroupOverride?: number | null
+  ): Map<string, string[]> => {
+    const nGroups = sortedGroups.length;
+    if (nGroups === 0 || totalSlotsNeeded <= 0) return new Map();
+
+    let qualPerGroup =
+      qualifiedPerGroupOverride != null && qualifiedPerGroupOverride > 0
+        ? qualifiedPerGroupOverride
+        : Math.max(1, Math.floor(totalSlotsNeeded / nGroups));
+    let extraNeeded = totalSlotsNeeded - qualPerGroup * nGroups;
+    if (extraNeeded < 0) {
+      qualPerGroup = Math.max(1, Math.floor(totalSlotsNeeded / nGroups));
+      extraNeeded = totalSlotsNeeded - qualPerGroup * nGroups;
+    }
+
+    const filtered = new Map<string, string[]>();
+    sortedGroups.forEach(g => {
+      filtered.set(g, (rankedByGroup.get(g) || []).slice(0, qualPerGroup));
+    });
+
+    if (extraNeeded > 0) {
+      const extraCandidates: Array<{ id: string; group: string; wins: number; diff: number; gf: number }> = [];
+      sortedGroups.forEach(g => {
+        const fullRanking = rankedByGroup.get(g) || [];
+        if (fullRanking.length > qualPerGroup) {
+          const extraId = fullRanking[qualPerGroup];
+          const stats = playerStats.get(extraId);
+          if (stats) {
+            extraCandidates.push({
+              id: extraId,
+              group: g,
+              wins: stats.wins,
+              diff: stats.gamesWon - stats.gamesLost,
+              gf: stats.gamesWon,
+            });
+          }
+        }
+      });
+      extraCandidates.sort((a, b) => {
+        if (a.wins !== b.wins) return b.wins - a.wins;
+        if (a.diff !== b.diff) return b.diff - a.diff;
+        return b.gf - a.gf;
+      });
+      extraCandidates.slice(0, extraNeeded).forEach(e => {
+        filtered.get(e.group)!.push(e.id);
+      });
+    }
+
+    return filtered;
+  };
+
+  // Optional category override for qualified_per_group
+  let categoryQualifiedPerGroup: number | null = null;
+  if (categoryId) {
+    const { data: catRow } = await supabase
+      .from('tournament_categories')
+      .select('qualified_per_group')
+      .eq('id', categoryId)
+      .maybeSingle();
+    if (catRow?.qualified_per_group != null && catRow.qualified_per_group > 0) {
+      categoryQualifiedPerGroup = catRow.qualified_per_group;
+    }
+  } else {
+    const { data: tRow } = await supabase
+      .from('tournaments')
+      .select('qualified_per_group')
+      .eq('id', tournamentId)
+      .maybeSingle();
+    if (tRow?.qualified_per_group != null && tRow.qualified_per_group > 0) {
+      categoryQualifiedPerGroup = tRow.qualified_per_group;
+    }
+  }
+
 
   // ====================================================================
   // ROUND OF 16 POPULATION: If round_of_16 exist and are unpopulated
@@ -1166,40 +1245,8 @@ export async function populatePlacementMatches(
 
     const nGroupsRo16 = sortedGroups.length;
     const totalSlotsNeeded = unpopulatedRo16.length * 4;
-    const qualPerGroup = Math.floor(totalSlotsNeeded / nGroupsRo16);
-    const extraNeeded = totalSlotsNeeded - qualPerGroup * nGroupsRo16;
+    const filteredRankings = selectQualifiedRankings(totalSlotsNeeded, categoryQualifiedPerGroup);
 
-
-    const filteredRankings = new Map<string, string[]>();
-    sortedGroups.forEach(g => {
-      filteredRankings.set(g, (rankedByGroup.get(g) || []).slice(0, qualPerGroup));
-    });
-
-    if (extraNeeded > 0) {
-      const extraCandidates: Array<{ id: string; group: string; wins: number; diff: number }> = [];
-      sortedGroups.forEach(g => {
-        const fullRanking = rankedByGroup.get(g) || [];
-        if (fullRanking.length > qualPerGroup) {
-          const extraId = fullRanking[qualPerGroup];
-          const stats = playerStats.get(extraId);
-          if (stats) {
-            extraCandidates.push({
-              id: extraId,
-              group: g,
-              wins: stats.wins,
-              diff: stats.gamesWon - stats.gamesLost,
-            });
-          }
-        }
-      });
-      extraCandidates.sort((a, b) => {
-        if (a.wins !== b.wins) return b.wins - a.wins;
-        return b.diff - a.diff;
-      });
-      extraCandidates.slice(0, extraNeeded).forEach(e => {
-        filteredRankings.get(e.group)!.push(e.id);
-      });
-    }
 
     const rankingsRo16 = sortedGroups.map(g => filteredRankings.get(g)!);
     const maxLenRo16 = Math.max(...rankingsRo16.map(r => r.length));
@@ -1330,13 +1377,12 @@ export async function populatePlacementMatches(
         }).eq('id', unpopulatedQFs[i].id);
       }
     } else {
-      // 3+ grupos: cruzamento rotativo
-      // Com 3 grupos (A=0,B=1,C=2) x 4 jogadores:
-      //   QF1: A1+B2 vs C1+A2   (g0p0+g1p1, g2p0+g0p1)
-      //   QF2: B1+C2 vs A3+B3   (g1p0+g2p1, g0p2+g1p2)
-      //   QF3: A4+C3 vs B4+C4   (g0p3+g2p2, g1p3+g2p3)
+      // 3+ grupos: só top N/grupo + melhores da posição seguinte (ex. melhores 3.ºs),
+      // depois cruzamento rotativo — NÃO usar o ranking completo (4.ºs ficavam a entrar).
       const nGroups = sortedGroups.length;
-      const rankings = sortedGroups.map(g => rankedByGroup.get(g)!);
+      const totalSlotsNeeded = unpopulatedQFs.length * 4;
+      const filteredRankings = selectQualifiedRankings(totalSlotsNeeded, categoryQualifiedPerGroup);
+      const rankings = sortedGroups.map(g => filteredRankings.get(g) || []);
       const usedPlayers = new Set<string>();
 
       // Fase 1: pares cruzados — grupo G pos 0 com grupo (G+1)%N pos 1
@@ -1360,13 +1406,14 @@ export async function populatePlacementMatches(
         reordered.push(...crossedPairs);
       }
 
-      // Fase 2: jogadores restantes emparelhados na ordem (rank por rank, grupo por grupo)
+      // Fase 2: restantes (inclui melhores 3.ºs) em ordem de ranking
       const remaining: string[] = [];
-      const maxLen = Math.max(...rankings.map(r => r.length));
+      const maxLen = Math.max(0, ...rankings.map(r => r.length));
       for (let pos = 0; pos < maxLen; pos++) {
         for (let g = 0; g < nGroups; g++) {
           if (pos < rankings[g].length && !usedPlayers.has(rankings[g][pos])) {
             remaining.push(rankings[g][pos]);
+            usedPlayers.add(rankings[g][pos]);
           }
         }
       }
