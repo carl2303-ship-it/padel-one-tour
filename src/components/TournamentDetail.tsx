@@ -5371,9 +5371,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               addKoMatch('semifinal', courtName(i % numberOfCourts));
             }
             advanceKoTime();
-
-            addKoMatch('consolation', courtName(numSemis % numberOfCourts));
-            advanceKoTime();
+            // Sem consolação no americano individual: 4 QFs = 4 pares perdedores ≠ 1 jogo
           } else if (categoryKnockoutStage === 'semifinals') {
             // Direct to semifinals (no quarters)
             const numSemis = numFirstRoundMatches;

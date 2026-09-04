@@ -1985,20 +1985,10 @@ export async function advanceKnockoutWinner(
         }
       }
 
-      // Send QF losers to consolation match
-      const consolationMatch = allMatches.find(m => m.round === 'consolation');
-      if (consolationMatch) {
-        if (isIndividual) {
-          const updateData: any = {};
-          if (isFirstInPair) {
-            updateData.player1_individual_id = loserIds.p1;
-            updateData.player2_individual_id = loserIds.p2;
-          } else {
-            updateData.player3_individual_id = loserIds.p1;
-            updateData.player4_individual_id = loserIds.p2;
-          }
-          await supabase.from('matches').update(updateData).eq('id', consolationMatch.id);
-        } else {
+      // Individual americano: sem jogo de consolação (1 match não cobre 4 pares perdedores dos QFs)
+      if (!isIndividual) {
+        const consolationMatch = allMatches.find(m => m.round === 'consolation');
+        if (consolationMatch) {
           const updateData: any = {};
           if (isFirstInPair) {
             updateData.team1_id = loserIds.team;
@@ -2101,9 +2091,8 @@ export async function advanceKnockoutWinner(
         });
 
 
-        // Build SF qualifiers: all winners + best losers to fill SFs
+        // Build SF qualifiers: all winners + best losers to fill SFs (sem consolação)
         const sfPairs: Array<{ p1: string; p2: string }> = sortedWinners.map(r => r.winners);
-        const consolationPairs: Array<{ p1: string; p2: string }> = [];
 
         // We need exactly semifinalMatches.length * 2 pairs for SFs
         const slotsNeeded = semifinalMatches.length * 2;
@@ -2112,13 +2101,6 @@ export async function advanceKnockoutWinner(
           sfPairs.push(sortedLosers[loserIdx].losers);
           loserIdx++;
         }
-
-        // Remaining losers go to consolation
-        while (loserIdx < sortedLosers.length) {
-          consolationPairs.push(sortedLosers[loserIdx].losers);
-          loserIdx++;
-        }
-
 
         // Populate SF matches
         for (let i = 0; i < semifinalMatches.length && i * 2 + 1 < sfPairs.length; i++) {
@@ -2130,26 +2112,6 @@ export async function advanceKnockoutWinner(
             player3_individual_id: pair2.p1,
             player4_individual_id: pair2.p2,
           }).eq('id', semifinalMatches[i].id);
-        }
-
-        // Populate consolation match with QF losers
-        {
-          const consolationMatch = allMatches.find(m => m.round === 'consolation');
-          if (consolationMatch && consolationPairs.length >= 2) {
-            await supabase.from('matches').update({
-              player1_individual_id: consolationPairs[0].p1,
-              player2_individual_id: consolationPairs[0].p2,
-              player3_individual_id: consolationPairs[1].p1,
-              player4_individual_id: consolationPairs[1].p2,
-            }).eq('id', consolationMatch.id);
-          } else if (consolationMatch && consolationPairs.length === 1) {
-            await supabase.from('matches').update({
-              player1_individual_id: consolationPairs[0].p1,
-              player2_individual_id: consolationPairs[0].p2,
-              player3_individual_id: null,
-              player4_individual_id: null,
-            }).eq('id', consolationMatch.id);
-          }
         }
       }
     }

@@ -1487,20 +1487,17 @@ function generateIndividualGroupsKnockoutMatches(teams: Team[], matchNumberOffse
   };
 
   if (numQFMatches >= 3) {
-    // 12+ players: QFs → SFs → Final
-    // e.g. 3 groups × 4 = 12 players → 3 QFs, 2 SFs, 1 consolation, 1 final, 1 3rd
+    // 12+ players: QFs → SFs → Final (+ 3rd place created elsewhere if enabled)
+    // Sem consolação: com 4 QFs há 4 pares perdedores e 1 jogo de consolação não chega.
     for (let i = 0; i < numQFMatches; i++) {
       addKoMatch('quarterfinal');
     }
-
-    // Consolation match for QF losers who don't advance to SFs
-    addKoMatch('consolation');
 
     // 2 semifinals
     addKoMatch('semifinal');
     addKoMatch('semifinal');
 
-    // Final (3rd/4th place match intentionally NOT generated)
+    // Final (3rd/4th place match intentionally NOT generated here)
     addKoMatch('final');
   } else if (numQFMatches >= 2) {
     // 8 players: just SFs → Final
