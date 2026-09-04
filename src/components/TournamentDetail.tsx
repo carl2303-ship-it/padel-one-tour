@@ -1310,11 +1310,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     if (seedSyncRef.current !== tournament.id) {
       seedSyncRef.current = tournament.id;
-      try {
-        await recalculateSeedsByLevel(tournament.id);
-      } catch (err) {
+      void recalculateSeedsByLevel(tournament.id).catch((err) => {
         console.error('[FETCH] Level seeding failed:', err);
-      }
+      });
     }
 
     // Prefer currentTournament (estado local atualizado) e fazer fallback para prop inicial.

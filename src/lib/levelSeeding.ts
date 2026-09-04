@@ -66,44 +66,36 @@ function categoryKey(categoryId: string | null | undefined): string {
   return categoryId || '__none__';
 }
 
-async function applyRankedSeeds(
-  table: 'teams' | 'players',
-  ranked: Array<{ id: string }>
-): Promise<Map<string, number>> {
-  const seeds = new Map<string, number>();
-  await Promise.all(
-    ranked.map(async (row, index) => {
-      const seed = index + 1;
-      seeds.set(row.id, seed);
-      const { error } = await supabase.from(table).update({ seed }).eq('id', row.id);
-      if (error) {
-        console.error(`[LEVEL_SEEDING] Failed to update ${table} ${row.id}:`, error);
-      }
-    })
-  );
-  return seeds;
+function rankToSeeds(
+  ranked: Array<{ id: string; seed?: number | null }>,
+  out: Map<string, number>
+): Array<{ id: string; seed: number }> {
+  const updates: Array<{ id: string; seed: number }> = [];
+  ranked.forEach((row, index) => {
+    const seed = index + 1;
+    out.set(row.id, seed);
+    if (row.seed !== seed) updates.push({ id: row.id, seed });
+  });
+  return updates;
 }
 
 /**
- * Assigns CS1, CS2, ... from player levels:
- *  - doubles: sum of the two players' levels (highest sum = CS1)
- *  - individual american: the player's own level (highest = CS1)
- * Rankings are per category.
+ * Assigns CS1, CS2, ... from player levels.
+ * Uses one bulk RPC instead of N parallel PATCHes (avoids DB timeouts).
  */
 export async function recalculateSeedsByLevel(
   tournamentId: string,
   categoryId?: string | null
 ): Promise<{ teamSeeds: Map<string, number>; playerSeeds: Map<string, number> }> {
-
   let teamsQuery = supabase
     .from('teams')
-    .select('id, name, category_id, player1_id, player2_id')
+    .select('id, name, category_id, player1_id, player2_id, seed')
     .eq('tournament_id', tournamentId);
   if (categoryId) teamsQuery = teamsQuery.eq('category_id', categoryId);
 
   let playersQuery = supabase
     .from('players')
-    .select('id, name, category_id, player_account_id, phone_number')
+    .select('id, name, category_id, player_account_id, phone_number, seed')
     .eq('tournament_id', tournamentId);
   if (categoryId) playersQuery = playersQuery.eq('category_id', categoryId);
 
@@ -121,6 +113,8 @@ export async function recalculateSeedsByLevel(
 
   const teamSeeds = new Map<string, number>();
   const playerSeeds = new Map<string, number>();
+  const playerUpdates: Array<{ id: string; seed: number }> = [];
+  const teamUpdates: Array<{ id: string; seed: number }> = [];
 
   if (teamList.length > 0) {
     const neededIds = [...teamPlayerIds] as string[];
@@ -129,7 +123,7 @@ export async function recalculateSeedsByLevel(
     if (missingIds.length > 0) {
       const { data: extra } = await supabase
         .from('players')
-        .select('id, name, category_id, player_account_id, phone_number')
+        .select('id, name, category_id, player_account_id, phone_number, seed')
         .in('id', missingIds);
       if (extra) roster.push(...extra);
     }
@@ -149,8 +143,7 @@ export async function recalculateSeedsByLevel(
         if (sumB !== sumA) return sumB - sumA;
         return (a.name || '').localeCompare(b.name || '');
       });
-      const seeds = await applyRankedSeeds('teams', ranked);
-      seeds.forEach((seed, id) => teamSeeds.set(id, seed));
+      teamUpdates.push(...rankToSeeds(ranked, teamSeeds));
     }
   }
 
@@ -171,9 +164,17 @@ export async function recalculateSeedsByLevel(
         if (levelB !== levelA) return levelB - levelA;
         return (a.name || '').localeCompare(b.name || '');
       });
-      const seeds = await applyRankedSeeds('players', ranked);
-      seeds.forEach((seed, id) => playerSeeds.set(id, seed));
+      playerUpdates.push(...rankToSeeds(ranked, playerSeeds));
     }
+  }
+
+  if (playerUpdates.length > 0 || teamUpdates.length > 0) {
+    const { error } = await supabase.rpc('set_tournament_seeds', {
+      p_tournament_id: tournamentId,
+      p_player_updates: playerUpdates,
+      p_team_updates: teamUpdates,
+    });
+    if (error) console.error('[LEVEL_SEEDING] Bulk seed update failed:', error);
   }
 
   return { teamSeeds, playerSeeds };

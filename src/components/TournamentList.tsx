@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, Tournament } from '../lib/supabase';
 import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
+import { selectInChunks } from '../lib/selectInChunks';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Filter, Calculator } from 'lucide-react';
@@ -67,14 +68,16 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
 
       if (tournamentsData.length > 0) {
         const tournamentIds = tournamentsData.map(t => t.id);
-        const { data: categoriesData } = await supabase
-          .from('tournament_categories')
-          .select('tournament_id, name')
-          .in('tournament_id', tournamentIds);
+        const categoriesData = await selectInChunks<{ tournament_id: string; name: string }>(
+          'tournament_categories',
+          'tournament_id, name',
+          'tournament_id',
+          tournamentIds
+        );
 
         const catMap: Record<string, string[]> = {};
         const allCats: string[] = [];
-        categoriesData?.forEach(c => {
+        categoriesData.forEach(c => {
           if (!catMap[c.tournament_id]) {
             catMap[c.tournament_id] = [];
           }
@@ -99,16 +102,18 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   const fetchRegistrationCounts = async (tournamentsList: Tournament[]) => {
     const tournamentIds = tournamentsList.map(t => t.id);
 
-    const [counts, categoriesResult] = await Promise.all([
+    const [counts, categoriesData] = await Promise.all([
       fetchTournamentRegistrationCounts(tournamentsList),
-      supabase
-        .from('tournament_categories')
-        .select('tournament_id, max_teams')
-        .in('tournament_id', tournamentIds),
+      selectInChunks<{ tournament_id: string; max_teams: number | null }>(
+        'tournament_categories',
+        'tournament_id, max_teams',
+        'tournament_id',
+        tournamentIds
+      ),
     ]);
 
     const maxTeams: Record<string, number> = {};
-    (categoriesResult.data || []).forEach((category) => {
+    categoriesData.forEach((category) => {
       if (!maxTeams[category.tournament_id]) {
         maxTeams[category.tournament_id] = 0;
       }

@@ -6,6 +6,7 @@ import {
   type MemberPriceInfo,
 } from './playerTournamentPrice';
 import { isIndividualTournament } from './tournamentRegistrationCounts';
+import { selectInChunks } from './selectInChunks';
 
 export type DateFilter = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom';
 
@@ -347,10 +348,13 @@ export async function loadOrganizerTournamentMetrics(
   const [allPlayersRaw, categoriesResult, membersResult, registrationCounts, linkedPlayerIds] =
     await Promise.all([
       fetchPlayersForTournaments(tournamentIds),
-      supabase
-        .from('tournament_categories')
-        .select('id, tournament_id, registration_fee, member_price, non_member_price')
-        .in('tournament_id', tournamentIds),
+      selectInChunks<{
+        id: string;
+        tournament_id: string;
+        registration_fee: number | null;
+        member_price: number | null;
+        non_member_price: number | null;
+      }>('tournament_categories', 'id, tournament_id, registration_fee, member_price, non_member_price', 'tournament_id', tournamentIds),
       supabase
         .from('member_subscriptions')
         .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
@@ -366,7 +370,7 @@ export async function loadOrganizerTournamentMetrics(
     return linkedPlayerIds.has(p.id);
   });
 
-  const allCategories = categoriesResult.data || [];
+  const allCategories = categoriesResult || [];
   const memberLookup = buildMemberLookup((membersResult.data || []) as any[]);
 
   const sortedTournaments = [...tournaments].sort(
@@ -592,10 +596,13 @@ export async function loadOrganizerPlayerSpending(
         p => p.payment_status === 'paid',
       );
 
-      const { data: categories } = await supabase
-        .from('tournament_categories')
-        .select('id, tournament_id, registration_fee, member_price, non_member_price')
-        .in('tournament_id', tournamentIds);
+      const categories = await selectInChunks<{
+        id: string;
+        tournament_id: string;
+        registration_fee: number | null;
+        member_price: number | null;
+        non_member_price: number | null;
+      }>('tournament_categories', 'id, tournament_id, registration_fee, member_price, non_member_price', 'tournament_id', tournamentIds);
 
       const { data: tournaments } = await supabase
         .from('tournaments')
@@ -609,7 +616,7 @@ export async function loadOrganizerPlayerSpending(
 
       paidPlayers.forEach(p => {
         if (!p.name) return;
-        const cat = (categories || []).find(c => c.id === p.category_id);
+        const cat = categories.find(c => c.id === p.category_id);
         const tourn = tournMap.get(p.tournament_id);
         const phoneKey = normalizePhoneKey(p.phone_number);
         const nameKey = normalizeNameKey(p.name);

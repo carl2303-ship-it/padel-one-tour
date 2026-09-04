@@ -79,11 +79,15 @@ export function ManualGroupAssignmentModal({
       : ((tournament as any).number_of_groups || categories.length || 2));
 
   const groupNames = GROUP_NAMES.slice(0, categoryNumberOfGroups);
+  const groupNamesKey = groupNames.join(',');
 
   useEffect(() => {
     const initialAssignments = new Map<string, string>();
     filteredParticipants.forEach((p: any) => {
-      if (p.group_name) {
+      // Se o grupo guardado já não existe (ex: reduziram o nº de grupos e o
+      // jogador ficava no grupo "C"/"D" antigo), tratamos como "Sem Grupo"
+      // para que apareça na lista e possa ser reatribuído aos novos grupos.
+      if (p.group_name && groupNames.includes(p.group_name)) {
         initialAssignments.set(p.id, p.group_name);
       }
     });
@@ -96,7 +100,7 @@ export function ManualGroupAssignmentModal({
       }
       return prev;
     });
-  }, [participants, selectedCategory, isIndividual]);
+  }, [participants, selectedCategory, isIndividual, groupNamesKey]);
 
   const getParticipantName = (p: any) => {
     if (isIndividual) {
