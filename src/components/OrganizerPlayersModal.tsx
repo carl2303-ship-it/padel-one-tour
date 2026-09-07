@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
 import { normalizePhoneKey } from '../lib/phoneUtils';
 import { isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
-import { categoryFromLevel, levelFromCategory } from '../lib/playerLevelCategory';
+import { categoryFromLevel } from '../lib/playerLevelCategory';
 import {
   X,
   Download,
@@ -324,8 +324,8 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     setSavingCategory(player.id);
 
     try {
-      // Keep numeric level aligned with M1–M6 / F1–F6 bands
-      const derivedLevel = category ? levelFromCategory(category) : null;
+      // Categoria M1–M6 / F1–F6 ≠ rating ELO.
+      // Nunca sobrescrever player_accounts.level ao mudar só a categoria.
 
       // 1. Update organizer_players (local contact list)
       if (player.organizerPlayerId) {
@@ -357,7 +357,6 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
                     ...p,
                     organizerPlayerId: data.id,
                     player_category: category,
-                    level: derivedLevel ?? p.level,
                   }
                 : p
             )
@@ -365,7 +364,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
         }
       }
 
-      // 2. Update player_accounts (global profile) via RPC
+      // 2. Update player_accounts category only (never level)
       const normalizedPhone = phoneLookupKey(player.phone_number);
       if (normalizedPhone || player.player_account_id) {
         const rpcPayload: Record<string, unknown> = {
@@ -373,9 +372,6 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           p_player_account_id: player.player_account_id,
           p_player_category: category,
         };
-        if (derivedLevel != null) {
-          rpcPayload.p_level = derivedLevel;
-        }
 
         const { data: rpcResult, error: rpcError } = await supabase.rpc(
           'update_player_account_level',
@@ -385,12 +381,13 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
         if (rpcError || (rpcResult && !rpcResult.success)) {
           console.warn('RPC update_player_account_level (category):', rpcError || rpcResult);
           if (player.player_account_id) {
-            const patch: Record<string, unknown> = {
-              player_category: category,
-              updated_at: new Date().toISOString(),
-            };
-            if (derivedLevel != null) patch.level = derivedLevel;
-            await supabase.from('player_accounts').update(patch).eq('id', player.player_account_id);
+            await supabase
+              .from('player_accounts')
+              .update({
+                player_category: category,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', player.player_account_id);
           }
         }
       }
@@ -401,7 +398,6 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
             ? {
                 ...p,
                 player_category: category,
-                level: derivedLevel ?? p.level,
               }
             : p
         )
