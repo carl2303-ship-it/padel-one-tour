@@ -108,13 +108,20 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
   async function fetchDashboardData() {
     setLoading(true);
     try {
-      const { data: tournamentsData } = await supabase
-        .from('tournaments')
-        .select('id, name, start_date, end_date, status, registration_fee, format, round_robin_type')
-        .eq('user_id', user!.id);
+      const [{ data: tournamentsData }, { data: membersData }] = await Promise.all([
+        supabase
+          .from('tournaments')
+          .select('id, name, start_date, end_date, status, registration_fee, format, round_robin_type')
+          .eq('user_id', user!.id),
+        supabase
+          .from('member_subscriptions')
+          .select('id, status, created_at, amount_paid, end_date, start_date, member_name, member_phone, plan:membership_plans(name)')
+          .eq('club_owner_id', user!.id),
+      ]);
 
       const fetchedTournaments = (tournamentsData || []) as TournamentRow[];
       setTournaments(fetchedTournaments);
+      setMembers((membersData || []) as MemberSubscription[]);
 
       if (fetchedTournaments.length > 0) {
         const [registrations, counts] = await Promise.all([
@@ -127,13 +134,6 @@ export default function OrganizerDashboard({ onNavigate, onOpenTournament }: Org
         setPlayers([]);
         setRegistrationCounts({});
       }
-
-      const { data: membersData } = await supabase
-        .from('member_subscriptions')
-        .select('id, status, created_at, amount_paid, end_date, start_date, member_name, member_phone, plan:membership_plans(name)')
-        .eq('club_owner_id', user!.id);
-
-      setMembers((membersData || []) as MemberSubscription[]);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {

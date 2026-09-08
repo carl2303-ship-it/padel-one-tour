@@ -207,19 +207,26 @@ function App() {
       }
     };
 
-    // Check if user owns a club (needed for multiple paths below)
-    const { data: ownedClub } = await supabase
-      .from('clubs')
-      .select('id, contract_expires_at')
-      .eq('owner_id', user.id)
-      .maybeSingle();
+    // Parallel boot queries — avoid serial round-trips on every login
+    const [{ data: ownedClub }, { data: saRecord }, { data: settings }] = await Promise.all([
+      supabase
+        .from('clubs')
+        .select('id, contract_expires_at')
+        .eq('owner_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('super_admins')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('user_logo_settings')
+        .select('role, is_paid_organizer')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ]);
 
     // Super admins bypass license but still detect independent organizer
-    const { data: saRecord } = await supabase
-      .from('super_admins')
-      .select('id')
-      .eq('user_id', user.id)
-      .maybeSingle();
     if (saRecord) {
       setNeedsLicense(false);
       if (ownedClub) {
@@ -233,18 +240,11 @@ function App() {
         setIsIndependentOrganizer(true);
         goOrganizerHome();
       }
-      await loadUserRole();
+      setUserRole(settings?.role || 'organizer');
       return;
     }
 
     const isBoostSaasOrganizer = user.user_metadata?.source === 'boost_saas';
-
-    // Check user_logo_settings
-    const { data: settings } = await supabase
-      .from('user_logo_settings')
-      .select('role, is_paid_organizer')
-      .eq('user_id', user.id)
-      .maybeSingle();
 
     // Players don't need license
     if (settings?.role === 'player') {

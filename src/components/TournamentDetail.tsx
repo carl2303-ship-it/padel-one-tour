@@ -29,6 +29,7 @@ import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroup
 import { generateMixedAmericanSchedule, MixedPlayer } from '../lib/mixedAmericanScheduler';
 import { getTeamsByGroup, getPlayersByGroup, sortTeamsByTiebreaker, populatePlacementMatches, populateTeamPlacementMatches, advanceKnockoutWinner, calculateTeamQualificationConfig } from '../lib/groups';
 import { recalculateSeedsByLevel } from '../lib/levelSeeding';
+import { selectInChunks } from '../lib/selectInChunks';
 import type { TeamStats, MatchData } from '../lib/groups';
 import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/multiCategoryScheduler';
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
@@ -251,7 +252,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                 setTimeout(() => fetchTournamentData(), 500);
               } else if (fmt === 'individual_groups_knockout') {
                 setTimeout(async () => {
-                  await populatePlacementMatches(tournament.id);
+                  const catId = updated.find(m => m.category_id)?.category_id
+                    || (categories[0] as any)?.id;
+                  await populatePlacementMatches(tournament.id, catId);
                   fetchTournamentData();
                 }, 600);
               } else {
@@ -1237,52 +1240,64 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   // left untouched (rewriting them was the source of "matches jumping
   // between courts" between renders).
   const courtsNormalizedRef = useRef<Set<string>>(new Set());
-  const normalizeNumericCourtsInDB = async (
-    matchList: Array<{ id: string; court: string | null }>,
-  ): Promise<boolean> => {
-    if (courtsNormalizedRef.current.has(tournament.id)) return false;
+  /** Apply numeric court names in memory; persist to DB in background (no blocking refetch). */
+  const normalizeNumericCourtsLocally = (
+    matchList: Array<{ id: string; court: string | null } & Record<string, unknown>>,
+  ) => {
+    if (courtsNormalizedRef.current.has(tournament.id)) return matchList;
     const cn: string[] = (currentTournament as any)?.court_names || (tournament as any)?.court_names || [];
     if (cn.length === 0) {
       courtsNormalizedRef.current.add(tournament.id);
-      return false;
+      return matchList;
     }
-    const updates = matchList
-      .filter(m => m.court && /^\d+$/.test(m.court.trim()))
-      .map(m => {
-        const num = parseInt(m.court!.trim(), 10);
-        if (num < 1 || num > cn.length) return null;
-        return { id: m.id, newCourt: cn[num - 1] };
-      })
-      .filter((u): u is { id: string; newCourt: string } => u !== null);
+    const updates: { id: string; newCourt: string }[] = [];
+    const next = matchList.map((m) => {
+      if (!m.court || !/^\d+$/.test(m.court.trim())) return m;
+      const num = parseInt(m.court.trim(), 10);
+      if (num < 1 || num > cn.length) return m;
+      const newCourt = cn[num - 1];
+      updates.push({ id: m.id, newCourt });
+      return { ...m, court: newCourt };
+    });
 
     if (updates.length === 0) {
       courtsNormalizedRef.current.add(tournament.id);
-      return false;
+      return matchList;
     }
 
-    for (const u of updates) {
-      const { error } = await supabase
-        .from('matches')
-        .update({ court: u.newCourt })
-        .eq('id', u.id);
-      if (error) {
-        console.error('[NORMALIZE-COURTS] Update failed for', u.id, error);
-      }
-    }
     courtsNormalizedRef.current.add(tournament.id);
-    return true;
+    void (async () => {
+      for (const u of updates) {
+        const { error } = await supabase
+          .from('matches')
+          .update({ court: u.newCourt })
+          .eq('id', u.id);
+        if (error) {
+          console.error('[NORMALIZE-COURTS] Update failed for', u.id, error);
+        }
+      }
+    })();
+
+    return next;
   };
 
   const fetchPlayerLevelsFromAccounts = async (players: { phone_number?: string | null }[]) => {
-    const phones = players
-      .map((p) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
-      .filter(Boolean);
+    const phones = [
+      ...new Set(
+        players
+          .map((p) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
+          .filter(Boolean)
+      ),
+    ];
     if (phones.length === 0) return;
-    const { data } = await supabase
-      .from('player_accounts')
-      .select('phone_number, level')
-      .in('phone_number', phones);
-    if (!data) return;
+    const data = await selectInChunks<{ phone_number: string; level: number | null }>(
+      'player_accounts',
+      'phone_number, level',
+      'phone_number',
+      phones,
+      40
+    );
+    if (!data.length) return;
     const map = new Map<string, number>();
     for (const row of data) {
       if (row.phone_number && row.level != null) {
@@ -1290,6 +1305,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       }
     }
     setPlayerLevelByPhone(map);
+  };
+
+  const runPopulateInBackground = (work: () => Promise<void>) => {
+    void work()
+      .then(() => fetchTournamentData(true))
+      .catch((err) => console.error('[FETCH] Background populate failed:', err));
   };
 
   const fetchDepthRef = useRef(0);
@@ -1310,6 +1331,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     if (seedSyncRef.current !== tournament.id) {
       seedSyncRef.current = tournament.id;
+      autoPopulateAttemptedRef.current = false;
+      gkSyncFingerprintRef.current.clear();
       void recalculateSeedsByLevel(tournament.id).catch((err) => {
         console.error('[FETCH] Level seeding failed:', err);
       });
@@ -1425,14 +1448,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         console.error('[FETCH] No individual players data');
       }
       if (matchesResult.data) {
-        const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
-        // One-shot DB normalization for purely-numeric courts ("1" -> court_names[0]).
-        // Once done, the DB is consistent and renders are deterministic.
-        const didNormalize = await normalizeNumericCourtsInDB(rawMatches as any);
-        if (didNormalize) {
-          await fetchTournamentData(silent);
-          return;
-        }
+        const rawMatches = normalizeNumericCourtsLocally(
+          matchesResult.data as unknown as Array<{ id: string; court: string | null } & Record<string, unknown>>
+        ) as unknown as MatchWithTeams[];
         const sortedMatches = rawMatches.slice().sort(
           (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
         );
@@ -1465,56 +1483,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           
           if (allGroupsDone && hasUnpopulatedFirstRound) {
             autoPopulateAttemptedRef.current = true;
-            await populatePlacementMatches(tournament.id);
-            await fetchTournamentData(silent);
-            return;
-          }
-        }
-
-        if (effectiveFormat === 'groups_knockout' && categoriesResult.data && categoriesResult.data.length > 0) {
-          // Detect categories whose knockout state is OUT OF SYNC with the
-          // current group results, in either direction:
-          //   (a) groups all done + knockouts still empty -> POPULATE
-          //   (b) groups NOT all done + knockouts still hold teams -> CLEAR
-          // populateTeamPlacementMatches handles both branches internally.
-          const categoriesNeedingSync: string[] = [];
-          const hasResultLocal = (m: any) => {
-            const t1 = (m.team1_score_set1 || 0) + (m.team1_score_set2 || 0) + (m.team1_score_set3 || 0);
-            const t2 = (m.team2_score_set1 || 0) + (m.team2_score_set2 || 0) + (m.team2_score_set3 || 0);
-            return m.status === 'completed' || t1 > 0 || t2 > 0;
-          };
-          for (const cat of categoriesResult.data as Array<{ id: string }>) {
-            const catGroupMatches = matchesResult.data.filter((m: any) => m.category_id === cat.id && typeof m.round === 'string' && m.round.startsWith('group_'));
-            if (catGroupMatches.length === 0) continue;
-            const allDone = catGroupMatches.every(hasResultLocal);
-
-            const koRounds = ['round_of_16', 'quarter_final', 'quarterfinal', 'semi_final', 'semifinal', 'final', '3rd_place', '5th_semi', '5th_place', '7th_place'];
-            const catKnockouts = matchesResult.data.filter((m: any) =>
-              m.category_id === cat.id && koRounds.includes(m.round)
-            );
-            if (catKnockouts.length === 0) continue;
-
-            const hasEmpty = catKnockouts.some((m: any) => !m.team1_id || !m.team2_id);
-            const hasStaleTeams = catKnockouts.some((m: any) => {
-              if (hasResultLocal(m)) return false;
-              return !!(m.team1_id || m.team2_id);
+            const catId = (categoriesResult.data as Array<{ id: string }> | null)?.[0]?.id
+              || firstRoundMatches.find((m: any) => m.category_id)?.category_id;
+            runPopulateInBackground(async () => {
+              await populatePlacementMatches(tournament.id, catId);
             });
-
-            if (allDone) {
-              categoriesNeedingSync.push(cat.id);
-            } else if (!allDone && hasStaleTeams) {
-              categoriesNeedingSync.push(cat.id);
-            }
-          }
-
-          if (!autoPopulateAttemptedRef.current && categoriesNeedingSync.length > 0) {
-            autoPopulateAttemptedRef.current = true;
-            for (const cId of categoriesNeedingSync) {
-              try { await populateTeamPlacementMatches(tournament.id, cId); }
-              catch (err) { console.error('[FETCH] populateTeamPlacementMatches error:', err); }
-            }
-            await fetchTournamentData(silent);
-            return;
           }
         }
       }
@@ -1596,19 +1569,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   m.player3_individual_id, m.player4_individual_id
                 ].filter(Boolean));
                 const enrolledPlayers = playersResult.data || [];
-                const playerPhones = enrolledPlayers
-                  .map((p: any) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
-                  .filter(Boolean);
-                const { data: genderAccounts } = await supabase
-                  .from('player_accounts')
-                  .select('phone_number, gender')
-                  .in('phone_number', playerPhones);
-                const genderByPhone = new Map<string, string>();
-                (genderAccounts || []).forEach((a: any) => {
-                  if (a.phone_number && a.gender) {
-                    genderByPhone.set(a.phone_number.replace(/[\s\-\(\)\.]/g, ''), a.gender);
-                  }
-                });
+                  const playerPhones = [
+                    ...new Set(
+                      enrolledPlayers
+                        .map((p: any) => (p.phone_number || '').replace(/[\s\-\(\)\.]/g, ''))
+                        .filter(Boolean)
+                    ),
+                  ];
+                  const genderAccounts = playerPhones.length
+                    ? await selectInChunks<{ phone_number: string; gender: string | null }>(
+                        'player_accounts',
+                        'phone_number, gender',
+                        'phone_number',
+                        playerPhones,
+                        40
+                      )
+                    : [];
+                  const genderByPhone = new Map<string, string>();
+                  genderAccounts.forEach((a) => {
+                    if (a.phone_number && a.gender) {
+                      genderByPhone.set(a.phone_number.replace(/[\s\-\(\)\.]/g, ''), a.gender);
+                    }
+                  });
 
                 // Build ranking from all round_* matches (individual points)
                 const groupMatches = allMatchesLocal.filter(m => m.round?.startsWith('round_'));
@@ -1672,31 +1654,31 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
                   if (!autoPopulateAttemptedRef.current && (!sf1Correct || !sf2Correct)) {
                     autoPopulateAttemptedRef.current = true;
-                    await supabase.from('matches').update({
-                      player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
-                      player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
-                    }).eq('id', sf1.id);
-                    await supabase.from('matches').update({
-                      player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
-                      player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
-                    }).eq('id', sf2.id);
-
                     const finalMatch = matchesResult.data!.find((m: any) => m.round === 'final');
                     const thirdMatch = matchesResult.data!.find((m: any) => m.round === '3rd_place');
-                    if (finalMatch && finalMatch.status !== 'completed') {
+                    runPopulateInBackground(async () => {
                       await supabase.from('matches').update({
-                        player1_individual_id: null, player2_individual_id: null,
-                        player3_individual_id: null, player4_individual_id: null
-                      }).eq('id', finalMatch.id);
-                    }
-                    if (thirdMatch && thirdMatch.status !== 'completed') {
+                        player1_individual_id: expectedSF1.p1, player2_individual_id: expectedSF1.p2,
+                        player3_individual_id: expectedSF1.p3, player4_individual_id: expectedSF1.p4
+                      }).eq('id', sf1.id);
                       await supabase.from('matches').update({
-                        player1_individual_id: null, player2_individual_id: null,
-                        player3_individual_id: null, player4_individual_id: null
-                      }).eq('id', thirdMatch.id);
-                    }
+                        player1_individual_id: expectedSF2.p1, player2_individual_id: expectedSF2.p2,
+                        player3_individual_id: expectedSF2.p3, player4_individual_id: expectedSF2.p4
+                      }).eq('id', sf2.id);
 
-                    await fetchTournamentData(silent); return;
+                      if (finalMatch && finalMatch.status !== 'completed') {
+                        await supabase.from('matches').update({
+                          player1_individual_id: null, player2_individual_id: null,
+                          player3_individual_id: null, player4_individual_id: null
+                        }).eq('id', finalMatch.id);
+                      }
+                      if (thirdMatch && thirdMatch.status !== 'completed') {
+                        await supabase.from('matches').update({
+                          player1_individual_id: null, player2_individual_id: null,
+                          player3_individual_id: null, player4_individual_id: null
+                        }).eq('id', thirdMatch.id);
+                      }
+                    });
                   } else {
                   }
                 }
@@ -1759,12 +1741,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         const knockoutFetched = matchesResult.data.filter((m: any) => !m.round.startsWith('group_'));
         if (knockoutFetched.length > 0) {
         }
-        const rawMatches = matchesResult.data as unknown as MatchWithTeams[];
-        const didNormalize = await normalizeNumericCourtsInDB(rawMatches as any);
-        if (didNormalize) {
-          await fetchTournamentData(silent);
-          return;
-        }
+        const rawMatches = normalizeNumericCourtsLocally(
+          matchesResult.data as unknown as Array<{ id: string; court: string | null } & Record<string, unknown>>
+        ) as unknown as MatchWithTeams[];
         const sortedMatches = rawMatches.slice().sort(
           (a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime()
         );
@@ -1844,14 +1823,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           }
 
           if (categoriesNeedingSync.length > 0) {
-            (async () => {
+            runPopulateInBackground(async () => {
               for (const cId of categoriesNeedingSync) {
                 try { await populateTeamPlacementMatches(tournament.id, cId); }
                 catch (err) { console.error('[FETCH-GK] populateTeamPlacementMatches error:', err); }
               }
-              await fetchTournamentData();
-            })();
-            return;
+            });
           }
         }
       }
@@ -2161,13 +2138,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   for (let i = 0; i < Math.min(r1MatchesLocal.length, matchups.length); i++) {
                     const match = r1MatchesLocal[i];
                     const matchup = matchups[i];
-                    const { error, data } = await supabase.from('matches').update({
+                    await supabase.from('matches').update({
                       team1_id: matchup.team1.id,
                       team2_id: matchup.team2.id
                     }).eq('id', match.id).select();
                   }
-                  
-                  await fetchTournamentData(silent); return;
+
+                  void fetchTournamentData(true);
+                  return;
                 } else {
                 }
               } else if (sortedCats.length === 2) {
@@ -2311,7 +2289,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   }
                   
                   if (changed) {
-                    await fetchTournamentData(silent); return;
+                    void fetchTournamentData(true);
+                    return;
                   }
                 } else {
                 }
@@ -2329,7 +2308,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
     } finally {
       fetchDepthRef.current = Math.max(0, fetchDepthRef.current - 1);
-      if (fetchDepthRef.current === 0) autoPopulateAttemptedRef.current = false;
       setLoading(false);
       setRefreshKey(prev => prev + 1);
 
@@ -3034,10 +3012,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               if (error) throw error;
             }
             
-            // Delete extra empty QF matches
-            for (let i = maxQFs; i < unpopulatedQFs.length; i++) {
-              await supabase.from('matches').delete().eq('id', unpopulatedQFs[i].id);
-            }
+            // Não apagar quartos vazios — a estrutura do calendário deve manter-se
           } else {
             // Multiple groups: use populatePlacementMatches for proper seeding
             await populatePlacementMatches(tournament.id, categoryId);
@@ -5217,7 +5192,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           // Build list of completed individual matches for this category to pass to scheduler
           const catId = categories.length > 0 ? categories[0].id : null;
           const completedIndividualForScheduler = completedMatches
-            .filter((m: any) => m.player1_individual_id && (!catId || m.category_id === catId))
+            .filter((m: any) =>
+              m.player1_individual_id &&
+              typeof m.round === 'string' &&
+              (m.round.startsWith('group_') || m.round === 'group_stage' || m.round.startsWith('round_')) &&
+              (!catId || m.category_id === catId)
+            )
             .map((m: any) => ({
               player1_id: m.player1_individual_id,
               player2_id: m.player2_individual_id,
