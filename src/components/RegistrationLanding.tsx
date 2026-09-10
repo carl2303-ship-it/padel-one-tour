@@ -4,7 +4,6 @@ import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
 import { normalizePhone } from '../lib/phoneUtils';
-import { levelFromCategory } from '../lib/playerLevelCategory';
 import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
 
@@ -130,26 +129,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
   const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
   const [player2IsMember, setPlayer2IsMember] = useState<boolean | null>(null);
   const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
-
-  const getCategoryDefaults = (category: TournamentCategory | undefined): { playerCategory: string | null; level: number | null; levelReliability: number } => {
-    if (!category) return { playerCategory: null, level: null, levelReliability: 0 };
-
-    const accepted = category.accepted_levels && category.accepted_levels.length > 0
-      ? category.accepted_levels[0]
-      : null;
-
-    let level: number | null = null;
-    if (accepted) {
-      level = levelFromCategory(accepted);
-    }
-    if (level == null && category.min_level != null) {
-      level = category.min_level;
-    } else if (level == null && category.max_level != null) {
-      level = category.max_level;
-    }
-
-    return { playerCategory: accepted, level, levelReliability: 0 };
-  };
 
   const checkPlayerLevel = (account: PlayerAccount | null, category: typeof categories[0] | undefined): string | null => {
     if (!category) return null;
@@ -633,7 +612,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     name: string,
     email: string,
     phone: string,
-    defaults?: { playerCategory: string | null; level: number | null; levelReliability?: number }
   ) => {
     const normalizedPhone = normalizePhone(phone);
     const tempPassword = `Player${normalizedPhone.slice(-4)}!`;
@@ -652,9 +630,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           password: tempPassword,
           phone_number: normalizedPhone,
           name,
-          player_category: defaults?.playerCategory ?? null,
-          level: defaults?.level ?? null,
-          level_reliability_percent: defaults?.levelReliability ?? 0,
+          // Never send level/category — used to stamp tournament min_level onto blank accounts.
+          player_category: null,
+          level: null,
+          level_reliability_percent: null,
         }),
       }
     );
@@ -765,13 +744,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         }
       }
 
-      const categoryDefaults = getCategoryDefaults(selectedCat);
-
       const player1Result = await createOrGetPlayerAccount(
         formData.player1Name,
         formData.player1Email,
         formData.player1Phone,
-        categoryDefaults
       );
 
       const credentials: {name: string, phone: string, password: string}[] = [];
@@ -790,7 +766,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
           formData.player2Name,
           formData.player2Email,
           formData.player2Phone,
-          categoryDefaults
         );
         player2Account = player2Result.account;
 

@@ -17,7 +17,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { email, password, phone_number, name, player_category, level, level_reliability_percent } = await req.json();
+    const { email, password, phone_number, name } = await req.json();
 
     if (!email || !password || !phone_number || !name) {
       return new Response(
@@ -47,30 +47,8 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (existingAccount) {
-      // If category/level are provided and missing in existing account, hydrate them.
-      if ((player_category && !existingAccount.player_category) || (level != null && existingAccount.level == null)) {
-        const { data: updatedAccount } = await supabaseAdmin
-          .from("player_accounts")
-          .update({
-            player_category: existingAccount.player_category ?? player_category ?? null,
-            level: existingAccount.level ?? level ?? null,
-          })
-          .eq("id", existingAccount.id)
-          .select("*")
-          .single();
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            account: updatedAccount || existingAccount,
-            isNew: false,
-          }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
+      // Never hydrate level/category from tournament registration.
+      // Old clients used to send category.min_level and overwrite blank accounts.
       return new Response(
         JSON.stringify({
           success: true,
@@ -166,9 +144,10 @@ Deno.serve(async (req: Request) => {
         user_id: userId,
         name,
         email: accountEmail,
-        player_category: player_category ?? null,
-        level: level ?? null,
-        level_reliability_percent: level_reliability_percent ?? null,
+        // Skill level/category must come from real rating or organizer edit — never registration.
+        player_category: null,
+        level: null,
+        level_reliability_percent: null,
       })
       .select()
       .single();
