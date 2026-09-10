@@ -20,7 +20,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [allTournaments, setAllTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'active' | 'completed'>('all');
+  const [filter, setFilter] = useState<'active' | 'completed'>('active');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [registrationCounts, setRegistrationCounts] = useState<Record<string, number>>({});
@@ -53,9 +53,10 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
       .order('start_date', { ascending: false });
 
     if (filter === 'active') {
-      query = query.eq('status', 'active');
-    } else if (filter === 'completed') {
-      query = query.eq('status', 'completed');
+      // Ativos + rascunhos (em preparação) — evita carregar o histórico completo
+      query = query.in('status', ['active', 'draft']);
+    } else {
+      query = query.in('status', ['completed', 'cancelled']);
     }
 
     const { data, error } = await query;
@@ -261,16 +262,6 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-0">
         <div className="flex gap-2 overflow-x-auto pb-1">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold transition-colors whitespace-nowrap shadow-sm ${
-              filter === 'all'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'bg-white text-[#111111] hover:bg-gray-50 border border-gray-200'
-            }`}
-          >
-            {t.nav.all}
-          </button>
           <button
             onClick={() => setFilter('active')}
             className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold transition-colors whitespace-nowrap shadow-sm ${

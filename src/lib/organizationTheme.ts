@@ -15,8 +15,7 @@ const RESERVED_PATHS = new Set([
 export const BRAND_LOGOS: Record<ThemeBrand, string> = {
   boost:
     'https://rqiwnxcexsccguruiteq.supabase.co/storage/v1/object/sign/Logos/Boostpadel-logo.png?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV81OWQyMTAwNy1kOWY2LTQwZjktYWY4NC02MDBlZDJkZGQ0MTkiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJMb2dvcy9Cb29zdHBhZGVsLWxvZ28ucG5nIiwiaWF0IjoxNzY5NjAzMDg5LCJleHAiOjIwODQ5NjMwODl9.NZ_fLlxEIFXTHM3PyKW-UJa-YF32fdVTqkLJrbGXhg0',
-  padel1:
-    'https://rqiwnxcexsccguruiteq.supabase.co/storage/v1/object/public/Logos/padel-one-logo.png',
+  padel1: '/icon-512.png',
 };
 
 let cachedOrganization: Organization | null = null;

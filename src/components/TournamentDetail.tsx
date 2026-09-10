@@ -8,7 +8,7 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from '../lib/playerTournamentPrice';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram } from 'lucide-react';
 import { notifyTournamentPlayers } from '../lib/notifyTournament';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
@@ -53,6 +53,7 @@ import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
 import AddSuperTeamModal from './AddSuperTeamModal';
 import LadderTournamentView from './LadderTournamentView';
+import InstagramPackModal from './InstagramPackModal';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -62,6 +63,8 @@ type TournamentDetailProps = {
 type TeamWithPlayers = Team & {
   player1: Player;
   player2: Player;
+  final_position?: number | null;
+  group_name?: string | null;
 };
 
 // partner_match_invite_id / organizer_review_status are not deployed yet;
@@ -155,6 +158,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [showEditTournament, setShowEditTournament] = useState(false);
+  const [showInstagramPack, setShowInstagramPack] = useState(false);
   const [showEditTeam, setShowEditTeam] = useState(false);
   const [showManageCategories, setShowManageCategories] = useState(false);
   const [showManageInvites, setShowManageInvites] = useState(false);
@@ -1371,7 +1375,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [categoriesResult, teamsResult, confrontationsResult, standingsResult] = await Promise.all([
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, accepted_levels, min_level, max_level')
           .eq('tournament_id', tournament.id)
           .order('name'),
         supabase
@@ -1405,7 +1409,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('seed', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, accepted_levels, min_level, max_level')
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);
@@ -1436,7 +1440,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, accepted_levels, min_level, max_level')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -1719,7 +1723,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('match_number', { ascending: true }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, accepted_levels, min_level, max_level')
           .eq('tournament_id', tournament.id)
           .order('name')
       ]);
@@ -6883,6 +6887,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               PDF
             </button>
             <button
+              onClick={() => setShowInstagramPack(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition"
+              title="Gerar pack Instagram (pódio, classificação, fotos)"
+            >
+              <Instagram className="w-4 h-4" />
+              Pack IG
+            </button>
+            <button
               onClick={() => setShowEditTournament(true)}
               className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
             >
@@ -8339,6 +8351,17 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             fetchTournamentData();
           }}
           isIndependentOrganizer={!(currentTournament as any).club_id}
+        />
+      )}
+
+      {showInstagramPack && (
+        <InstagramPackModal
+          tournament={currentTournament}
+          categories={categories}
+          teams={teams}
+          players={individualPlayers}
+          defaultCategoryId={selectedCategory}
+          onClose={() => setShowInstagramPack(false)}
         />
       )}
 

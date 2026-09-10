@@ -146,8 +146,13 @@ export default function AuthForm({ onSuccess }: AuthFormProps) {
             <div className="flex justify-center mb-6">
               <img
                 src={logoUrl}
-                alt="Logo"
-                className="h-32 w-auto"
+                alt="PADEL ONE Tour"
+                className="h-32 w-auto object-contain"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (img.src.endsWith('/icon-512.png')) return;
+                  img.src = '/icon-512.png';
+                }}
               />
             </div>
             <h1 className="text-3xl font-black text-[#111111] mb-2">
