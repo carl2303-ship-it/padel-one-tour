@@ -115,6 +115,26 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
     };
   }, [tournamentMetrics, membershipMetrics, periodTournamentRevenue]);
 
+  const playerEvolution = useMemo(() => {
+    const byMonth = new Map<string, { label: string; count: number; sortKey: string }>();
+    for (const t of tournamentMetrics) {
+      const d = t.startDate.slice(0, 10);
+      const [y, m] = d.split('-');
+      if (!y || !m) continue;
+      const sortKey = `${y}-${m}`;
+      const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('pt-PT', {
+        month: 'short',
+        year: '2-digit',
+      });
+      const existing = byMonth.get(sortKey);
+      if (existing) existing.count += t.registrations;
+      else byMonth.set(sortKey, { label, count: t.registrations, sortKey });
+    }
+    return [...byMonth.values()].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [tournamentMetrics]);
+
+  const evolutionMax = Math.max(...playerEvolution.map((d) => d.count), 1);
+
   const filteredSpending = useMemo(() => {
     if (spendingFilter === 'members') return playerSpending.filter(p => p.isMember);
     if (spendingFilter === 'non-members') return playerSpending.filter(p => !p.isMember);
@@ -222,6 +242,26 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
             <p className="text-xl font-bold text-emerald-900">{summary.newPlayers}</p>
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Evolução de jogadores</h2>
+        {playerEvolution.length === 0 || playerEvolution.every((d) => d.count === 0) ? (
+          <p className="text-sm text-gray-500 py-8 text-center">Sem dados no período seleccionado.</p>
+        ) : (
+          <div className="flex items-end gap-2 h-48">
+            {playerEvolution.map((data) => (
+              <div key={data.sortKey} className="flex-1 flex flex-col items-center justify-end h-full min-w-0">
+                <span className="text-xs font-semibold text-gray-700 mb-1">{data.count}</span>
+                <div
+                  className="w-full bg-blue-500 rounded-t-md transition-all duration-500 min-h-[4px]"
+                  style={{ height: `${(data.count / evolutionMax) * 85}%` }}
+                />
+                <span className="text-[10px] text-gray-500 mt-2 truncate w-full text-center">{data.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 border-b border-gray-200">
