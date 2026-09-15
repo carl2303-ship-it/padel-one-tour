@@ -423,45 +423,32 @@ function drawHeader(
   logo: HTMLImageElement | null,
   eyebrow: string
 ) {
-  const theme = meta.theme;
+  const logoSize = 168;
+  const textX = logo ? 72 + logoSize + 28 : 72;
+  const textMaxW = IG_WIDTH - textX - 72;
 
   if (logo) {
-    const size = 96;
-    ctx.drawImage(logo, 72, 64, size, size);
+    // Preserve aspect ratio inside a larger square slot
+    const scale = Math.min(logoSize / logo.width, logoSize / logo.height);
+    const dw = logo.width * scale;
+    const dh = logo.height * scale;
+    const dx = 72 + (logoSize - dw) / 2;
+    const dy = 48 + (logoSize - dh) / 2;
+    ctx.drawImage(logo, dx, dy, dw, dh);
   }
-
-  const badge = theme.label;
-  ctx.font = '800 22px Inter, system-ui, sans-serif';
-  const badgeW = Math.min(420, ctx.measureText(badge).width + 36);
-  const badgeX = IG_WIDTH - 72 - badgeW;
-  const badgeY = 72;
-  roundRect(ctx, badgeX, badgeY, badgeW, 44, 22);
-  ctx.fillStyle = theme.accent;
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.textAlign = 'center';
-  ctx.fillText(badge, badgeX + badgeW / 2, badgeY + 30);
-  ctx.textAlign = 'left';
 
   ctx.fillStyle = 'rgba(255,255,255,0.72)';
   ctx.font = '700 28px Inter, system-ui, sans-serif';
-  ctx.fillText(eyebrow.toUpperCase(), logo ? 192 : 72, 110);
+  ctx.fillText(eyebrow.toUpperCase(), textX, 90);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 52px Inter, system-ui, sans-serif';
-  wrapText(ctx, meta.tournamentName, logo ? 192 : 72, 170, IG_WIDTH - (logo ? 264 : 144), 56, 2);
+  const titleHeight = wrapText(ctx, meta.tournamentName, textX, 150, textMaxW, 56, 2);
 
-  let y = 250;
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = '600 28px Inter, system-ui, sans-serif';
   if (meta.dateLabel) {
-    ctx.fillText(meta.dateLabel, logo ? 192 : 72, y);
-    y += 40;
-  }
-  if (meta.categoryName) {
-    ctx.fillStyle = theme.accentSoft;
-    ctx.font = '800 30px Inter, system-ui, sans-serif';
-    ctx.fillText(meta.categoryName, logo ? 192 : 72, y);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 34px Inter, system-ui, sans-serif';
+    ctx.fillText(meta.dateLabel, textX, 160 + titleHeight + 8);
   }
 }
 
@@ -638,8 +625,8 @@ export async function renderStandingsCard(
   drawHeader(ctx, meta, logo, 'Classificação');
 
   const list = entries.slice(0, limit);
-  const startY = 320;
-  const rowH = 96;
+  const startY = 340;
+  const rowH = 92;
 
   if (list.length === 0) {
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
@@ -722,9 +709,9 @@ export async function renderPhotoCard(
   drawHeader(ctx, meta, logo, title);
 
   const frameX = 72;
-  const frameY = 300;
+  const frameY = 320;
   const frameW = IG_WIDTH - 144;
-  const frameH = 880;
+  const frameH = 860;
 
   roundRect(ctx, frameX - 8, frameY - 8, frameW + 16, frameH + 16, 28);
   ctx.fillStyle = 'rgba(255,255,255,0.12)';
