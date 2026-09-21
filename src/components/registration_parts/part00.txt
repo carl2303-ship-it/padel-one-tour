@@ -1,0 +1,241 @@
+import { useState, useEffect } from 'react';
+import { supabase, Tournament, TournamentCategory } from '../lib/supabase';
+import { useI18n } from '../lib/i18nContext';
+import { useAuth } from '../lib/authContext';
+import { useCustomLogo } from '../lib/useCustomLogo';
+import {
+  normalizePhone,
+  composeInternationalPhone,
+  dialCodeForIso,
+  defaultCountryIso,
+  COUNTRY_DIAL_CODES,
+  phoneLookupCandidates,
+  phonesEqual,
+  normalizePhoneKey,
+} from '../lib/phoneUtils';
+import { recalculateSeedsByLevel } from '../lib/levelSeeding';
+import { Trophy, Calendar, Users, MapPin, Clock, CheckCircle, CreditCard, User, LogIn, ArrowRight, Phone, ChevronDown } from 'lucide-react';
+
+const sendWelcomeEmail = async (
+  playerEmail: string,
+  playerName: string,
+  playerPhone: string,
+  tournamentName: string,
+  categoryName?: string
+) => {
+  try {
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-player-welcome-email`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          email: playerEmail,
+          tournamentName,
+          categoryName,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('Failed to send welcome email:', error);
+    } else {
+      const result = await response.json();
+    }
+  } catch (error) {
+    console.error('Error sending welcome email:', error);
+  }
+};
+
+const notifyOrganizer = async (
+  tournamentId: string,
+  playerName: string,
+  partnerName?: string,
+  categoryName?: string,
+  isTeam?: boolean
+) => {
+  try {
+    await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-organizer-registration`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          tournamentId,
+          playerName,
+          partnerName,
+          categoryName,
+          isTeam: isTeam ?? false,
+        }),
+      }
+    );
+  } catch (error) {
+    console.error('Error notifying organizer:', error);
+  }
+};
+
+type RegistrationLandingProps = {
+  tournament: Tournament;
+  onClose: () => void;
+};
+
+type RegistrationStep = 'check_account' | 'login' | 'register' | 'no_account';
+
+interface PlayerAccount {
+  phone_number: string;
+  name: string;
+  email: string | null;
+  user_id: string | null;
+  player_category: string | null;
+  level: number | null;
+}
+
+
+async function findPlayerAccountByPhone(phone: string) {
+  const candidates = phoneLookupCandidates(phone);
+  for (const candidate of candidates) {
+    const { data } = await supabase
+      .from('player_accounts')
+      .select('*')
+      .eq('phone_number', candidate)
+      .maybeSingle();
+    if (data) return data as PlayerAccount;
+  }
+
+  // Fallback: national digits (handles +34 vs +33 for same mobile body)
+  const key = candidates
+    .map((c) => c.replace(/\D/g, ''))
+    .sort((a, b) => b.length - a.length)[0];
+  const last9 = key?.slice(-9);
+  if (last9 && last9.length >= 9) {
+    const { data: rows } = await supabase
+      .from('player_accounts')
+      .select('*')
+      .ilike('phone_number', `%${last9}`)
+      .limit(20);
+    const national = normalizePhoneKey(phone);
+    const matches = (rows || []).filter((r: any) =>
+      phonesEqual(r.phone_number, phone) || normalizePhoneKey(r.phone_number) === national
+    );
+    if (matches.length === 1) return matches[0] as PlayerAccount;
+    if (matches.length > 1) {
+      const exact = matches.find((r: any) => candidates.includes(r.phone_number) || phonesEqual(r.phone_number, phone));
+      return (exact || matches[0]) as PlayerAccount;
+    }
+  }
+  return null;
+}
+
+export default function RegistrationLanding({ tournament, onClose }: RegistrationLandingProps) {
+  const { t, language } = useI18n();
+  const { user } = useAuth();
+  const { logoUrl } = useCustomLogo(tournament.user_id);
+  const [step, setStep] = useState<RegistrationStep>('check_account');
+  const [checkPhone, setCheckPhone] = useState('');
+  const [checkDialIso, setCheckDialIso] = useState(() => defaultCountryIso(language));
+  const [partnerDialIso, setPartnerDialIso] = useState(() => defaultCountryIso(language));
+  const [existingAccount, setExistingAccount] = useState<PlayerAccount | null>(null);
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loggedInPlayer, setLoggedInPlayer] = useState<PlayerAccount | null>(null);
+
+  const [formData, setFormData] = useState({
+    teamName: '',
+    player1Name: '',
+    player1Email: '',
+    player1Phone: '',
+    player1WantsDinner: false,
+    player2Name: '',
+    player2Email: '',
+    player2Phone: '',
+    player2WantsDinner: false,
+    categoryId: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
+  const [registeredTeamsCount, setRegisteredTeamsCount] = useState(0);
+  const [categories, setCategories] = useState<TournamentCategory[]>([]);
+  const [categoryTeams, setCategoryTeams] = useState<any[]>([]);
+  const [categoryPlayersCount, setCategoryPlayersCount] = useState(0);
+  const [newAccountCredentials, setNewAccountCredentials] = useState<{name: string, phone: string, password: string}[]>([]);
+  const [pendingSignOut, setPendingSignOut] = useState(false);
+  const [partnerLookupLoading, setPartnerLookupLoading] = useState(false);
+  const [partnerFound, setPartnerFound] = useState(false);
+  const [showRegisteredList, setShowRegisteredList] = useState(false);
+  const [allRegistered, setAllRegistered] = useState<any[]>([]);
+  const [payAtClubSelected, setPayAtClubSelected] = useState(false);
+  const [playerIsMember, setPlayerIsMember] = useState<boolean | null>(null);
+  const [player2IsMember, setPlayer2IsMember] = useState<boolean | null>(null);
+  const [clubPaymentMethod, setClubPaymentMethod] = useState<string | null>(null);
+
+  const checkPlayerLevel = (account: PlayerAccount | null, category: typeof categories[0] | undefined): string | null => {
+    if (!category) return null;
+
+    const hasLevelRestriction = category.accepted_levels && category.accepted_levels.length > 0;
+    const hasRangeRestriction = category.min_level != null || category.max_level != null;
+    if (!hasLevelRestriction && !hasRangeRestriction) return null;
+
+    const playerCategory = account?.player_category;
+    const playerLevel = account?.level;
+    const playerName = account?.name || 'Jogador';
+    const errors: string[] = [];
+
+    if (hasLevelRestriction && (!playerCategory || !category.accepted_levels!.includes(playerCategory))) {
+      errors.push(`Categoria ${playerCategory || 'não definida'} — aceites: ${category.accepted_levels!.join(', ')}`);
+    }
+
+    if (hasRangeRestriction) {
+      if (playerLevel == null) {
+        errors.push('Nível numérico não definido');
+      } else {
+        if (category.min_level != null && playerLevel < category.min_level) {
+          errors.push(`Nível ${playerLevel} abaixo do mínimo ${category.min_level}`);
+        }
+        if (category.max_level != null && playerLevel > category.max_level) {
+          errors.push(`Nível ${playerLevel} acima do máximo ${category.max_level}`);
+        }
+      }
+    }
+
+    if (errors.length === 0) return null;
+    return `${playerName}: ${errors.join('; ')}. Contacte o clube organizador para mais informações.`;
+  };
+
+  const isIndividualFormat = () => {
+    const fmt = tournament.format;
+    if (['individual_groups_knockout', 'mixed_american'].includes(fmt)) {
+      return true;
+    }
+    if (fmt === 'round_robin' && tournament.round_robin_type === 'individual') {
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    fetchTeamsCount();
+    fetchCategories();
+    checkLoggedInPlayer();
+    fetchClubPaymentMethod();
+  }, [tournament.id]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('enrolled') === '1') {
+      fetchAllRegistered();
+      setShowRegisteredList(true);
+    }
+
+    const phoneParam = params.get('phone');
+    if (phoneParam && step === 'check_account') {
+      const normalized = normalizePhone(decodeURIComponent(phoneParam));
+      setCheckPho
