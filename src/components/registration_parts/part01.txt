@@ -1,0 +1,254 @@
+ne(normalized);
+      (async () => {
+        const { data: account } = await supabase
+          .from('player_accounts')
+          .select('*')
+          .eq('phone_number', normalized)
+          .maybeSingle();
+
+        if (account) {
+          setExistingAccount(account);
+          setFormData(prev => ({
+            ...prev,
+            player1Name: account.name || '',
+            player1Email: account.email || '',
+            player1Phone: normalized,
+          }));
+          setLoggedInPlayer(account);
+          checkMembership(normalized);
+          setStep('register');
+        } else {
+          setStep('no_account');
+        }
+      })();
+    }
+  }, [tournament.id]);
+
+  useEffect(() => {
+    if (formData.categoryId && categories.length > 0) {
+      fetchCategoryTeams(formData.categoryId);
+    } else {
+      setCategoryTeams([]);
+      setCategoryPlayersCount(0);
+    }
+  }, [formData.categoryId, categories]);
+
+  /** Uma só categoria: pré-seleccionar para não gravar inscriçãoes sem category_id por engano. */
+  useEffect(() => {
+    if (categories.length === 1 && !formData.categoryId) {
+      setFormData((prev) => ({ ...prev, categoryId: categories[0].id }));
+    }
+  }, [categories, formData.categoryId]);
+
+  const checkLoggedInPlayer = async () => {
+    if (!user) return;
+
+    if (user.id === tournament.user_id) return;
+
+    const { data: playerAccount } = await supabase
+      .from('player_accounts')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (playerAccount) {
+      setLoggedInPlayer(playerAccount);
+      setFormData(prev => ({
+        ...prev,
+        player1Name: playerAccount.name || '',
+        player1Email: playerAccount.email || '',
+        player1Phone: playerAccount.phone_number || '',
+      }));
+      checkMembership(playerAccount.phone_number);
+      setStep('register');
+    }
+  };
+
+  const fetchCategoryTeams = async (categoryId: string) => {
+    const category = categories.find(c => c.id === categoryId);
+    const isCategoryIndividual = category?.format === 'crossed_playoffs_teams' 
+      ? false // Formato de equipas
+      : (category?.format === 'individual_groups_knockout' ||
+      category?.format === 'mixed_american' ||
+      (category?.format === 'round_robin' && tournament.round_robin_type === 'individual'));
+
+    if (isCategoryIndividual) {
+      const { data: players, count } = await supabase
+        .from('players')
+        .select('id, name', { count: 'exact' })
+        .eq('tournament_id', tournament.id)
+        .eq('category_id', categoryId)
+        .order('name');
+
+      if (players) {
+        setCategoryTeams(players.map(p => ({ id: p.id, name: p.name, isPlayer: true })));
+        setCategoryPlayersCount(count || 0);
+      }
+    } else {
+      const { data, count } = await supabase
+        .from('teams')
+        .select(`
+          id,
+          name,
+          player1:players!teams_player1_id_fkey(name),
+          player2:players!teams_player2_id_fkey(name)
+        `, { count: 'exact' })
+        .eq('tournament_id', tournament.id)
+        .eq('category_id', categoryId)
+        .order('name');
+
+      if (data) {
+        setCategoryTeams(data);
+        setCategoryPlayersCount(count || 0);
+      }
+    }
+  };
+
+  const fetchTeamsCount = async () => {
+    const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
+                         tournament.format === 'individual_groups_knockout' ||
+                         tournament.format === 'mixed_american';
+
+    if (isIndividual) {
+      const { count } = await supabase
+        .from('players')
+        .select('*', { count: 'exact', head: true })
+        .eq('tournament_id', tournament.id);
+      setRegisteredTeamsCount(count || 0);
+    } else {
+      const { count } = await supabase
+        .from('teams')
+        .select('*', { count: 'exact', head: true })
+        .eq('tournament_id', tournament.id);
+      setRegisteredTeamsCount(count || 0);
+    }
+  };
+
+  const fetchAllRegistered = async () => {
+    const isIndividual = (tournament.format === 'round_robin' && tournament.round_robin_type === 'individual') ||
+                         tournament.format === 'individual_groups_knockout' ||
+                         tournament.format === 'mixed_american';
+
+    if (isIndividual) {
+      const { data } = await supabase
+        .from('players')
+        .select('id, name, category_id')
+        .eq('tournament_id', tournament.id)
+        .order('created_at', { ascending: true });
+      setAllRegistered(data || []);
+    } else {
+      const { data } = await supabase
+        .from('teams')
+        .select(`
+          id,
+          name,
+          category_id,
+          player1:players!teams_player1_id_fkey(name),
+          player2:players!teams_player2_id_fkey(name)
+        `)
+        .eq('tournament_id', tournament.id)
+        .order('created_at', { ascending: true });
+
+      const formatted = (data || []).map(team => ({
+        id: team.id,
+        name: team.name,
+        category_id: team.category_id,
+        player1_name: team.player1?.name,
+        player2_name: team.player2?.name,
+      }));
+      setAllRegistered(formatted);
+    }
+  };
+
+  const fetchCategories = async () => {
+    const { data } = await supabase
+      .from('tournament_categories')
+      .select('*')
+      .eq('tournament_id', tournament.id)
+      .order('name');
+
+    if (data) {
+      setCategories(data);
+    }
+  };
+
+  const fetchClubPaymentMethod = async () => {
+    if (!tournament.club_id) return;
+    const { data } = await supabase
+      .from('clubs')
+      .select('payment_method')
+      .eq('id', tournament.club_id)
+      .maybeSingle();
+    if (data?.payment_method) {
+      setClubPaymentMethod(data.payment_method);
+      // If club only supports "at_club", pre-select it
+      if (data.payment_method === 'at_club') {
+        setPayAtClubSelected(true);
+      }
+    }
+  };
+
+  const clubSupportsOnline = !clubPaymentMethod || ['per_player', 'full_court', 'at_club_or_per_player', 'at_club_or_full_court', 'all'].includes(clubPaymentMethod);
+  const clubSupportsAtClub = !clubPaymentMethod || ['at_club', 'at_club_or_per_player', 'at_club_or_full_court', 'all'].includes(clubPaymentMethod);
+  const canPayOnline = clubSupportsOnline;
+  const canPayAtClub = clubSupportsAtClub && tournament.allow_club_payment === true;
+
+  const getPlayerFee = (isMember: boolean | null) => {
+    const cat = formData.categoryId ? categories.find(c => c.id === formData.categoryId) : null;
+    const mp = (cat as any)?.member_price || tournament.member_price;
+    const nmp = (cat as any)?.non_member_price || tournament.non_member_price;
+    if (isMember === true && mp) return Number(mp);
+    if (isMember === false && nmp) return Number(nmp);
+    if (nmp) return Number(nmp);
+    if (mp) return Number(mp);
+    const catFee = (cat as any)?.registration_fee;
+    if (catFee != null && catFee > 0) return Number(catFee);
+    return Number(tournament.registration_fee) || 0;
+  };
+
+  const getRegistrationFee = () => {
+    const p1Fee = getPlayerFee(playerIsMember);
+    if (isIndividualFormat()) return p1Fee;
+    const p2Fee = getPlayerFee(player2IsMember);
+    return p1Fee + p2Fee;
+  };
+
+  const checkMembershipFor = async (phone: string, setter: (v: boolean | null) => void) => {
+    if (!phone || !tournament.club_id) {
+      setter(null);
+      return;
+    }
+    const normalized = normalizePhone(phone);
+    const { data: club } = await supabase
+      .from('clubs')
+      .select('owner_id')
+      .eq('id', tournament.club_id)
+      .maybeSingle();
+    if (!club) { setter(null); return; }
+    const { data: membership } = await supabase
+      .from('member_subscriptions')
+      .select('id')
+      .eq('club_owner_id', club.owner_id)
+      .eq('member_phone', normalized)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    setter(!!membership);
+  };
+
+  const checkMembership = (phone: string) => checkMembershipFor(phone, setPlayerIsMember);
+
+  const getCategoryMaxSlots = () => {
+    // Se uma categoria está selecionada, retorna o max dessa categoria
+    if (formData.categoryId) {
+      const category = categories.find(c => c.id === formData.categoryId);
+      return category?.max_teams || 0;
+    }
+    // Caso contrário, soma o max de todas as categorias
+    return categories.reduce((sum, c) => sum + (c.max_teams || 0), 0);
+  };
+
+  const isCategoryFull = () => {
+    const maxSlots = getCategoryMaxSlots();
+    if (formData.categoryId) {
+     
