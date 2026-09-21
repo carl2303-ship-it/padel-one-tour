@@ -1,1 +1,1 @@
-PLACEHOLDER_REG
+@file:///tmp/reg_landing_for_mcp.txt
