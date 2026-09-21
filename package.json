@@ -4,15 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/assemble-registration-landing.mjs && vite",
+    "build": "node scripts/assemble-registration-landing.mjs && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "create-test-tournaments": "tsx create-test-tournaments.ts",
     "add-categories-to-test": "tsx add-categories-to-test-tournaments.ts",
     "fill-test-tournaments": "tsx fill-test-tournaments-with-participants.ts",
-    "seed-escada-summer26": "tsx seed-escada-summer26-test-teams.ts"
+    "seed-escada-summer26": "tsx seed-escada-summer26-test-teams.ts",
+    "prebuild": "node scripts/assemble-registration-landing.mjs",
+    "predev": "node scripts/assemble-registration-landing.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
