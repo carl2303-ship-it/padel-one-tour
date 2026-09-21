@@ -1,1 +1,1 @@
-@file:///tmp/reg_landing_for_mcp.txt
+__LOAD_FILE__/tmp/tour-src/src/components/RegistrationLanding.tsx
