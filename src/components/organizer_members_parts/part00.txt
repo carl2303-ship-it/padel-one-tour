@@ -1,0 +1,375 @@
+import { useState, useEffect, useMemo } from 'react';
+import { supabase } from '../lib/supabase';
+import { useI18n } from '../lib/i18nContext';
+import { useAuth } from '../lib/authContext';
+import { normalizePhone, phoneLookupCandidates } from '../lib/phoneUtils';
+import {
+  Plus, X, Users, Edit2, Trash2, Check, Mail, Phone,
+  User, Trophy, Eye, Calendar, Medal, Download,
+  ArrowUpDown, Award, Upload, CreditCard
+} from 'lucide-react';
+import ImportContactsModal from './ImportContactsModal';
+import OrganizerPlayersModal from './OrganizerPlayersModal';
+
+interface MembershipPlan {
+  id: string;
+  name: string;
+  duration_months: number;
+  price: number;
+  benefits: string[];
+  tournament_discount_percent: number;
+  is_active: boolean;
+}
+
+interface Subscription {
+  id: string;
+  member_name: string | null;
+  member_email: string | null;
+  member_phone: string | null;
+  start_date: string;
+  end_date: string;
+  status: string;
+  amount_paid: number;
+  notes: string | null;
+  plan: MembershipPlan;
+  plan_id: string;
+  player_account?: {
+    birth_date: string | null;
+    gender: 'male' | 'female' | 'other' | null;
+  } | null;
+}
+
+interface TournamentHistory {
+  tournament_id: string;
+  tournament_name: string;
+  start_date: string;
+  end_date: string;
+  category_name: string | null;
+  final_position: number | null;
+  payment_status: string | null;
+}
+
+type Tab = 'players' | 'plans' | 'members';
+type StatusFilter = 'all' | 'active' | 'expired';
+type SortField = 'name' | 'phone' | 'plan' | 'date' | 'status';
+type GenderFilter = 'all' | 'male' | 'female';
+
+export default function OrganizerMembers() {
+  const { t } = useI18n();
+  const { user } = useAuth();
+
+  const [activeTab, setActiveTab] = useState<Tab>('players');
+  const [plans, setPlans] = useState<MembershipPlan[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState<MembershipPlan | null>(null);
+  const [planForm, setPlanForm] = useState({
+    name: '',
+    duration_months: 1,
+    price: 0,
+    benefits: '',
+    tournament_discount_percent: 0,
+    is_active: true,
+  });
+
+  const [showMemberModal, setShowMemberModal] = useState(false);
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null);
+  const [memberForm, setMemberForm] = useState({
+    member_phone: '',
+    member_email: '',
+    member_name: '',
+    plan_id: '',
+    amount_paid: 0,
+    notes: '',
+    status: 'active',
+    start_date: new Date().toISOString().split('T')[0],
+  });
+  const [phoneLookupDone, setPhoneLookupDone] = useState(false);
+
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyPlayer, setHistoryPlayer] = useState<{ name: string; phone: string } | null>(null);
+  const [tournamentHistory, setTournamentHistory] = useState<TournamentHistory[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [filterGender, setFilterGender] = useState<GenderFilter>('all');
+  const [filterAge, setFilterAge] = useState<string>('all');
+  const [sortField, setSortField] = useState<SortField>('name');
+  const [sortAsc, setSortAsc] = useState(true);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      loadPlans();
+      loadSubscriptions();
+    }
+  }, [user]);
+
+  async function loadPlans() {
+    const { data } = await supabase
+      .from('membership_plans')
+      .select('*')
+      .eq('user_id', user!.id)
+      .order('name');
+    if (data) setPlans(data);
+  }
+
+  async function loadSubscriptions() {
+    setLoading(true);
+
+    const today = new Date().toISOString().split('T')[0];
+    await supabase
+      .from('member_subscriptions')
+      .update({ status: 'expired' })
+      .eq('club_owner_id', user!.id)
+      .eq('status', 'active')
+      .lt('end_date', today);
+
+    const { data } = await supabase
+      .from('member_subscriptions')
+      .select('*, plan:membership_plans(*)')
+      .eq('club_owner_id', user!.id)
+      .order('member_name');
+
+    if (data) {
+      const enriched = await Promise.all(
+        (data as Subscription[]).map(async (sub) => {
+          if (!sub.member_phone) return { ...sub, player_account: null };
+          const candidates = phoneLookupCandidates(sub.member_phone);
+          const orFilter = candidates.map((p) => `phone_number.eq.${p}`).join(',');
+          const { data: account } = await supabase
+            .from('player_accounts')
+            .select('birth_date, gender')
+            .or(orFilter || `phone_number.eq.${sub.member_phone}`)
+            .maybeSingle();
+          return { ...sub, player_account: account };
+        }),
+      );
+      setSubscriptions(enriched);
+    }
+
+    setLoading(false);
+  }
+
+  async function savePlan() {
+    const benefitsArray = planForm.benefits
+      .split('\n')
+      .map((b) => b.trim())
+      .filter(Boolean);
+
+    const payload = {
+      user_id: user!.id,
+      name: planForm.name,
+      duration_months: planForm.duration_months,
+      price: planForm.price,
+      benefits: benefitsArray,
+      tournament_discount_percent: planForm.tournament_discount_percent,
+      is_active: planForm.is_active,
+    };
+
+    if (editingPlan) {
+      await supabase.from('membership_plans').update(payload).eq('id', editingPlan.id);
+    } else {
+      await supabase.from('membership_plans').insert(payload);
+    }
+
+    setShowPlanModal(false);
+    setEditingPlan(null);
+    loadPlans();
+  }
+
+  async function deletePlan(planId: string) {
+    if (!confirm((t as any).organizerMembers?.confirmDeletePlan || 'Eliminar este plano?')) return;
+    await supabase.from('membership_plans').delete().eq('id', planId);
+    loadPlans();
+  }
+
+  function openPlanModal(plan?: MembershipPlan) {
+    if (plan) {
+      setEditingPlan(plan);
+      setPlanForm({
+        name: plan.name,
+        duration_months: plan.duration_months,
+        price: plan.price,
+        benefits: (plan.benefits || []).join('\n'),
+        tournament_discount_percent: plan.tournament_discount_percent,
+        is_active: plan.is_active,
+      });
+    } else {
+      setEditingPlan(null);
+      setPlanForm({
+        name: '',
+        duration_months: 1,
+        price: 0,
+        benefits: '',
+        tournament_discount_percent: 0,
+        is_active: true,
+      });
+    }
+    setShowPlanModal(true);
+  }
+
+  async function lookupPhone(phone: string) {
+    const normalized = normalizePhone(phone);
+    if (!normalized || normalized.replace(/\D/g, '').length < 9) return;
+
+    const candidates = phoneLookupCandidates(phone);
+    const orFilter = candidates.map((p) => `phone_number.eq.${p}`).join(',');
+    const { data } = await supabase
+      .from('players')
+      .select('name, phone_number')
+      .or(orFilter || `phone_number.eq.${phone}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (data) {
+      setMemberForm((prev) => ({
+        ...prev,
+        member_name: data.name || prev.member_name,
+        member_phone: data.phone_number || normalized,
+      }));
+    }
+    setPhoneLookupDone(true);
+  }
+
+  function openMemberModal(sub?: Subscription) {
+    if (sub) {
+      setEditingSubscription(sub);
+      setMemberForm({
+        member_phone: sub.member_phone || '',
+        member_email: sub.member_email || '',
+        member_name: sub.member_name || '',
+        plan_id: sub.plan_id,
+        amount_paid: sub.amount_paid,
+        notes: sub.notes || '',
+        status: sub.status,
+        start_date: sub.start_date,
+      });
+    } else {
+      setEditingSubscription(null);
+      setMemberForm({
+        member_phone: '',
+        member_email: '',
+        member_name: '',
+        plan_id: plans[0]?.id || '',
+        amount_paid: 0,
+        notes: '',
+        status: 'active',
+        start_date: new Date().toISOString().split('T')[0],
+      });
+    }
+    setPhoneLookupDone(false);
+    setShowMemberModal(true);
+  }
+
+  async function saveMember() {
+    const selectedPlan = plans.find((p) => p.id === memberForm.plan_id);
+    if (!selectedPlan) return;
+
+    const startDate = new Date(memberForm.start_date);
+    const endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + selectedPlan.duration_months);
+
+    const payload = {
+      club_owner_id: user!.id,
+      user_id: user!.id,
+      member_name: memberForm.member_name,
+      member_email: memberForm.member_email || null,
+      member_phone: normalizePhone(memberForm.member_phone),
+      plan_id: memberForm.plan_id,
+      start_date: memberForm.start_date,
+      end_date: endDate.toISOString().split('T')[0],
+      amount_paid: memberForm.amount_paid,
+      notes: memberForm.notes || null,
+      status: memberForm.status,
+    };
+
+    if (editingSubscription) {
+      await supabase.from('member_subscriptions').update(payload).eq('id', editingSubscription.id);
+    } else {
+      await supabase.from('member_subscriptions').insert(payload);
+    }
+
+    setShowMemberModal(false);
+    setEditingSubscription(null);
+    loadSubscriptions();
+  }
+
+  async function deleteMember(subId: string) {
+    if (!confirm((t as any).organizerMembers?.confirmDeleteMember || 'Remover este membro?')) return;
+    await supabase.from('member_subscriptions').delete().eq('id', subId);
+    loadSubscriptions();
+  }
+
+  async function viewHistory(sub: Subscription) {
+    if (!sub.member_phone) return;
+    setHistoryPlayer({ name: sub.member_name || sub.member_phone, phone: sub.member_phone });
+    setLoadingHistory(true);
+    setTournamentHistory([]);
+    setShowHistoryModal(true);
+
+    const normalized = normalizePhone(sub.member_phone);
+    const candidates = phoneLookupCandidates(sub.member_phone);
+    const orFilter = candidates.map((p) => `phone_number.eq.${p}`).join(',');
+    const { data: players } = await supabase
+      .from('players')
+      .select(`
+        id,
+        tournament_id,
+        final_position,
+        payment_status,
+        category:tournament_categories(name),
+        tournament:tournaments(id, name, start_date, end_date)
+      `)
+      .or(orFilter || `phone_number.eq.${normalized}`)
+      .order('created_at', { ascending: false });
+
+    if (players?.length) {
+      const history: TournamentHistory[] = players
+        .filter(p => p.tournament)
+        .flatMap(p => {
+          const tournament = Array.isArray(p.tournament) ? p.tournament[0] : p.tournament;
+          const category = Array.isArray(p.category) ? p.category[0] : p.category;
+          if (!tournament) return [];
+          return [{
+            tournament_id: tournament.id,
+            tournament_name: tournament.name,
+            start_date: tournament.start_date,
+            end_date: tournament.end_date,
+            category_name: category?.name || null,
+            final_position: p.final_position,
+            payment_status: p.payment_status,
+          }];
+        });
+      setTournamentHistory(
+        history.filter((h, idx, arr) => arr.findIndex(item => item.tournament_id === h.tournament_id) === idx),
+      );
+    }
+    setLoadingHistory(false);
+  }
+
+  function getAge(birthDate: string | null | undefined): number | null {
+    if (!birthDate) return null;
+    const birth = new Date(birthDate);
+    if (Number.isNaN(birth.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    return age;
+  }
+
+  function exportCSV() {
+    const rows = filteredSubscriptions.map((s) => ({
+      Nome: s.member_name || '',
+      Telefone: s.member_phone || '',
+      Email: s.member_email || '',
+      Plano: s.plan?.name || '',
+      Inicio: s.start_date,
+      Fim: s.end_date,
+      Estado: s.status,
+      Pago: s.amount_paid,
+    
