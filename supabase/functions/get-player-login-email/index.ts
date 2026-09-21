@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { normalizePhone } from '../_shared/phoneUtils.ts';
+import { normalizePhone, phoneLookupCandidates, normalizePhoneKey } from '../_shared/phoneUtils.ts';
 import { findPlayerAccountUsingAuthUser, isProtectedAuthUser } from '../_shared/protectedAuthUsers.ts';
 
 const corsHeaders = {
@@ -44,31 +44,54 @@ Deno.serve(async (req: Request) => {
     }
 
     const normalizedPhone = normalizePhone(phone_number);
+    const candidates = phoneLookupCandidates(phone_number);
 
     console.log('[DEBUG] Input phone:', phone_number);
     console.log('[DEBUG] Normalized phone:', normalizedPhone);
+    console.log('[DEBUG] Candidates:', candidates);
 
-    let { data: playerAccount, error: accountError } = await supabaseAdmin
-      .from('player_accounts')
-      .select('id, user_id, phone_number, email, name')
-      .eq('phone_number', normalizedPhone)
-      .maybeSingle();
+    let playerAccount: {
+      id: string;
+      user_id: string | null;
+      phone_number: string | null;
+      email: string | null;
+      name: string | null;
+    } | null = null;
+    let accountError: { message?: string } | null = null;
 
-    console.log('[DEBUG] Exact match result:', JSON.stringify(playerAccount));
-
-    if (!playerAccount) {
-      const last9Digits = normalizedPhone.slice(-9);
-      console.log('[DEBUG] Trying last 9 digits fallback:', last9Digits);
-      const { data: accountLast9 } = await supabaseAdmin
+    for (const candidate of candidates) {
+      const { data, error } = await supabaseAdmin
         .from('player_accounts')
         .select('id, user_id, phone_number, email, name')
-        .ilike('phone_number', `%${last9Digits}`)
+        .eq('phone_number', candidate)
         .maybeSingle();
+      accountError = error;
+      if (data) {
+        playerAccount = data;
+        console.log('[DEBUG] Exact match via candidate', candidate, JSON.stringify(data));
+        break;
+      }
+    }
 
-      if (accountLast9) {
-        playerAccount = accountLast9;
-        accountError = null;
-        console.log('[DEBUG] Found account with last 9 digits:', JSON.stringify(accountLast9));
+    if (!playerAccount) {
+      const key = normalizePhoneKey(phone_number);
+      const last9Digits = (key || normalizedPhone || phone_number).replace(/\D/g, '').slice(-9);
+      console.log('[DEBUG] Trying last 9 digits fallback:', last9Digits);
+      if (last9Digits.length >= 9) {
+        const { data: suffixMatches } = await supabaseAdmin
+          .from('player_accounts')
+          .select('id, user_id, phone_number, email, name')
+          .ilike('phone_number', `%${last9Digits}`)
+          .limit(20);
+
+        const rows = suffixMatches || [];
+        const byNational = rows.filter((r) => normalizePhoneKey(r.phone_number) === key);
+        const pick = byNational[0] || rows[0] || null;
+        if (pick) {
+          playerAccount = pick;
+          accountError = null;
+          console.log('[DEBUG] Found account with last 9 digits:', JSON.stringify(pick));
+        }
       }
     }
 
