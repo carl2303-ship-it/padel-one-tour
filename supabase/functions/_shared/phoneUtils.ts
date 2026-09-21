@@ -62,6 +62,7 @@ function digitsOnly(value: string): string {
 /**
  * Only infer country from bare digits when unambiguous.
  * NEVER auto-pick ES (+34) for 6/7xxxxxxxx — French mobiles look the same.
+ * NEVER treat short bare numbers as international (612937777 must NOT become +61 Australia).
  */
 function inferNationalFromBareDigits(digits: string): { countryCode: string; national: string } | null {
   if (/^9[1236]\d{7}$/.test(digits)) {
@@ -70,7 +71,8 @@ function inferNationalFromBareDigits(digits: string): { countryCode: string; nat
   if (/^0[127]\d{8,9}$/.test(digits)) {
     return { countryCode: '44', national: digits.slice(1) };
   }
-  if (new RegExp(`${COUNTRY_CODE_PREFIX}[0-9]{6,}$`).test(digits)) {
+  // International without + only when long enough (cc + national). 9-digit FR/ES stay bare.
+  if (digits.length >= 11 && new RegExp(`${COUNTRY_CODE_PREFIX}[0-9]{6,}$`).test(digits)) {
     for (const code of COUNTRY_CODES_3) {
       if (digits.startsWith(code) && digits.length > code.length) {
         return { countryCode: code, national: digits.slice(code.length) };
