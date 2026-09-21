@@ -1,1 +1,1 @@
-PLACEHOLDER_MEMBERS
+__LOAD_FROM_FILE__:/tmp/tour-src/src/components/OrganizerMembers.tsx
