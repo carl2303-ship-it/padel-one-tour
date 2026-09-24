@@ -23,6 +23,64 @@ export interface ScheduledMatch {
 const toLocalDateStr = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+/**
+ * Pack matches into parallel court slots (≤ numberOfCourts games each).
+ * When a logical RR round has more games than courts (e.g. 8 teams / 3 courts → 4 games),
+ * leftover games are merged with later rounds so each slot stays full (3 games / 6 teams)
+ * with fair bye rotation — instead of a lonely 1-game slot.
+ */
+export function packMatchesIntoCourtSlots<T extends { team1_id: string; team2_id: string }>(
+  matches: T[],
+  numberOfCourts: number
+): T[][] {
+  if (numberOfCourts < 1) return matches.map((m) => [m]);
+  if (matches.length === 0) return [];
+
+  const remaining = [...matches];
+  const slots: T[][] = [];
+  const gamesPlayed = new Map<string, number>();
+
+  const teamLoad = (tid: string) => gamesPlayed.get(tid) || 0;
+  const matchLoad = (m: T) => teamLoad(m.team1_id) + teamLoad(m.team2_id);
+
+  while (remaining.length > 0) {
+    const slot: T[] = [];
+    const used = new Set<string>();
+
+    while (slot.length < numberOfCourts) {
+      let bestIdx = -1;
+      let bestScore = Infinity;
+      for (let i = 0; i < remaining.length; i++) {
+        const m = remaining[i];
+        if (used.has(m.team1_id) || used.has(m.team2_id)) continue;
+        const score = matchLoad(m);
+        // Fewer games so far → higher priority (fair byes); ties keep earlier-round order
+        if (bestIdx === -1 || score < bestScore) {
+          bestIdx = i;
+          bestScore = score;
+        }
+      }
+      if (bestIdx === -1) break;
+      const chosen = remaining.splice(bestIdx, 1)[0];
+      slot.push(chosen);
+      used.add(chosen.team1_id);
+      used.add(chosen.team2_id);
+    }
+
+    if (slot.length === 0) {
+      slot.push(remaining.shift()!);
+    }
+
+    for (const m of slot) {
+      gamesPlayed.set(m.team1_id, teamLoad(m.team1_id) + 1);
+      gamesPlayed.set(m.team2_id, teamLoad(m.team2_id) + 1);
+    }
+    slots.push(slot);
+  }
+
+  return slots;
+}
+
 export interface DailySchedule {
   date: string;
   start_time: string;
@@ -344,25 +402,27 @@ function generateRoundRobinSchedule(
     teamCourtUsage.get(tid)![c - 1]++;
   };
 
+  // Build full circle-method match list first, then pack into court-sized slots
+  const allRoundMatches: Array<{ team1_id: string; team2_id: string }> = [];
   for (let round = 0; round < rounds; round++) {
-
-    const roundMatches: Array<{ team1_id: string; team2_id: string }> = [];
-
     for (let i = 0; i < matchesPerRound; i++) {
       const team1 = teamsForRotation[i];
       const team2 = teamsForRotation[n - 1 - i];
-
       if (team1.id !== 'BYE' && team2.id !== 'BYE') {
-        roundMatches.push({
-          team1_id: team1.id,
-          team2_id: team2.id
-        });
+        allRoundMatches.push({ team1_id: team1.id, team2_id: team2.id });
       }
     }
+    if (round < rounds - 1) {
+      const fixed = teamsForRotation[0];
+      const rotating = teamsForRotation.slice(1);
+      rotating.unshift(rotating.pop()!);
+      teamsForRotation.splice(0, teamsForRotation.length, fixed, ...rotating);
+    }
+  }
 
-    for (let matchIdx = 0; matchIdx < roundMatches.length; matchIdx += numberOfCourts) {
-      const slotMatches = roundMatches.slice(matchIdx, matchIdx + numberOfCourts);
+  const courtSlots = packMatchesIntoCourtSlots(allRoundMatches, numberOfCourts);
 
+  for (const slotMatches of courtSlots) {
       let remainSlots = timeSlotIndex;
       let daysFromStart = 0;
       const [year, month, day] = startDate.split('-').map(Number);
@@ -440,16 +500,6 @@ function generateRoundRobinSchedule(
       }
 
       timeSlotIndex++;
-    }
-
-    // Rotate teams (keep first team fixed, rotate others)
-    if (round < rounds - 1) {
-      const fixed = teamsForRotation[0];
-      const rotating = teamsForRotation.slice(1);
-      // Move last team to second position, shift others down
-      rotating.unshift(rotating.pop()!);
-      teamsForRotation.splice(0, teamsForRotation.length, fixed, ...rotating);
-    }
   }
 
   return matches;

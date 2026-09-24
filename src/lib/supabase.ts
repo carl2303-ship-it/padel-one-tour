@@ -48,6 +48,8 @@ export type Tournament = {
   club_ids?: string[] | null;
   court_names?: string[];
   has_dinner_option?: boolean;
+  /** level = auto CS by rating; manual = organizer order */
+  seed_mode?: 'level' | 'manual' | null;
   created_at: string;
   updated_at: string;
 };

@@ -8,7 +8,7 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from '../lib/playerTournamentPrice';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram, ListOrdered } from 'lucide-react';
 import { notifyTournamentPlayers } from '../lib/notifyTournament';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
@@ -23,7 +23,7 @@ import ManageInvitesModal from './ManageInvitesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
 import { processAllUnratedMatches, reprocessTournamentRatings, awardTournamentRewardPoints } from '../lib/ratingEngine';
-import { generateTournamentSchedule } from '../lib/scheduler';
+import { generateTournamentSchedule, packMatchesIntoCourtSlots } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
 import { generateMixedAmericanSchedule, MixedPlayer } from '../lib/mixedAmericanScheduler';
@@ -54,6 +54,7 @@ import EditSuperTeamModal from './EditSuperTeamModal';
 import AddSuperTeamModal from './AddSuperTeamModal';
 import LadderTournamentView from './LadderTournamentView';
 import InstagramPackModal from './InstagramPackModal';
+import SeedOrderModal from './SeedOrderModal';
 
 type TournamentDetailProps = {
   tournament: Tournament;
@@ -159,6 +160,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [showEditTournament, setShowEditTournament] = useState(false);
   const [showInstagramPack, setShowInstagramPack] = useState(false);
+  const [showSeedOrder, setShowSeedOrder] = useState(false);
   const [showEditTeam, setShowEditTeam] = useState(false);
   const [showManageCategories, setShowManageCategories] = useState(false);
   const [showManageInvites, setShowManageInvites] = useState(false);
@@ -5442,7 +5444,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             allCategoryRounds.push(catRounds);
           }
           
-          // Merge rounds from different categories into same time slots
+          // Merge rounds from different categories, then pack into full court slots
+          // (avoids 3+1 split when e.g. 8 teams / 3 courts)
           const maxRounds = Math.max(...allCategoryRounds.map(cr => cr.length), 0);
           let totalMatchCount = 0;
           let timeSlotIndex = 0;
@@ -5463,20 +5466,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           };
           
           const hasOutdoorCourts = outdoorCourtIndices.size > 0;
-          
+
+          const orderedMatches: CatMatch[] = [];
           for (let r = 0; r < maxRounds; r++) {
-            const mergedRound: CatMatch[] = [];
             for (const catRounds of allCategoryRounds) {
               if (r < catRounds.length) {
-                mergedRound.push(...catRounds[r]);
+                orderedMatches.push(...catRounds[r]);
               }
             }
-            if (mergedRound.length === 0) continue;
-            totalMatchCount += mergedRound.length;
-            
-            for (let matchIdx = 0; matchIdx < mergedRound.length; matchIdx += numberOfCourts) {
-              const slotMatches = mergedRound.slice(matchIdx, matchIdx + numberOfCourts);
-              
+          }
+          totalMatchCount = orderedMatches.length;
+          const courtSlots = packMatchesIntoCourtSlots(orderedMatches, numberOfCourts);
+          
+          for (const slotMatches of courtSlots) {
               const totalMinutesFromStart = (timeSlotIndex % slotsPerDay) * matchDuration;
               const hourOffset = Math.floor(totalMinutesFromStart / 60);
               const minuteOffset = totalMinutesFromStart % 60;
@@ -5542,7 +5544,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               }
               
               timeSlotIndex++;
-            }
           }
           
           // Log outdoor distribution
@@ -7300,6 +7301,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h4 className="font-medium text-gray-700">Group Assignments</h4>
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowSeedOrder(true)}
+                        className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition"
+                        title="Alterar ordem das cabeças de série"
+                      >
+                        <ListOrdered className="w-4 h-4" />
+                        Cabeças de série
+                      </button>
                       {currentTournament.format !== 'american' && (
                         <button
                           onClick={handleAssignGroups}
@@ -7352,6 +7361,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               {/* Botões de grupos quando não há grupos atribuídos */}
               {isIndividualFormat() && groupedPlayers.size === 0 && filteredIndividualPlayers.length > 0 && (
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowSeedOrder(true)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition"
+                    title="Alterar ordem das cabeças de série"
+                  >
+                    <ListOrdered className="w-4 h-4" />
+                    Cabeças de série
+                  </button>
                   {currentTournament.format !== 'american' && (
                     <button
                       onClick={handleAssignGroups}
@@ -7451,6 +7468,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   {/* Botões de grupos para equipas */}
                   {filteredTeams.length > 0 && (
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowSeedOrder(true)}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-800 transition"
+                        title="Alterar ordem das cabeças de série"
+                      >
+                        <ListOrdered className="w-4 h-4" />
+                        Cabeças de série
+                      </button>
                       {currentTournament.format !== 'american' && (
                         <button
                           onClick={handleAssignGroups}
@@ -8362,6 +8387,41 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           players={individualPlayers}
           defaultCategoryId={selectedCategory}
           onClose={() => setShowInstagramPack(false)}
+        />
+      )}
+
+      {showSeedOrder && (
+        <SeedOrderModal
+          tournamentId={tournament.id}
+          isIndividual={isIndividualFormat()}
+          categoryLabel={
+            selectedCategory
+              ? categories.find((c) => c.id === selectedCategory)?.name || null
+              : null
+          }
+          seedMode={(currentTournament as any).seed_mode || 'level'}
+          participants={
+            isIndividualFormat()
+              ? filteredIndividualPlayers.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  seed: p.seed,
+                }))
+              : filteredTeams.map((t) => ({
+                  id: t.id,
+                  name:
+                    [t.player1?.name, t.player2?.name].filter(Boolean).join(' / ') || t.name,
+                  subtitle: t.name,
+                  seed: t.seed,
+                }))
+          }
+          onClose={() => setShowSeedOrder(false)}
+          onSuccess={(mode) => {
+            if (mode) {
+              setCurrentTournament((prev) => ({ ...prev, seed_mode: mode }));
+            }
+            fetchTournamentData(true);
+          }}
         />
       )}
 

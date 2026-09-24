@@ -82,11 +82,26 @@ function rankToSeeds(
 /**
  * Assigns CS1, CS2, ... from player levels.
  * Uses one bulk RPC instead of N parallel PATCHes (avoids DB timeouts).
+ * Skips when tournament.seed_mode = 'manual' unless options.force is true.
  */
 export async function recalculateSeedsByLevel(
   tournamentId: string,
-  categoryId?: string | null
-): Promise<{ teamSeeds: Map<string, number>; playerSeeds: Map<string, number> }> {
+  categoryId?: string | null,
+  options?: { force?: boolean }
+): Promise<{ teamSeeds: Map<string, number>; playerSeeds: Map<string, number>; skipped?: boolean }> {
+  if (!options?.force) {
+    const { data: tour } = await supabase
+      .from('tournaments')
+      .select('seed_mode')
+      .eq('id', tournamentId)
+      .maybeSingle();
+    if ((tour as { seed_mode?: string } | null)?.seed_mode === 'manual') {
+      return { teamSeeds: new Map(), playerSeeds: new Map(), skipped: true };
+    }
+  } else {
+    await supabase.from('tournaments').update({ seed_mode: 'level' }).eq('id', tournamentId);
+  }
+
   let teamsQuery = supabase
     .from('teams')
     .select('id, name, category_id, player1_id, player2_id, seed')
