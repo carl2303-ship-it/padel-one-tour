@@ -64,6 +64,7 @@ export type Player = {
   user_id?: string | null;
   tournament_id?: string | null;
   category_id?: string | null;
+  player_account_id?: string | null;
   payment_status?: 'pending' | 'paid' | 'exempt';
   payment_transaction_id?: string | null;
   final_position?: number | null;

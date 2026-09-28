@@ -226,6 +226,21 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       return undefined;
     };
 
+    const isSolidE164 = (phone: string | null | undefined): boolean =>
+      !!phone && /^\+[1-9]\d{9,14}$/.test(phone.replace(/[\s\-\(\)\.]/g, ''));
+
+    /** Conta do jogador é a fonte de verdade; organizer_players só como fallback. */
+    const pickDisplayPhone = (
+      accountPhone: string | null | undefined,
+      tournamentPhone: string | null | undefined,
+      organizerPhone: string | null | undefined,
+    ): string | null => {
+      if (isSolidE164(accountPhone)) return accountPhone!.replace(/[\s\-\(\)\.]/g, '');
+      if (isSolidE164(tournamentPhone)) return tournamentPhone!.replace(/[\s\-\(\)\.]/g, '');
+      if (isSolidE164(organizerPhone)) return organizerPhone!.replace(/[\s\-\(\)\.]/g, '');
+      return accountPhone || tournamentPhone || organizerPhone || null;
+    };
+
     const addPlayerToMap = (
       name: string,
       email: string | null,
@@ -238,10 +253,14 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
 
       const normalizedName = normalizeName(name);
       const organizerPlayer = organizerPlayersMap.get(normalizedName);
-      const resolvedPhone = phone || organizerPlayer?.phone_number || null;
       const playerAccount = playerAccountId
         ? playerAccountsData.find((pa: any) => pa.id === playerAccountId)
-        : findPlayerAccount(resolvedPhone, name);
+        : findPlayerAccount(phone || organizerPlayer?.phone_number || null, name);
+      const resolvedPhone = pickDisplayPhone(
+        playerAccount?.phone_number,
+        phone,
+        organizerPlayer?.phone_number,
+      );
 
       const existing = findExistingRecord(name, resolvedPhone, playerAccount?.id || playerAccountId);
       if (existing) {
@@ -250,7 +269,14 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           existing.tournaments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         }
         if (!existing.email && email) existing.email = email;
-        if (!existing.phone_number && resolvedPhone) existing.phone_number = resolvedPhone;
+        const betterPhone = pickDisplayPhone(
+          playerAccount?.phone_number,
+          resolvedPhone,
+          existing.phone_number,
+        );
+        if (betterPhone && betterPhone !== existing.phone_number) {
+          existing.phone_number = betterPhone;
+        }
         if (playerAccount && !existing.player_account_id) {
           existing.player_account_id = playerAccount.id;
           existing.level = playerAccount.level;
@@ -268,7 +294,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           normalizedName,
           displayName: playerAccount?.name || name.trim(),
           email: organizerPlayer?.email || email,
-          phone_number: organizerPlayer?.phone_number || resolvedPhone,
+          phone_number: resolvedPhone,
           player_category: playerAccount?.player_category || organizerPlayer?.player_category || null,
           level: playerAccount?.level || null,
           level_reliability_percent: playerAccount?.level_reliability_percent || null,

@@ -71,7 +71,7 @@ type TeamWithPlayers = Team & {
 // partner_match_invite_id / organizer_review_status are not deployed yet;
 // selecting them makes PostgREST fail and the teams list renders empty.
 const TEAMS_WITH_PLAYERS_SELECT =
-  'id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, wants_dinner, payment_status)';
+  'id, name, group_name, seed, status, category_id, player1_id, player2_id, final_position, registration_source, player1:players!teams_player1_id_fkey(id, name, email, phone_number, player_account_id, wants_dinner, payment_status), player2:players!teams_player2_id_fkey(id, name, email, phone_number, player_account_id, wants_dinner, payment_status)';
 
 type MatchWithTeams = Match & {
   team1: TeamWithPlayers | null;
@@ -1287,7 +1287,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     return next;
   };
 
-  const fetchPlayerLevelsFromAccounts = async (players: { phone_number?: string | null }[]) => {
+  const fetchPlayerLevelsFromAccounts = async (
+    players: { phone_number?: string | null; player_account_id?: string | null }[]
+  ) => {
+    const accountIds = [
+      ...new Set(players.map((p) => p.player_account_id).filter((id): id is string => !!id)),
+    ];
     const phones = [
       ...new Set(
         players
@@ -1295,22 +1300,63 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .filter(Boolean)
       ),
     ];
-    if (phones.length === 0) return;
-    const data = await selectInChunks<{ phone_number: string; level: number | null }>(
-      'player_accounts',
-      'phone_number, level',
-      'phone_number',
-      phones,
-      40
-    );
-    if (!data.length) return;
+    if (accountIds.length === 0 && phones.length === 0) return;
+
     const map = new Map<string, number>();
-    for (const row of data) {
-      if (row.phone_number && row.level != null) {
-        map.set(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.level);
+    const addLevel = (key: string | null | undefined, level: number | null | undefined) => {
+      if (!key || level == null || !Number.isFinite(Number(level))) return;
+      map.set(key, Number(level));
+      const digits = key.replace(/\D/g, '');
+      if (digits.length >= 9) map.set(digits.slice(-9), Number(level));
+    };
+
+    if (accountIds.length > 0) {
+      const byId = await selectInChunks<{ id: string; phone_number: string | null; level: number | null }>(
+        'player_accounts',
+        'id, phone_number, level',
+        'id',
+        accountIds,
+        40
+      );
+      for (const row of byId) {
+        addLevel(`id:${row.id}`, row.level);
+        if (row.phone_number) addLevel(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.level);
       }
     }
-    setPlayerLevelByPhone(map);
+
+    if (phones.length > 0) {
+      const byPhone = await selectInChunks<{ phone_number: string; level: number | null }>(
+        'player_accounts',
+        'phone_number, level',
+        'phone_number',
+        phones,
+        40
+      );
+      for (const row of byPhone) {
+        if (row.phone_number) addLevel(row.phone_number.replace(/[\s\-\(\)\.]/g, ''), row.level);
+      }
+    }
+
+    if (map.size > 0) setPlayerLevelByPhone(map);
+  };
+
+  const getPlayerLevel = (player?: { phone_number?: string | null; player_account_id?: string | null } | null) => {
+    if (!player) return undefined;
+    if (player.player_account_id) {
+      const byId = playerLevelByPhone.get(`id:${player.player_account_id}`);
+      if (byId != null) return byId;
+    }
+    const raw = (player.phone_number || '').replace(/[\s\-\(\)\.]/g, '');
+    if (raw) {
+      const direct = playerLevelByPhone.get(raw);
+      if (direct != null) return direct;
+      const last9 = raw.replace(/\D/g, '').slice(-9);
+      if (last9.length >= 9) {
+        const byLast9 = playerLevelByPhone.get(last9);
+        if (byLast9 != null) return byLast9;
+      }
+    }
+    return undefined;
   };
 
   const runPopulateInBackground = (work: () => Promise<void>) => {
@@ -1432,7 +1478,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       const [playersResult, matchesResult, categoriesResult] = await Promise.all([
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
+          .select('id, name, email, phone_number, player_account_id, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1710,7 +1756,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           .order('seed', { ascending: true }),
         supabase
           .from('players')
-          .select('id, name, email, phone_number, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
+          .select('id, name, email, phone_number, player_account_id, group_name, seed, category_id, user_id, created_at, final_position, wants_dinner, payment_status')
           .eq('tournament_id', tournament.id)
           .order('created_at', { ascending: true }),
         supabase
@@ -1738,8 +1784,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (playersResult.data) {
         setIndividualPlayers(playersResult.data);
         const teamPlayerPhones = (teamsResult.data || []).flatMap((t: any) => [
-          t.player1?.phone_number ? { phone_number: t.player1.phone_number } : null,
-          t.player2?.phone_number ? { phone_number: t.player2.phone_number } : null,
+          t.player1
+            ? { phone_number: t.player1.phone_number, player_account_id: t.player1.player_account_id }
+            : null,
+          t.player2
+            ? { phone_number: t.player2.phone_number, player_account_id: t.player2.player_account_id }
+            : null,
         ]).filter(Boolean);
         fetchPlayerLevelsFromAccounts([...playersResult.data, ...teamPlayerPhones]);
       }
@@ -7406,8 +7456,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-gray-900">{player.name}</p>
                               {(() => {
-                                const phone = (player.phone_number || '').replace(/[\s\-\(\)\.]/g, '');
-                                const lvl = phone ? playerLevelByPhone.get(phone) : undefined;
+                                const lvl = getPlayerLevel(player);
                                 return lvl != null ? (
                                   <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full font-medium">
                                     Nv {lvl.toFixed(2)}
@@ -7518,10 +7567,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                   </p>
                                   <p className="text-sm text-gray-600">
                                     {team.player1?.name}
-                                    {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
+                                    {(() => { const l = getPlayerLevel(team.player1); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                     {' / '}
                                     {team.player2?.name}
-                                    {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
+                                    {(() => { const l = getPlayerLevel(team.player2); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                   </p>
                                   <PartnerTeamReviewBadges team={team} />
                                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
@@ -7569,11 +7618,11 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                             </p>
                             <p className="text-sm text-gray-600">
                               {team.player1?.name}
-                              {(() => { const ph = ((team.player1 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
+                              {(() => { const l = getPlayerLevel(team.player1); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''}
                               {' / '}
                               {team.player2?.name}
-                              {(() => { const ph = ((team.player2 as any)?.phone_number || '').replace(/[\s\-\(\)\.]/g, ''); const l = ph ? playerLevelByPhone.get(ph) : undefined; return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
+                              {(() => { const l = getPlayerLevel(team.player2); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
                             <PartnerTeamReviewBadges team={team} />

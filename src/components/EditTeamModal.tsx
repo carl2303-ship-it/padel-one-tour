@@ -130,6 +130,17 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     return [...new Map([...selectedPlayers, ...filtered].map(player => [player.id, player])).values()];
   }, [availablePlayers, player1Id, player2Id, searchResults, searchTerm]);
 
+  const formatPlayerOptionLabel = (player: Player) => {
+    const nameKey = player.name.trim().toLocaleLowerCase('pt');
+    const sameNameCount = displayPlayers.filter(
+      (p) => p.name.trim().toLocaleLowerCase('pt') === nameKey
+    ).length;
+    if (sameNameCount > 1 && player.phone_number) {
+      return `${player.name} (${player.phone_number})`;
+    }
+    return player.name;
+  };
+
   // Garantir que o jogador existe no torneio atual (copiar se necessário)
   const ensurePlayerInTournament = async (playerId: string): Promise<string> => {
     // Verificar se o jogador já está no torneio atual
@@ -357,7 +368,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
               <option value="">{t.team.selectPlayer1}</option>
               {displayPlayers.map((player) => (
                 <option key={player.id} value={player.id}>
-                  {player.name} {player.email ? `(${player.email})` : ''}
+                  {formatPlayerOptionLabel(player)}
                 </option>
               ))}
             </select>
@@ -374,7 +385,7 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
               <option value="">{t.team.selectPlayer2}</option>
               {displayPlayers.map((player) => (
                 <option key={player.id} value={player.id}>
-                  {player.name} {player.email ? `(${player.email})` : ''}
+                  {formatPlayerOptionLabel(player)}
                 </option>
               ))}
             </select>
