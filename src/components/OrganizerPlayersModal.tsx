@@ -38,6 +38,93 @@ const PLAYER_CATEGORIES = [
   { value: 'F1', label: 'F1', gender: 'F' },
 ] as const;
 
+const PAGE_SIZE = 1000;
+
+type TournamentPlayerRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone_number: string | null;
+  tournament_id: string;
+  player_account_id: string | null;
+};
+
+type TeamWithPlayersRow = {
+  id: string;
+  tournament_id: string;
+  player1: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone_number: string | null;
+    player_account_id: string | null;
+  } | null;
+  player2: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone_number: string | null;
+    player_account_id: string | null;
+  } | null;
+};
+
+/** Paginate past PostgREST's default 1000-row cap (was hiding Bocas/Heineken for names after ~1000). */
+async function fetchAllPlayersForTournaments(tournamentIds: string[]): Promise<TournamentPlayerRow[]> {
+  if (!tournamentIds.length) return [];
+  const all: TournamentPlayerRow[] = [];
+  for (let i = 0; i < tournamentIds.length; i += 50) {
+    const batchIds = tournamentIds.slice(i, i + 50);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('players')
+        .select('id, name, email, phone_number, tournament_id, player_account_id')
+        .in('tournament_id', batchIds)
+        .order('name')
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        console.error('[OrganizerPlayersModal] players fetch:', error);
+        break;
+      }
+      if (!data?.length) break;
+      all.push(...(data as TournamentPlayerRow[]));
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+  return all;
+}
+
+async function fetchAllTeamsForTournaments(tournamentIds: string[]): Promise<TeamWithPlayersRow[]> {
+  if (!tournamentIds.length) return [];
+  const all: TeamWithPlayersRow[] = [];
+  for (let i = 0; i < tournamentIds.length; i += 50) {
+    const batchIds = tournamentIds.slice(i, i + 50);
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('teams')
+        .select(`
+          id,
+          tournament_id,
+          player1:players!teams_player1_id_fkey(id, name, email, phone_number, player_account_id),
+          player2:players!teams_player2_id_fkey(id, name, email, phone_number, player_account_id)
+        `)
+        .in('tournament_id', batchIds)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        console.error('[OrganizerPlayersModal] teams fetch:', error);
+        break;
+      }
+      if (!data?.length) break;
+      all.push(...(data as unknown as TeamWithPlayersRow[]));
+      if (data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+  }
+  return all;
+}
+
 type PlayerCategory = typeof PLAYER_CATEGORIES[number]['value'] | null;
 
 interface PlayerRecord {
@@ -139,21 +226,9 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
     setTournaments(userTournaments.map(t => ({ id: t.id, name: t.name, date: t.start_date })));
     const tournamentIds = userTournaments.map(t => t.id);
 
-    const [playersResult, teamsResult, organizerPlayersResult, playerAccountsResult] = await Promise.all([
-      supabase
-        .from('players')
-        .select('id, name, email, phone_number, tournament_id, player_account_id')
-        .in('tournament_id', tournamentIds)
-        .order('name'),
-      supabase
-        .from('teams')
-        .select(`
-          id,
-          tournament_id,
-          player1:players!teams_player1_id_fkey(id, name, email, phone_number, player_account_id),
-          player2:players!teams_player2_id_fkey(id, name, email, phone_number, player_account_id)
-        `)
-        .in('tournament_id', tournamentIds),
+    const [playersData, teamsData, organizerPlayersResult, playerAccountsResult] = await Promise.all([
+      fetchAllPlayersForTournaments(tournamentIds),
+      fetchAllTeamsForTournaments(tournamentIds),
       supabase
         .from('organizer_players')
         .select('id, name, email, phone_number, player_category')
@@ -164,8 +239,6 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
         .select('id, name, phone_number, player_category, level, level_reliability_percent, gender'),
     ]);
 
-    const playersData = playersResult.data;
-    const teamsData = teamsResult.data;
     const organizerPlayersData = organizerPlayersResult.data || [];
     const playerAccountsData = playerAccountsResult.data || [];
 
@@ -306,11 +379,11 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       }
     };
 
-    playersData?.forEach(p => {
-      addPlayerToMap(p.name, p.email, p.phone_number, p.tournament_id, (p as any).player_account_id);
+    playersData.forEach(p => {
+      addPlayerToMap(p.name, p.email, p.phone_number, p.tournament_id, p.player_account_id);
     });
 
-    teamsData?.forEach((team: any) => {
+    teamsData.forEach((team) => {
       if (team.player1) {
         addPlayerToMap(
           team.player1.name,

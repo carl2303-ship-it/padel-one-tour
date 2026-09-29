@@ -33,6 +33,13 @@ export interface MembershipMetric {
   plans: Array<{ name: string; count: number; revenue: number }>;
 }
 
+export interface PlayerTournamentSpendItem {
+  tournamentId: string;
+  tournamentName: string;
+  startDate: string;
+  amount: number;
+}
+
 export interface PlayerSpending {
   playerName: string;
   playerPhone: string | null;
@@ -41,6 +48,7 @@ export interface PlayerSpending {
   totalSpent: number;
   isMember: boolean;
   tournamentCount: number;
+  tournaments: PlayerTournamentSpendItem[];
 }
 
 export function getDateRange(filter: DateFilter, customStart?: string, customEnd?: string): DateRange {
@@ -508,23 +516,53 @@ export async function loadOrganizerPeriodRevenue(
   };
 }
 
+function spendingDedupeKey(name: string, phone: string | null): string {
+  const phoneKey = normalizePhoneKey(phone);
+  if (phoneKey) return `phone:${phoneKey}`;
+  const nameKey = normalizeNameKey(name);
+  if (nameKey) return `name:${nameKey}`;
+  return '';
+}
+
+function resolveMemberForSpending(
+  name: string,
+  phone: string | null,
+  memberLookup: Map<string, MemberPriceInfo>,
+): MemberPriceInfo {
+  const phoneKey = normalizePhoneKey(phone);
+  const nameKey = normalizeNameKey(name);
+  return (
+    (phoneKey && memberLookup.get(phoneKey)) ||
+    (nameKey && memberLookup.get(nameKey)) || {
+      isMember: false,
+      isStaff: false,
+      planName: null,
+      discountPercent: 0,
+    }
+  );
+}
+
 export async function loadOrganizerPlayerSpending(
   organizerId: string,
   range: DateRange,
 ): Promise<PlayerSpending[]> {
-  const { data: memberSubsRaw } = await supabase
-    .from('member_subscriptions')
-    .select('member_name, member_phone, amount_paid, created_at, start_date')
-    .eq('club_owner_id', organizerId);
+  const today = new Date().toISOString().split('T')[0];
+
+  const [{ data: memberSubsRaw }, { data: activeMembersRaw }] = await Promise.all([
+    supabase
+      .from('member_subscriptions')
+      .select('member_name, member_phone, amount_paid, created_at, start_date')
+      .eq('club_owner_id', organizerId),
+    supabase
+      .from('member_subscriptions')
+      .select('member_phone, member_name, plan:membership_plans(name, tournament_discount_percent)')
+      .eq('club_owner_id', organizerId)
+      .eq('status', 'active')
+      .gte('end_date', today),
+  ]);
 
   const memberSubs = filterSubscriptionsByRange(memberSubsRaw || [], range);
-
-  const memberPhoneSet = new Set(
-    (memberSubs || []).map(m => normalizePhoneKey(m.member_phone)).filter(Boolean),
-  );
-  const memberNameKeys = new Set(
-    (memberSubs || []).map(m => normalizeNameKey(m.member_name)).filter(Boolean),
-  );
+  const memberLookup = buildMemberLookup((activeMembersRaw || []) as any[]);
 
   const playerMap = new Map<string, PlayerSpending>();
 
@@ -533,17 +571,21 @@ export async function loadOrganizerPlayerSpending(
     phone: string | null,
     tournamentAmount: number,
     membershipAmount: number,
+    tournamentItem?: PlayerTournamentSpendItem,
   ) => {
-    const phoneKey = normalizePhoneKey(phone);
-    const key = phoneKey || normalizeName(name);
+    const key = spendingDedupeKey(name, phone);
     if (!key) return;
-    const isMember = (phoneKey && memberPhoneSet.has(phoneKey)) || memberNameKeys.has(normalizeName(name));
+    const member = resolveMemberForSpending(name, phone, memberLookup);
+    const isMember = member.isMember && !member.isStaff;
     const existing = playerMap.get(key);
     if (existing) {
       existing.tournamentSpent += tournamentAmount;
       existing.membershipSpent += membershipAmount;
       existing.totalSpent += tournamentAmount + membershipAmount;
       if (tournamentAmount > 0) existing.tournamentCount += 1;
+      if (tournamentItem) existing.tournaments.push(tournamentItem);
+      if (isMember) existing.isMember = true;
+      if (!existing.playerPhone && phone) existing.playerPhone = phone;
     } else {
       playerMap.set(key, {
         playerName: name.trim(),
@@ -553,31 +595,10 @@ export async function loadOrganizerPlayerSpending(
         totalSpent: tournamentAmount + membershipAmount,
         isMember,
         tournamentCount: tournamentAmount > 0 ? 1 : 0,
+        tournaments: tournamentItem ? [tournamentItem] : [],
       });
     }
   };
-
-  let txQuery = supabase
-    .from('player_transactions')
-    .select('player_name, player_phone, amount, transaction_date, reference_type, transaction_type')
-    .eq('club_owner_id', organizerId)
-    .order('transaction_date', { ascending: false });
-
-  if (range.startDate !== '2000-01-01') {
-    txQuery = txQuery.gte('transaction_date', range.startDate).lte('transaction_date', range.endDate);
-  }
-
-  const { data: transactions } = await txQuery;
-  const hasTournamentTx = (transactions || []).some(
-    tx => tx.transaction_type === 'tournament' || tx.reference_type === 'tournament',
-  );
-
-  (transactions || []).forEach(tx => {
-    const isTournament = tx.transaction_type === 'tournament' || tx.reference_type === 'tournament';
-    if (isTournament) {
-      addSpending(tx.player_name, tx.player_phone, Number(tx.amount) || 0, 0);
-    }
-  });
 
   (memberSubs || []).forEach(sub => {
     if (!sub.member_name) return;
@@ -586,61 +607,82 @@ export async function loadOrganizerPlayerSpending(
     addSpending(sub.member_name, sub.member_phone, 0, paid);
   });
 
-  // Prefer ledger when present; otherwise estimate from currently paid players
-  // so spending stays consistent with payment toggles / tournament metrics.
-  if (!hasTournamentTx) {
-    const metrics = await loadOrganizerTournamentMetrics(organizerId, range);
-    if (metrics.some(m => m.revenue > 0)) {
-      const tournamentIds = metrics.map(m => m.tournamentId);
-      const paidPlayers = (await fetchPlayersForTournaments(tournamentIds)).filter(
-        p => p.payment_status === 'paid',
-      );
+  // Torneios: mesma fonte que a tabela de métricas (data do torneio + payment_status paid + preço membro/não-membro).
+  let tournamentQuery = supabase
+    .from('tournaments')
+    .select('id, name, start_date, registration_fee, member_price, non_member_price, format, round_robin_type')
+    .eq('user_id', organizerId);
 
-      const categories = await selectInChunks<{
+  if (range.startDate !== '2000-01-01') {
+    tournamentQuery = tournamentQuery.gte('start_date', range.startDate).lte('start_date', range.endDate);
+  }
+
+  const { data: tournaments } = await tournamentQuery;
+  if (tournaments?.length) {
+    const tournamentIds = tournaments.map(t => t.id);
+    const teamFormatIds = tournaments
+      .filter(t => t.format !== 'super_teams' && !isIndividualTournament(t))
+      .map(t => t.id);
+
+    const [allPlayersRaw, categories, linkedPlayerIds] = await Promise.all([
+      fetchPlayersForTournaments(tournamentIds),
+      selectInChunks<{
         id: string;
         tournament_id: string;
         registration_fee: number | null;
         member_price: number | null;
         non_member_price: number | null;
-      }>('tournament_categories', 'id, tournament_id, registration_fee, member_price, non_member_price', 'tournament_id', tournamentIds);
+      }>(
+        'tournament_categories',
+        'id, tournament_id, registration_fee, member_price, non_member_price',
+        'tournament_id',
+        tournamentIds,
+      ),
+      fetchTeamLinkedPlayerIds(teamFormatIds),
+    ]);
 
-      const { data: tournaments } = await supabase
-        .from('tournaments')
-        .select('id, registration_fee, member_price, non_member_price')
-        .in('id', tournamentIds);
+    const allPlayers = allPlayersRaw.filter(p => {
+      if (!teamFormatIds.includes(p.tournament_id)) return true;
+      return linkedPlayerIds.has(p.id);
+    });
 
-      const tournMap = new Map((tournaments || []).map(t => [t.id, t]));
-      const memberLookup = buildMemberLookup(
-        (memberSubs || []).map(m => ({ ...m, plan: null })),
+    for (const t of tournaments) {
+      const tournamentCategories = (categories || []).filter(c => c.tournament_id === t.id);
+      const paidPlayers = allPlayers.filter(
+        p => p.tournament_id === t.id && p.payment_status === 'paid',
       );
 
-      paidPlayers.forEach(p => {
-        if (!p.name) return;
-        const cat = categories.find(c => c.id === p.category_id);
-        const tourn = tournMap.get(p.tournament_id);
-        const phoneKey = normalizePhoneKey(p.phone_number);
-        const nameKey = normalizeNameKey(p.name);
-        const member = (phoneKey && memberLookup.get(phoneKey)) || (nameKey && memberLookup.get(nameKey)) || {
-          isMember: !!(phoneKey && memberPhoneSet.has(phoneKey)),
-          isStaff: false,
-          planName: null,
-          discountPercent: 0,
-        };
+      for (const p of paidPlayers) {
+        if (!p.name) continue;
+        const cat = tournamentCategories.find(c => c.id === p.category_id);
+        const member = resolveMemberForSpending(p.name, p.phone_number, memberLookup);
         const { amount } = computeTournamentPlayerPrice(
           {
-            registrationFee: Number(tourn?.registration_fee) || 0,
-            memberPrice: Number(tourn?.member_price) || 0,
-            nonMemberPrice: Number(tourn?.non_member_price) || 0,
+            registrationFee: Number(t.registration_fee) || 0,
+            memberPrice: Number(t.member_price) || 0,
+            nonMemberPrice: Number(t.non_member_price) || 0,
             categoryRegistrationFee: Number(cat?.registration_fee) || 0,
             categoryMemberPrice: Number(cat?.member_price) || 0,
             categoryNonMemberPrice: Number(cat?.non_member_price) || 0,
           },
           member,
         );
-        if (amount > 0) addSpending(p.name, p.phone_number, amount, 0);
-      });
+        if (amount > 0) {
+          addSpending(p.name, p.phone_number, amount, 0, {
+            tournamentId: t.id,
+            tournamentName: t.name,
+            startDate: t.start_date,
+            amount,
+          });
+        }
+      }
     }
   }
 
-  return Array.from(playerMap.values()).sort((a, b) => b.totalSpent - a.totalSpent);
+  return Array.from(playerMap.values())
+    .map(row => ({
+      ...row,
+      tournaments: [...row.tournaments].sort((a, b) => b.startDate.localeCompare(a.startDate)),
+    }))
+    .sort((a, b) => b.totalSpent - a.totalSpent);
 }

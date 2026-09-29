@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, Fragment, type ReactNode } from 'react';
 import { useAuth } from '../lib/authContext';
 import {
   type DateFilter,
@@ -40,6 +40,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   const [expandedTournaments, setExpandedTournaments] = useState(true);
   const [expandedMemberships, setExpandedMemberships] = useState(true);
   const [spendingFilter, setSpendingFilter] = useState<'all' | 'members' | 'non-members'>('all');
+  const [expandedSpendingKeys, setExpandedSpendingKeys] = useState<Set<string>>(new Set());
 
   const [tournamentMetrics, setTournamentMetrics] = useState<TournamentMetric[]>([]);
   const [membershipMetrics, setMembershipMetrics] = useState<MembershipMetric>({
@@ -374,6 +375,7 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
                 <thead>
                   <tr className="text-left text-gray-500 border-b">
                     <th className="py-3 px-4">Jogador</th>
+                    <th className="py-3 px-4 text-right">Nº torneios</th>
                     <th className="py-3 px-4 text-right">Torneios</th>
                     <th className="py-3 px-4 text-right">Membership</th>
                     <th className="py-3 px-4 text-right">Total</th>
@@ -381,22 +383,62 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSpending.slice(0, 100).map(row => (
-                    <tr key={`${row.playerName}-${row.playerPhone}`} className="border-b border-gray-50">
-                      <td className="py-2.5 px-4">
-                        <p className="font-medium text-gray-900">{row.playerName}</p>
-                        {row.playerPhone && <p className="text-xs text-gray-500">{row.playerPhone}</p>}
-                      </td>
-                      <td className="py-2.5 px-4 text-right">{row.tournamentSpent.toFixed(0)}€</td>
-                      <td className="py-2.5 px-4 text-right">{row.membershipSpent.toFixed(0)}€</td>
-                      <td className="py-2.5 px-4 text-right font-semibold">{row.totalSpent.toFixed(0)}€</td>
-                      <td className="py-2.5 px-4">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${row.isMember ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-700'}`}>
-                          {row.isMember ? 'Membro' : 'Jogador'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredSpending.slice(0, 100).map(row => {
+                    const rowKey = `${row.playerName}-${row.playerPhone || ''}`;
+                    const expanded = expandedSpendingKeys.has(rowKey);
+                    return (
+                      <Fragment key={rowKey}>
+                        <tr className="border-b border-gray-50">
+                          <td className="py-2.5 px-4">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedSpendingKeys(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(rowKey)) next.delete(rowKey);
+                                  else next.add(rowKey);
+                                  return next;
+                                });
+                              }}
+                              className="text-left group"
+                              disabled={row.tournaments.length === 0}
+                            >
+                              <p className="font-medium text-gray-900 group-hover:text-blue-700 flex items-center gap-1">
+                                {row.playerName}
+                                {row.tournaments.length > 0 && (
+                                  expanded
+                                    ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+                                    : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                )}
+                              </p>
+                              {row.playerPhone && <p className="text-xs text-gray-500">{row.playerPhone}</p>}
+                            </button>
+                          </td>
+                          <td className="py-2.5 px-4 text-right text-gray-700">{row.tournamentCount}</td>
+                          <td className="py-2.5 px-4 text-right">{row.tournamentSpent.toFixed(0)}€</td>
+                          <td className="py-2.5 px-4 text-right">{row.membershipSpent.toFixed(0)}€</td>
+                          <td className="py-2.5 px-4 text-right font-semibold">{row.totalSpent.toFixed(0)}€</td>
+                          <td className="py-2.5 px-4">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${row.isMember ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-700'}`}>
+                              {row.isMember ? 'Membro' : 'Jogador'}
+                            </span>
+                          </td>
+                        </tr>
+                        {expanded && row.tournaments.map(t => (
+                          <tr key={`${rowKey}-${t.tournamentId}`} className="bg-gray-50 border-b border-gray-100">
+                            <td className="py-1.5 px-4 pl-8 text-xs text-gray-700" colSpan={2}>
+                              {t.tournamentName}
+                              <span className="text-gray-400 ml-2">
+                                {new Date(t.startDate).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-4 text-right text-xs text-gray-700">{t.amount.toFixed(0)}€</td>
+                            <td className="py-1.5 px-4" colSpan={3} />
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
