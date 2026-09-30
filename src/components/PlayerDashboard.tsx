@@ -190,15 +190,26 @@ export default function PlayerDashboard() {
       setLeagueStandings(data.leagueStandings);
     }
     if (data?.pastTournaments?.length) {
-      setPastTournaments(data.pastTournaments.map((t: any) => ({
-        id: t.id,
-        name: t.name,
-        start_date: t.start_date,
-        end_date: t.end_date,
-        status: t.status,
-        format: t.format,
-      })));
-      setStats(prev => ({ ...prev, tournamentsPlayed: data.pastTournaments.length }));
+      setPastTournaments(prev => {
+        const byId = new Map<string, Tournament>();
+        for (const t of prev) byId.set(t.id, t);
+        for (const t of data.pastTournaments) {
+          const existing = byId.get(t.id);
+          byId.set(t.id, {
+            id: t.id,
+            name: t.name,
+            start_date: t.start_date,
+            end_date: t.end_date,
+            status: t.status,
+            format: t.format || existing?.format,
+            enrolled_count: existing?.enrolled_count,
+          });
+        }
+        return Array.from(byId.values()).sort(
+          (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()
+        );
+      });
+      setStats(prev => ({ ...prev, tournamentsPlayed: Math.max(prev.tournamentsPlayed, data.pastTournaments.length) }));
     }
     if (data?.pastTournamentDetails && Object.keys(data.pastTournamentDetails).length > 0) {
       setPastTournamentDetails(data.pastTournamentDetails);
