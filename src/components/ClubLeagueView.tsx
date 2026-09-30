@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calendar, Loader2, Plus, Trash2, Users, Trophy, ListOrdered } from 'lucide-react';
+import { Calendar, Loader2, Plus, Trash2, Users, Trophy, ListOrdered, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type {
   Tournament,
@@ -12,6 +12,7 @@ import type {
 } from '../lib/supabase';
 import { generateClubLeagueSchedule, assignMatchdayDates } from '../lib/clubLeagueScheduler';
 import AddClubLeagueTeamModal from './AddClubLeagueTeamModal';
+import EditClubLeagueTeamModal from './EditClubLeagueTeamModal';
 import ClubLeagueLineupModal from './ClubLeagueLineupModal';
 import ClubLeagueResultsModal from './ClubLeagueResultsModal';
 
@@ -41,6 +42,7 @@ export default function ClubLeagueView({
   const [confrontations, setConfrontations] = useState<ClubLeagueConfrontation[]>([]);
   const [standings, setStandings] = useState<ClubLeagueStanding[]>([]);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<TeamWithPlayers | null>(null);
   const [lineupCtx, setLineupCtx] = useState<{
     confrontation: ClubLeagueConfrontation;
     team: TeamWithPlayers;
@@ -332,14 +334,25 @@ export default function ClubLeagueView({
                     </p>
                   </div>
                   {isOrganizer && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => deleteTeam(team.id)}
-                      className="text-red-500 p-1 hover:bg-red-50 rounded"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingTeam(team)}
+                        className="text-blue-600 p-1 hover:bg-blue-50 rounded"
+                        title="Editar plantel"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => deleteTeam(team.id)}
+                        className="text-red-500 p-1 hover:bg-red-50 rounded"
+                        title="Apagar clube"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
@@ -501,6 +514,17 @@ export default function ClubLeagueView({
           onClose={() => setShowAdd(false)}
           onSuccess={() => {
             setShowAdd(false);
+            load();
+          }}
+        />
+      )}
+
+      {editingTeam && (
+        <EditClubLeagueTeamModal
+          team={editingTeam}
+          onClose={() => setEditingTeam(null)}
+          onSuccess={() => {
+            setEditingTeam(null);
             load();
           }}
         />

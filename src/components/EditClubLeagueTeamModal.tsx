@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Save, Crown, Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-
-type Category = { id: string; name: string };
+import type { ClubLeaguePlayer, ClubLeagueTeam } from '../lib/supabase';
 
 type PlayerAccount = {
   id: string;
@@ -12,27 +11,29 @@ type PlayerAccount = {
 };
 
 type PlayerRow = {
+  id: string | null; // null = new player
   name: string;
   phone: string;
   fpp: string;
   isCaptain: boolean;
-  found: boolean;
+  playerAccountId: string | null;
 };
 
+type TeamWithPlayers = ClubLeagueTeam & { club_league_players?: ClubLeaguePlayer[] };
+
 type Props = {
-  tournamentId: string;
-  categories: Category[];
-  selectedCategory: string | null;
+  team: TeamWithPlayers;
   onClose: () => void;
   onSuccess: () => void;
 };
 
 const emptyPlayer = (captain = false): PlayerRow => ({
+  id: null,
   name: '',
   phone: '',
   fpp: '',
   isCaptain: captain,
-  found: false,
+  playerAccountId: null,
 });
 
 function normalizePhone(phone: string): string {
@@ -50,23 +51,23 @@ function normalizePhone(phone: string): string {
   return cleaned;
 }
 
-export default function AddClubLeagueTeamModal({
-  tournamentId,
-  categories,
-  selectedCategory,
-  onClose,
-  onSuccess,
-}: Props) {
-  const [teamName, setTeamName] = useState('');
-  const [categoryId, setCategoryId] = useState(selectedCategory || categories[0]?.id || '');
-  const [players, setPlayers] = useState<PlayerRow[]>([
-    emptyPlayer(true),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
-  ]);
+export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Props) {
+  const [teamName, setTeamName] = useState(team.name);
+  const [players, setPlayers] = useState<PlayerRow[]>(() => {
+    const roster = [...(team.club_league_players || [])].sort((a, b) => a.player_order - b.player_order);
+    if (roster.length === 0) {
+      return [emptyPlayer(true), emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer()];
+    }
+    return roster.map(p => ({
+      id: p.id,
+      name: p.name,
+      phone: p.phone_number || '',
+      fpp: String(p.fpp_points ?? ''),
+      isCaptain: p.is_captain,
+      playerAccountId: p.player_account_id,
+    }));
+  });
+  const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [allAccounts, setAllAccounts] = useState<PlayerAccount[]>([]);
@@ -109,7 +110,7 @@ export default function AddClubLeagueTeamModal({
         ...updated[index],
         name: account.name,
         phone: account.phone_number || '',
-        found: true,
+        playerAccountId: account.id,
       };
       return updated;
     });
@@ -120,7 +121,7 @@ export default function AddClubLeagueTeamModal({
   const updatePlayer = (index: number, field: keyof PlayerRow, value: string | boolean) => {
     setPlayers(prev => {
       const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
+      updated[index] = { ...updated[index], [field]: value as never };
       if (field === 'isCaptain' && value === true) {
         updated.forEach((p, i) => { if (i !== index) p.isCaptain = false; });
       }
@@ -129,9 +130,12 @@ export default function AddClubLeagueTeamModal({
   };
 
   const addPlayer = () => setPlayers(prev => [...prev, emptyPlayer()]);
+
   const removePlayer = (index: number) => {
     setPlayers(prev => {
       if (prev.length <= 6) return prev;
+      const target = prev[index];
+      if (target?.id) setRemovedIds(ids => [...ids, target.id!]);
       const updated = prev.filter((_, i) => i !== index);
       if (!updated.some(p => p.isCaptain) && updated[0]) updated[0].isCaptain = true;
       return updated;
@@ -162,66 +166,82 @@ export default function AddClubLeagueTeamModal({
 
     setLoading(true);
     try {
-      const { count } = await supabase
+      const { error: teamError } = await supabase
         .from('club_league_teams')
-        .select('*', { count: 'exact', head: true })
-        .eq('tournament_id', tournamentId);
-
-      const { data: team, error: teamError } = await supabase
-        .from('club_league_teams')
-        .insert({
-          tournament_id: tournamentId,
-          category_id: categoryId || null,
-          name: teamName.trim(),
-          registration_order: (count || 0) + 1,
-        })
-        .select()
-        .single();
+        .update({ name: teamName.trim(), updated_at: new Date().toISOString() })
+        .eq('id', team.id);
       if (teamError) throw teamError;
 
-      const inserts = [];
+      // Clear captain FK before deleting players who might be captain
+      await supabase
+        .from('club_league_teams')
+        .update({ captain_player_id: null })
+        .eq('id', team.id);
+
+      if (removedIds.length > 0) {
+        const { error: delError } = await supabase
+          .from('club_league_players')
+          .delete()
+          .in('id', removedIds);
+        if (delError) throw delError;
+      }
+
+      let captainId: string | null = null;
+
       for (let i = 0; i < players.length; i++) {
         const p = players[i];
         const phone = normalizePhone(p.phone);
-        let playerAccountId: string | null = null;
-        const { data: existing } = await supabase
-          .from('player_accounts')
-          .select('id')
-          .eq('phone_number', phone)
-          .maybeSingle();
-        if (existing) playerAccountId = existing.id;
+        let playerAccountId = p.playerAccountId;
+        if (!playerAccountId) {
+          const { data: existing } = await supabase
+            .from('player_accounts')
+            .select('id')
+            .eq('phone_number', phone)
+            .maybeSingle();
+          if (existing) playerAccountId = existing.id;
+        }
 
-        inserts.push({
-          team_id: team.id,
-          player_account_id: playerAccountId,
-          name: p.name.trim(),
-          email: null,
-          phone_number: phone,
-          fpp_points: Number(p.fpp),
-          is_captain: p.isCaptain,
-          player_order: i + 1,
-        });
+        if (p.id) {
+          const { error: upError } = await supabase
+            .from('club_league_players')
+            .update({
+              name: p.name.trim(),
+              phone_number: phone,
+              email: null,
+              fpp_points: Number(p.fpp),
+              is_captain: p.isCaptain,
+              player_order: i + 1,
+              player_account_id: playerAccountId,
+            })
+            .eq('id', p.id);
+          if (upError) throw upError;
+          if (p.isCaptain) captainId = p.id;
+        } else {
+          const { data: inserted, error: insError } = await supabase
+            .from('club_league_players')
+            .insert({
+              team_id: team.id,
+              player_account_id: playerAccountId,
+              name: p.name.trim(),
+              email: null,
+              phone_number: phone,
+              fpp_points: Number(p.fpp),
+              is_captain: p.isCaptain,
+              player_order: i + 1,
+            })
+            .select('id')
+            .single();
+          if (insError) throw insError;
+          if (p.isCaptain && inserted) captainId = inserted.id;
+        }
       }
 
-      const { data: insertedPlayers, error: playersError } = await supabase
-        .from('club_league_players')
-        .insert(inserts)
-        .select('id, is_captain');
-      if (playersError) throw playersError;
-
-      const captain = insertedPlayers?.find(p => p.is_captain);
-      if (captain) {
+      if (captainId) {
         await supabase
           .from('club_league_teams')
-          .update({ captain_player_id: captain.id })
+          .update({ captain_player_id: captainId })
           .eq('id', team.id);
       }
-
-      await supabase.from('club_league_standings').insert({
-        tournament_id: tournamentId,
-        category_id: categoryId || null,
-        team_id: team.id,
-      });
 
       onSuccess();
     } catch (err: unknown) {
@@ -240,8 +260,8 @@ export default function AddClubLeagueTeamModal({
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white">
-          <h2 className="text-lg font-semibold">Inscrever clube — Liga de Clubes</h2>
+        <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white z-10">
+          <h2 className="text-lg font-semibold">Editar clube — Liga de Clubes</h2>
           <button type="button" onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
             <X className="w-5 h-5" />
           </button>
@@ -252,30 +272,13 @@ export default function AddClubLeagueTeamModal({
             <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded">{error}</div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">Nome do clube</label>
-              <input
-                value={teamName}
-                onChange={e => setTeamName(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2"
-                placeholder="Ex: Padel Club Norte"
-              />
-            </div>
-            {categories.length > 0 && (
-              <div>
-                <label className="block text-sm font-medium mb-1">Categoria</label>
-                <select
-                  value={categoryId}
-                  onChange={e => setCategoryId(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2"
-                >
-                  {categories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Nome do clube</label>
+            <input
+              value={teamName}
+              onChange={e => setTeamName(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2"
+            />
           </div>
 
           <div>
@@ -292,9 +295,12 @@ export default function AddClubLeagueTeamModal({
 
             <div className="space-y-3">
               {players.map((p, index) => (
-                <div key={index} className="border rounded-lg p-3 space-y-2">
+                <div key={p.id || `new-${index}`} className="border rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Jogador {index + 1}</span>
+                    <span className="text-sm font-medium">
+                      Jogador {index + 1}
+                      {!p.id && <span className="ml-2 text-xs text-emerald-600">novo</span>}
+                    </span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
