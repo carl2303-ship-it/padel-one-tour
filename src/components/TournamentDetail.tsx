@@ -53,6 +53,7 @@ import SuperTeamResultsModal from './SuperTeamResultsModal';
 import EditSuperTeamModal from './EditSuperTeamModal';
 import AddSuperTeamModal from './AddSuperTeamModal';
 import LadderTournamentView from './LadderTournamentView';
+import ClubLeagueView from './ClubLeagueView';
 import InstagramPackModal from './InstagramPackModal';
 import SeedOrderModal from './SeedOrderModal';
 
@@ -7018,11 +7019,31 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         </div>
       )}
 
+      {currentTournament.format === 'club_league' && (
+        <div className="bg-white rounded-xl shadow-lg p-4 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowManageCategories(true)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition"
+          >
+            <FolderTree className="w-4 h-4" />
+            {categories.length > 0 ? t.nav.manageCategories : t.category.add}
+          </button>
+        </div>
+      )}
+
       {currentTournament.format === 'ladder' ? (
         <LadderTournamentView
           key={categories.map((c) => c.id).sort().join(',')}
           tournament={currentTournament}
           onBack={onBack}
+          embedded
+        />
+      ) : currentTournament.format === 'club_league' ? (
+        <ClubLeagueView
+          tournament={currentTournament}
+          categories={categories}
+          isOrganizer={Boolean(user?.id && currentTournament.user_id === user.id)}
           embedded
         />
       ) : (

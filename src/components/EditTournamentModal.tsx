@@ -357,8 +357,10 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
-        visibility: formData.visibility,
-        allow_public_registration: formData.visibility === 'invite_only' ? false : formData.allow_public_registration,
+        visibility: formData.format === 'club_league' ? 'invite_only' : formData.visibility,
+        allow_public_registration: formData.format === 'club_league'
+          ? false
+          : (formData.visibility === 'invite_only' ? false : formData.allow_public_registration),
         registration_deadline: formData.registration_deadline ? new Date(formData.registration_deadline).toISOString() : null,
         registration_redirect_url: formData.registration_redirect_url || null,
         mixed_knockout: formData.mixed_knockout,
@@ -1073,6 +1075,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                     <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
                     <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
                     <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                    <option value="club_league">{t.tournament.formatOption_club_league}</option>
                     <option value="ladder">{t.tournament.formatOption_ladder}</option>
                   </optgroup>
                 </select>

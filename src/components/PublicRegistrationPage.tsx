@@ -110,5 +110,25 @@ export default function PublicRegistrationPage() {
     return <SuperTeamRegistration tournament={tournament} onClose={handleClose} />;
   }
 
+  if (tournament.format === 'club_league') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full text-center space-y-3">
+          <h1 className="text-xl font-semibold">{tournament.name}</h1>
+          <p className="text-sm text-gray-600">
+            As inscrições da Liga de Clubes são feitas apenas pelo organizador.
+          </p>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return <RegistrationLanding tournament={tournament} onClose={handleClose} />;
 }

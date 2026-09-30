@@ -161,7 +161,8 @@ export default function ManageCategoriesModal({ tournamentId, onClose, onCategor
         has_third_place_match: newCategory.has_third_place_match,
         accepted_levels: newCategory.accepted_levels.length > 0 ? newCategory.accepted_levels : null,
         min_level: newCategory.min_level,
-        max_level: newCategory.max_level
+        max_level: newCategory.max_level,
+        ...(tournamentFormat === 'club_league' ? { game_format: '2sets_stb' } : {}),
       };
       let { error } = await supabase.from('tournament_categories').insert(baseData);
       if (error?.code === 'PGRST204' && error.message?.includes('has_third_place_match')) {

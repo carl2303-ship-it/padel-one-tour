@@ -332,8 +332,10 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         club_id: primaryClubId,
         club_ids: isLadderFmt ? selectedClubIds : null,
         court_names: effectiveCourtNames,
-        allow_public_registration: true,
-        visibility: isIndependentOrganizer ? tournamentVisibility : 'public',
+        allow_public_registration: formData.format === 'club_league' ? false : true,
+        visibility: formData.format === 'club_league'
+          ? 'invite_only'
+          : (isIndependentOrganizer ? tournamentVisibility : 'public'),
         venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : null,
         venue_lat: venueLat,
         venue_lng: venueLng,
@@ -400,6 +402,24 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
       const { error: ladderError } = await supabase.from('ladder_tournaments').insert(ladderInserts);
       if (ladderError) {
         setError(ladderError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (formData.format === 'club_league') {
+      const { error: catError } = await supabase.from('tournament_categories').insert({
+        tournament_id: newTournamentId,
+        name: 'Liga',
+        format: 'club_league',
+        number_of_groups: 0,
+        max_teams: 999,
+        knockout_stage: null,
+        qualified_per_group: null,
+        game_format: '2sets_stb',
+      });
+      if (catError) {
+        setError(catError.message);
         setLoading(false);
         return;
       }
@@ -525,10 +545,17 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                 <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
                 <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
                 <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                <option value="club_league">{t.tournament.formatOption_club_league}</option>
                 <option value="ladder">{t.tournament.formatOption_ladder}</option>
               </optgroup>
             </select>
           </div>
+
+          {formData.format === 'club_league' && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm px-3 py-2 rounded-lg">
+              Liga de Clubes: inscrição só pelo organizador; jogos ao melhor de 2 sets + Super TB; lineups visíveis 30 min antes do jogo.
+            </div>
+          )}
 
           {formData.format === 'swiss_teams' && (
             <div>

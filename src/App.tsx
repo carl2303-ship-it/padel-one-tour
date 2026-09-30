@@ -699,6 +699,24 @@ function App() {
           {view === 'registration' && selectedTournament && (
             selectedTournament.format === 'super_teams'
               ? <SuperTeamRegistration tournament={selectedTournament} onClose={handleBack} />
+              : selectedTournament.format === 'club_league'
+              ? (
+                <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-xl shadow-lg p-6 max-w-md w-full text-center space-y-3">
+                    <h1 className="text-xl font-semibold">{selectedTournament.name}</h1>
+                    <p className="text-sm text-gray-600">
+                      As inscrições da Liga de Clubes são feitas apenas pelo organizador.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleBack}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                    >
+                      Voltar
+                    </button>
+                  </div>
+                </div>
+              )
               : <RegistrationLanding tournament={selectedTournament} onClose={handleBack} />
           )}
 
