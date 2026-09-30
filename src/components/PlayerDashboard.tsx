@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, Tournament as FullTournament, TournamentCategory } from '../lib/supabase';
 import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistrationCounts';
 import { useAuth } from '../lib/authContext';
 import { useI18n } from '../lib/i18nContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
+import ClubLeagueView from './ClubLeagueView';
 import {
   Calendar,
   Trophy,
@@ -27,6 +28,8 @@ interface Tournament {
   start_date: string;
   end_date: string;
   status: string;
+  format?: string;
+  round_robin_type?: string | null;
   category?: string;
   enrolled_count?: number;
 }
@@ -121,6 +124,10 @@ export default function PlayerDashboard() {
   const [tournamentDetailTab, setTournamentDetailTab] = useState<'standings' | 'matches'>('standings');
   const [viewingTournamentName, setViewingTournamentName] = useState<string>('');
   const [pastTournamentDetails, setPastTournamentDetails] = useState<Record<string, { standings: any[]; myMatches: any[]; playerPosition?: number; tournamentName: string }>>({});
+  const [viewingClubLeague, setViewingClubLeague] = useState<{
+    tournament: FullTournament;
+    categories: TournamentCategory[];
+  } | null>(null);
 
   const {
     isSubscribed: isPushSubscribed,
@@ -189,6 +196,7 @@ export default function PlayerDashboard() {
         start_date: t.start_date,
         end_date: t.end_date,
         status: t.status,
+        format: t.format,
       })));
       setStats(prev => ({ ...prev, tournamentsPlayed: data.pastTournaments.length }));
     }
@@ -248,38 +256,68 @@ export default function PlayerDashboard() {
       });
       const allPlayers = Array.from(allPlayersMap.values());
 
-      if (allPlayers.length > 0) {
-        const playerIds = allPlayers.map(p => p.id);
-        const tournamentIds = allPlayers.filter(p => p.tournament_id).map(p => p.tournament_id);
+      const playerIds = allPlayers.map(p => p.id);
+      const tournamentIdsFromPlayers = allPlayers.filter(p => p.tournament_id).map(p => p.tournament_id as string);
 
-        const { data: individualTournaments } = tournamentIds.length > 0
-          ? await supabase
-              .from('tournaments')
-              .select('id, name, start_date, end_date, status, format, round_robin_type')
-              .in('id', tournamentIds)
-          : { data: [] };
+      const { data: individualTournaments } = tournamentIdsFromPlayers.length > 0
+        ? await supabase
+            .from('tournaments')
+            .select('id, name, start_date, end_date, status, format, round_robin_type')
+            .in('id', tournamentIdsFromPlayers)
+        : { data: [] };
 
-        const playerConditions = playerIds.map(id => `player1_id.eq.${id},player2_id.eq.${id}`).join(',');
+      const playerConditions = playerIds.map(id => `player1_id.eq.${id},player2_id.eq.${id}`).join(',');
 
-        const { data: teamsData } = playerIds.length > 0
-          ? await supabase
-              .from('teams')
-              .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status, format, round_robin_type)')
-              .or(playerConditions)
-          : { data: [] };
+      const { data: teamsData } = playerIds.length > 0
+        ? await supabase
+            .from('teams')
+            .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status, format, round_robin_type)')
+            .or(playerConditions)
+        : { data: [] };
 
-        const allTournamentData = [
-          ...(individualTournaments || []),
-          ...(teamsData?.map((t: any) => t.tournaments) || [])
-        ];
-
-        const uniqueTournaments = allTournamentData.reduce((acc: any[], tournament: any) => {
-          if (!acc.find((t) => t.id === tournament.id)) {
-            acc.push(tournament);
+      // Liga de Clubes: inscrição via club_league_players (account ou telefone)
+      let clubLeagueTournaments: any[] = [];
+      {
+        const clFilters: string[] = [];
+        if (playerAccount.id) clFilters.push(`player_account_id.eq.${playerAccount.id}`);
+        if (playerAccount.phone_number) clFilters.push(`phone_number.eq.${playerAccount.phone_number}`);
+        if (clFilters.length > 0) {
+          const { data: clPlayers } = await supabase
+            .from('club_league_players')
+            .select('team_id')
+            .or(clFilters.join(','));
+          const clTeamIds = [...new Set((clPlayers || []).map(p => p.team_id).filter(Boolean))];
+          if (clTeamIds.length > 0) {
+            const { data: clTeams } = await supabase
+              .from('club_league_teams')
+              .select('tournament_id')
+              .in('id', clTeamIds);
+            const clTournamentIds = [...new Set((clTeams || []).map(t => t.tournament_id).filter(Boolean))];
+            if (clTournamentIds.length > 0) {
+              const { data: clTs } = await supabase
+                .from('tournaments')
+                .select('id, name, start_date, end_date, status, format, round_robin_type')
+                .in('id', clTournamentIds);
+              clubLeagueTournaments = clTs || [];
+            }
           }
-          return acc;
-        }, []);
+        }
+      }
 
+      const allTournamentData = [
+        ...(individualTournaments || []),
+        ...(teamsData?.map((t: any) => t.tournaments) || []),
+        ...clubLeagueTournaments,
+      ];
+
+      const uniqueTournaments = allTournamentData.reduce((acc: any[], tournament: any) => {
+        if (tournament?.id && !acc.find((t) => t.id === tournament.id)) {
+          acc.push(tournament);
+        }
+        return acc;
+      }, []);
+
+      if (uniqueTournaments.length > 0) {
         const now = new Date();
         const upcoming: Tournament[] = [];
         const past: Tournament[] = [];
@@ -315,7 +353,7 @@ export default function PlayerDashboard() {
         setUpcomingTournaments(upcoming);
         setPastTournaments(past);
         setStats(prev => ({ ...prev, tournamentsPlayed: past.length }));
-        enrolledIds = new Set(upcoming.map(t => t.id));
+        enrolledIds = new Set([...upcoming, ...past].map(t => t.id));
       }
     }
 
@@ -329,6 +367,22 @@ export default function PlayerDashboard() {
       .limit(20);
     const open = (openData || []).filter((t: any) => !enrolledIds.has(t.id));
     setOpenTournaments(open);
+  };
+
+  const openClubLeagueView = async (tournamentId: string) => {
+    const [{ data: tournament }, { data: categories }] = await Promise.all([
+      supabase.from('tournaments').select('*').eq('id', tournamentId).maybeSingle(),
+      supabase
+        .from('tournament_categories')
+        .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, game_format, court_names, category_schedule, match_duration_minutes, accepted_levels, min_level, max_level, created_at, tournament_id, registration_fee, member_price, non_member_price, swiss_rounds')
+        .eq('tournament_id', tournamentId)
+        .order('name'),
+    ]);
+    if (!tournament) return;
+    setViewingClubLeague({
+      tournament: tournament as FullTournament,
+      categories: (categories || []) as TournamentCategory[],
+    });
   };
 
   const fetchMatches = async () => {
@@ -1201,11 +1255,24 @@ export default function PlayerDashboard() {
                             </div>
                           </div>
                           <button
-                            onClick={() => viewTournamentPlayers(tournament.id)}
+                            onClick={() =>
+                              tournament.format === 'club_league'
+                                ? openClubLeagueView(tournament.id)
+                                : viewTournamentPlayers(tournament.id)
+                            }
                             className="ml-4 px-3 py-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center gap-1"
                           >
-                            <Users className="w-4 h-4" />
-                            {t.playerDashboard.viewEnrolledByCategory}
+                            {tournament.format === 'club_league' ? (
+                              <>
+                                <Calendar className="w-4 h-4" />
+                                Ver liga
+                              </>
+                            ) : (
+                              <>
+                                <Users className="w-4 h-4" />
+                                {t.playerDashboard.viewEnrolledByCategory}
+                              </>
+                            )}
                           </button>
                         </div>
                       </div>
@@ -1244,11 +1311,17 @@ export default function PlayerDashboard() {
                       </div>
                       <div className="ml-4">
                         <button
-                          onClick={() => viewTournamentStandings(tournament.id)}
+                          onClick={() =>
+                            tournament.format === 'club_league'
+                              ? openClubLeagueView(tournament.id)
+                              : viewTournamentStandings(tournament.id)
+                          }
                           className="px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
                         >
                           <Trophy className="w-4 h-4" />
-                          {t.playerDashboard.viewStandings}
+                          {tournament.format === 'club_league'
+                            ? 'Ver liga'
+                            : t.playerDashboard.viewStandings}
                         </button>
                       </div>
                     </div>
@@ -1728,6 +1801,36 @@ export default function PlayerDashboard() {
                 </table>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingClubLeague && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-gray-50 sm:rounded-xl shadow-2xl w-full sm:max-w-4xl max-h-[100vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b bg-white flex items-center justify-between shrink-0">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{viewingClubLeague.tournament.name}</h2>
+                <p className="text-xs text-gray-500">Liga de Clubes — calendário e classificação</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingClubLeague(null)}
+                className="text-gray-400 hover:text-gray-600 p-1"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 flex-1">
+              <ClubLeagueView
+                tournament={viewingClubLeague.tournament}
+                categories={viewingClubLeague.categories}
+                isOrganizer={false}
+                embedded
+              />
             </div>
           </div>
         </div>

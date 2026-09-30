@@ -114,7 +114,11 @@ export default function AddClubLeagueTeamModal({
       return updated;
     });
     setActiveSearch(null);
-    setSearchQuery(prev => ({ ...prev, [index]: '' }));
+    setSearchQuery(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
   };
 
   const updatePlayer = (index: number, field: keyof PlayerRow, value: string | boolean) => {
@@ -317,8 +321,11 @@ export default function AddClubLeagueTeamModal({
                     <div className="flex items-center gap-1 border rounded-lg px-2">
                       <Search className="w-4 h-4 text-gray-400" />
                       <input
-                        value={searchQuery[index] ?? p.name}
-                        onFocus={() => setActiveSearch(index)}
+                        value={activeSearch === index ? (searchQuery[index] ?? p.name) : p.name}
+                        onFocus={() => {
+                          setActiveSearch(index);
+                          setSearchQuery(prev => ({ ...prev, [index]: prev[index] ?? p.name }));
+                        }}
                         onChange={e => {
                           setSearchQuery(prev => ({ ...prev, [index]: e.target.value }));
                           updatePlayer(index, 'name', e.target.value);

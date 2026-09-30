@@ -567,23 +567,52 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Fetch past tournaments (from teams/players)
+    // Fetch past tournaments (from teams/players + club league)
     const tournamentIds = Array.from(allPlayersMap.values())
       .filter((p) => p.tournament_id)
       .map((p) => p.tournament_id!);
     const playerConditions = playerIds.map((id) => `player1_id.eq.${id},player2_id.eq.${id}`).join(',');
     const { data: teamsData } = await supabaseAdmin
       .from('teams')
-      .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status)')
+      .select('tournament_id, tournaments!inner(id, name, start_date, end_date, status, format)')
       .or(playerIds.length > 0 ? playerConditions : 'id.eq.00000000-0000-0000-0000-000000000000');
 
     const teamTournaments = (teamsData as any[] || []).map((t) => t.tournaments);
     const individualTournaments = tournamentIds.length > 0
-      ? (await supabaseAdmin.from('tournaments').select('id, name, start_date, end_date, status').in('id', tournamentIds)).data || []
+      ? (await supabaseAdmin.from('tournaments').select('id, name, start_date, end_date, status, format').in('id', tournamentIds)).data || []
       : [];
-    const allTournamentData = [...individualTournaments, ...teamTournaments];
+
+    let clubLeagueTournaments: any[] = [];
+    {
+      const clFilters: string[] = [];
+      if (playerAccountId) clFilters.push(`player_account_id.eq.${playerAccountId}`);
+      if (phone) clFilters.push(`phone_number.eq.${phone}`);
+      if (clFilters.length > 0) {
+        const { data: clPlayers } = await supabaseAdmin
+          .from('club_league_players')
+          .select('team_id')
+          .or(clFilters.join(','));
+        const clTeamIds = [...new Set((clPlayers || []).map((p: any) => p.team_id).filter(Boolean))];
+        if (clTeamIds.length > 0) {
+          const { data: clTeams } = await supabaseAdmin
+            .from('club_league_teams')
+            .select('tournament_id')
+            .in('id', clTeamIds);
+          const clTournamentIds = [...new Set((clTeams || []).map((t: any) => t.tournament_id).filter(Boolean))];
+          if (clTournamentIds.length > 0) {
+            const { data: clTs } = await supabaseAdmin
+              .from('tournaments')
+              .select('id, name, start_date, end_date, status, format')
+              .in('id', clTournamentIds);
+            clubLeagueTournaments = clTs || [];
+          }
+        }
+      }
+    }
+
+    const allTournamentData = [...individualTournaments, ...teamTournaments, ...clubLeagueTournaments];
     const uniqueTournaments = allTournamentData.reduce((acc: any[], t: any) => {
-      if (!acc.find((x) => x.id === t.id)) acc.push(t);
+      if (t?.id && !acc.find((x) => x.id === t.id)) acc.push(t);
       return acc;
     }, []);
 
@@ -901,7 +930,7 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         leagueStandings,
-        pastTournaments: pastTournaments.map((t) => ({ id: t.id, name: t.name, start_date: t.start_date, end_date: t.end_date, status: t.status })),
+        pastTournaments: pastTournaments.map((t) => ({ id: t.id, name: t.name, start_date: t.start_date, end_date: t.end_date, status: t.status, format: t.format })),
         pastTournamentDetails,
         stats,
         recentMatches,
