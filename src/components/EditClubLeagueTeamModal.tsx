@@ -56,7 +56,7 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
   const [players, setPlayers] = useState<PlayerRow[]>(() => {
     const roster = [...(team.club_league_players || [])].sort((a, b) => a.player_order - b.player_order);
     if (roster.length === 0) {
-      return [emptyPlayer(true), emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer(), emptyPlayer()];
+      return [emptyPlayer(true)];
     }
     return roster.map(p => ({
       id: p.id,
@@ -137,7 +137,7 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
 
   const removePlayer = (index: number) => {
     setPlayers(prev => {
-      if (prev.length <= 6) return prev;
+      if (prev.length <= 1) return prev;
       const target = prev[index];
       if (target?.id) setRemovedIds(ids => [...ids, target.id!]);
       const updated = prev.filter((_, i) => i !== index);
@@ -149,7 +149,7 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
   const handleSubmit = async () => {
     setError('');
     if (!teamName.trim()) { setError('Introduza o nome do clube/equipa'); return; }
-    if (players.length < 6) { setError('O plantel precisa de pelo menos 6 jogadores'); return; }
+    if (players.length < 1) { setError('É preciso pelo menos o capitão'); return; }
 
     for (let i = 0; i < players.length; i++) {
       if (!players[i].name.trim()) { setError(`Nome em falta no jogador ${i + 1}`); return; }
@@ -287,7 +287,14 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="font-medium">Plantel (mín. 6) — telefone + FPP</h3>
+              <div>
+                <h3 className="font-medium">Plantel — telefone + FPP</h3>
+                <p className="text-xs text-gray-500">
+                  {players.length < 6
+                    ? `${players.length}/6 — faltam ${6 - players.length} para poder submeter lineups`
+                    : `${players.length} jogadores — plantel pronto para lineups`}
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={addPlayer}
@@ -315,7 +322,7 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
                       >
                         <Crown className="w-3 h-3" /> Capitão
                       </button>
-                      {players.length > 6 && (
+                      {players.length > 1 && (
                         <button type="button" onClick={() => removePlayer(index)} className="text-red-500 p-1">
                           <Trash2 className="w-4 h-4" />
                         </button>

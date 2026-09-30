@@ -61,11 +61,6 @@ export default function AddClubLeagueTeamModal({
   const [categoryId, setCategoryId] = useState(selectedCategory || categories[0]?.id || '');
   const [players, setPlayers] = useState<PlayerRow[]>([
     emptyPlayer(true),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
-    emptyPlayer(),
   ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -135,7 +130,7 @@ export default function AddClubLeagueTeamModal({
   const addPlayer = () => setPlayers(prev => [...prev, emptyPlayer()]);
   const removePlayer = (index: number) => {
     setPlayers(prev => {
-      if (prev.length <= 6) return prev;
+      if (prev.length <= 1) return prev;
       const updated = prev.filter((_, i) => i !== index);
       if (!updated.some(p => p.isCaptain) && updated[0]) updated[0].isCaptain = true;
       return updated;
@@ -145,7 +140,7 @@ export default function AddClubLeagueTeamModal({
   const handleSubmit = async () => {
     setError('');
     if (!teamName.trim()) { setError('Introduza o nome do clube/equipa'); return; }
-    if (players.length < 6) { setError('O plantel precisa de pelo menos 6 jogadores'); return; }
+    if (players.length < 1) { setError('É preciso pelo menos o capitão'); return; }
 
     for (let i = 0; i < players.length; i++) {
       if (!players[i].name.trim()) { setError(`Nome em falta no jogador ${i + 1}`); return; }
@@ -284,7 +279,10 @@ export default function AddClubLeagueTeamModal({
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="font-medium">Plantel (mín. 6) — telefone + FPP</h3>
+              <div>
+                <h3 className="font-medium">Plantel — telefone + FPP</h3>
+                <p className="text-xs text-gray-500">Pode começar só com o capitão e adicionar jogadores depois. Lineup exige 6.</p>
+              </div>
               <button
                 type="button"
                 onClick={addPlayer}
@@ -309,7 +307,7 @@ export default function AddClubLeagueTeamModal({
                       >
                         <Crown className="w-3 h-3" /> Capitão
                       </button>
-                      {players.length > 6 && (
+                      {players.length > 1 && (
                         <button type="button" onClick={() => removePlayer(index)} className="text-red-500 p-1">
                           <Trash2 className="w-4 h-4" />
                         </button>

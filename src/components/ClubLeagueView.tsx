@@ -314,7 +314,7 @@ export default function ClubLeagueView({
       {tab === 'teams' && (
         <div className="bg-white rounded-xl shadow-lg p-4 space-y-3">
           <p className="text-sm text-gray-600">
-            {teams.length} clubes · plantel modulável (≥6) · pontos FPP definidos na inscrição
+            {teams.length} clubes · pode inscrever só o capitão e completar o plantel depois (lineup exige 6)
           </p>
           {teams.length === 0 && (
             <p className="text-gray-500 text-sm">Ainda sem clubes. O organizador faz as inscrições.</p>
