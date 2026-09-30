@@ -1449,16 +1449,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       setTeams([]);
       setMatches([]);
       setIndividualPlayers([]);
-    } else if (effectiveFormat === 'ladder') {
+    } else if (effectiveFormat === 'ladder' || effectiveFormat === 'club_league') {
       const [teamsResult, categoriesResult] = await Promise.all([
-        supabase
-          .from('teams')
-          .select(TEAMS_WITH_PLAYERS_SELECT)
-          .eq('tournament_id', tournament.id)
-          .order('seed', { ascending: true }),
+        effectiveFormat === 'ladder'
+          ? supabase
+              .from('teams')
+              .select(TEAMS_WITH_PLAYERS_SELECT)
+              .eq('tournament_id', tournament.id)
+              .order('seed', { ascending: true })
+          : Promise.resolve({ data: [] as unknown[], error: null }),
         supabase
           .from('tournament_categories')
-          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, accepted_levels, min_level, max_level')
+          .select('id, name, format, number_of_groups, max_teams, knockout_stage, qualified_per_group, rounds, court_names, category_schedule, match_duration_minutes, registration_fee, member_price, non_member_price, swiss_rounds, accepted_levels, min_level, max_level, game_format')
           .eq('tournament_id', tournament.id)
           .order('name'),
       ]);

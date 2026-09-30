@@ -50,6 +50,12 @@ export default function ClubLeagueView({
     categories[0]?.id ?? null
   );
 
+  useEffect(() => {
+    if (!selectedCategory && categories[0]?.id) {
+      setSelectedCategory(categories[0].id);
+    }
+  }, [categories, selectedCategory]);
+
   const teamById = useMemo(() => {
     const m = new Map<string, TeamWithPlayers>();
     teams.forEach(t => m.set(t.id, t));
@@ -62,7 +68,7 @@ export default function ClubLeagueView({
     try {
       let teamsQ = supabase
         .from('club_league_teams')
-        .select('*, club_league_players(*)')
+        .select('*, club_league_players!club_league_players_team_id_fkey(*)')
         .eq('tournament_id', tournament.id)
         .order('registration_order');
       if (selectedCategory) teamsQ = teamsQ.eq('category_id', selectedCategory);
@@ -99,7 +105,13 @@ export default function ClubLeagueView({
       setConfrontations((confRes.data || []) as ClubLeagueConfrontation[]);
       setStandings((stRes.data || []) as ClubLeagueStanding[]);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Erro ao carregar liga');
+      const msg =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: string }).message)
+          : err instanceof Error
+            ? err.message
+            : 'Erro ao carregar liga';
+      setError(msg);
     } finally {
       setLoading(false);
     }

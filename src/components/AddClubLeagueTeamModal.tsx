@@ -229,7 +229,13 @@ export default function AddClubLeagueTeamModal({
 
       onSuccess();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Erro ao guardar equipa');
+      const msg =
+        err && typeof err === 'object' && 'message' in err
+          ? String((err as { message: string }).message)
+          : err instanceof Error
+            ? err.message
+            : 'Erro ao guardar equipa';
+      setError(msg);
     } finally {
       setLoading(false);
     }
