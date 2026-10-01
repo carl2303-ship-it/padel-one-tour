@@ -10,11 +10,11 @@ import type {
   ClubLeagueStanding,
   ClubLeaguePlayer,
 } from '../lib/supabase';
-import { generateClubLeagueSchedule, assignMatchdayDates } from '../lib/clubLeagueScheduler';
 import AddClubLeagueTeamModal from './AddClubLeagueTeamModal';
 import EditClubLeagueTeamModal from './EditClubLeagueTeamModal';
 import ClubLeagueLineupModal from './ClubLeagueLineupModal';
 import ClubLeagueResultsModal from './ClubLeagueResultsModal';
+import ClubLeagueScheduleModal from './ClubLeagueScheduleModal';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
 
@@ -48,6 +48,7 @@ export default function ClubLeagueView({
     team: TeamWithPlayers;
   } | null>(null);
   const [resultsCtx, setResultsCtx] = useState<ClubLeagueConfrontation | null>(null);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(
     categories[0]?.id ?? null
   );
@@ -132,85 +133,33 @@ export default function ClubLeagueView({
     setBusy(false);
   };
 
-  const generateCalendar = async () => {
-    if (teams.length < 2) {
-      setError('São necessários pelo menos 2 clubes.');
-      return;
-    }
-    if (confrontations.length > 0) {
-      if (!confirm('Já existe calendário. Regenerar apaga jornadas e confrontos. Continuar?')) {
-        return;
-      }
-    }
+  const updateMatchdaySchedule = async (
+    matchday: ClubLeagueMatchday,
+    date: string,
+    time: string
+  ) => {
     setBusy(true);
     setError('');
     try {
-      {
-        let delConf = supabase
+      const { error: mdErr } = await supabase
+        .from('club_league_matchdays')
+        .update({ matchday_date: date || null })
+        .eq('id', matchday.id);
+      if (mdErr) throw mdErr;
+
+      const list = confrontations.filter(c => c.matchday_id === matchday.id);
+      if (list.length > 0 && date && time) {
+        const timeFull = time.length === 5 ? `${time}:00` : time;
+        const scheduled = `${date}T${timeFull}`;
+        const { error: confErr } = await supabase
           .from('club_league_confrontations')
-          .delete()
-          .eq('tournament_id', tournament.id);
-        delConf = selectedCategory
-          ? delConf.eq('category_id', selectedCategory)
-          : delConf.is('category_id', null);
-        await delConf;
-
-        let delMd = supabase
-          .from('club_league_matchdays')
-          .delete()
-          .eq('tournament_id', tournament.id);
-        delMd = selectedCategory
-          ? delMd.eq('category_id', selectedCategory)
-          : delMd.is('category_id', null);
-        await delMd;
+          .update({ scheduled_time: scheduled })
+          .eq('matchday_id', matchday.id);
+        if (confErr) throw confErr;
       }
-
-      const schedule = generateClubLeagueSchedule(teams.map(t => t.id));
-      const maxMd = Math.max(...schedule.map(s => s.matchdayNumber), 0);
-      const dates = assignMatchdayDates(maxMd, tournament.start_date || new Date().toISOString().slice(0, 10));
-
-      const mdByNumber = new Map<number, string>();
-      for (let n = 1; n <= maxMd; n++) {
-        const leg = schedule.find(s => s.matchdayNumber === n)?.leg || 'home';
-        const { data: md, error: mdErr } = await supabase
-          .from('club_league_matchdays')
-          .insert({
-            tournament_id: tournament.id,
-            category_id: selectedCategory,
-            matchday_number: n,
-            matchday_date: dates[n - 1] || null,
-            label: `Jornada ${n}`,
-            leg,
-          })
-          .select('id, matchday_number')
-          .single();
-        if (mdErr) throw mdErr;
-        mdByNumber.set(n, md.id);
-      }
-
-      const inserts = schedule.map(s => {
-        const home = teamById.get(s.homeTeamId);
-        const date = dates[s.matchdayNumber - 1];
-        const startTime = tournament.daily_start_time || tournament.start_time || '18:00';
-        return {
-          tournament_id: tournament.id,
-          category_id: selectedCategory,
-          matchday_id: mdByNumber.get(s.matchdayNumber) || null,
-          home_team_id: s.homeTeamId,
-          away_team_id: s.awayTeamId,
-          scheduled_time: date ? `${date}T${startTime.length === 5 ? startTime + ':00' : startTime}` : null,
-          venue: home?.name || null,
-          status: 'scheduled',
-        };
-      });
-
-      const { error: insErr } = await supabase.from('club_league_confrontations').insert(inserts);
-      if (insErr) throw insErr;
-
-      setTab('calendar');
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Erro ao gerar calendário');
+      setError(err instanceof Error ? err.message : 'Erro ao atualizar jornada');
     } finally {
       setBusy(false);
     }
@@ -301,11 +250,11 @@ export default function ClubLeagueView({
             <button
               type="button"
               disabled={busy || teams.length < 2}
-              onClick={generateCalendar}
+              onClick={() => setShowScheduleModal(true)}
               className="flex items-center gap-1 px-3 py-1.5 text-sm border rounded-lg disabled:opacity-50"
             >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
-              Gerar jornadas (ida/volta)
+              <Calendar className="w-4 h-4" />
+              {confrontations.length > 0 ? 'Redefinir calendário' : 'Definir datas e gerar'}
             </button>
           </div>
         )}
@@ -376,21 +325,76 @@ export default function ClubLeagueView({
       {tab === 'calendar' && (
         <div className="space-y-4">
           {matchdays.length === 0 && (
-            <div className="bg-white rounded-xl shadow-lg p-6 text-center text-gray-500 text-sm">
-              Sem jornadas. Gere o calendário ida e volta quando tiver ≥2 clubes.
+            <div className="bg-white rounded-xl shadow-lg p-6 text-center text-gray-500 text-sm space-y-3">
+              <p>Sem jornadas. Define as datas/horas e gera o calendário casa/fora.</p>
+              {isOrganizer && (
+                <button
+                  type="button"
+                  disabled={teams.length < 2}
+                  onClick={() => setShowScheduleModal(true)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg disabled:opacity-50"
+                >
+                  <Calendar className="w-4 h-4" />
+                  Definir datas e gerar
+                </button>
+              )}
             </div>
           )}
           {matchdays.map(md => {
             const list = confrontationsByMatchday.get(md.id) || [];
+            const firstTime = list.find(c => c.scheduled_time)?.scheduled_time;
+            const timeValue = firstTime
+              ? new Date(firstTime).toTimeString().slice(0, 5)
+              : '18:00';
             return (
               <div key={md.id} className="bg-white rounded-xl shadow-lg p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">
-                    {md.label || `Jornada ${md.matchday_number}`}
-                    <span className="ml-2 text-xs font-normal text-gray-500">
-                      {md.matchday_date || ''} · {md.leg === 'away' ? 'volta' : 'ida'}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h3 className="font-semibold">
+                      {md.label || `Jornada ${md.matchday_number}`}
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        {md.leg === 'away' ? 'volta' : 'ida'}
+                      </span>
+                    </h3>
+                  </div>
+                  {isOrganizer ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="date"
+                        defaultValue={md.matchday_date || ''}
+                        disabled={busy}
+                        onBlur={e => {
+                          const date = e.target.value;
+                          if (date !== (md.matchday_date || '')) {
+                            void updateMatchdaySchedule(md, date, timeValue);
+                          }
+                        }}
+                        className="border rounded-lg px-2 py-1 text-sm"
+                      />
+                      <input
+                        type="time"
+                        defaultValue={timeValue}
+                        disabled={busy}
+                        onBlur={e => {
+                          const time = e.target.value;
+                          if (time !== timeValue) {
+                            void updateMatchdaySchedule(md, md.matchday_date || '', time);
+                          }
+                        }}
+                        className="border rounded-lg px-2 py-1 text-sm"
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-500">
+                      {md.matchday_date || ''}
+                      {firstTime
+                        ? ` · ${new Date(firstTime).toLocaleTimeString('pt-PT', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''}
                     </span>
-                  </h3>
+                  )}
                 </div>
                 <div className="space-y-2">
                   {list.map(c => {
@@ -408,9 +412,9 @@ export default function ClubLeagueView({
                           </div>
                           <div className="text-xs text-gray-500">
                             {c.scheduled_time
-                              ? new Date(c.scheduled_time).toLocaleString()
+                              ? new Date(c.scheduled_time).toLocaleString('pt-PT')
                               : 'Sem hora'}
-                            {c.venue ? ` · ${c.venue}` : ''}
+                            {c.venue ? ` · Casa: ${c.venue}` : ''}
                             {c.status === 'completed'
                               ? ` · ${c.home_duos_won}-${c.away_duos_won}`
                               : ''}
@@ -504,6 +508,21 @@ export default function ClubLeagueView({
             </tbody>
           </table>
         </div>
+      )}
+
+      {showScheduleModal && (
+        <ClubLeagueScheduleModal
+          tournament={tournament}
+          teams={teams}
+          categoryId={selectedCategory}
+          hasExistingCalendar={confrontations.length > 0 || matchdays.length > 0}
+          onClose={() => setShowScheduleModal(false)}
+          onSuccess={() => {
+            setShowScheduleModal(false);
+            setTab('calendar');
+            load();
+          }}
+        />
       )}
 
       {showAdd && (
