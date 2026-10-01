@@ -156,7 +156,14 @@ export default function ClubLeagueLineupModal({
               {isLocked
                 ? 'Bloqueada (T−30 min). Só o organizador pode alterar.'
                 : lockAt
-                  ? `Editável até ${lockAt.toLocaleString()}`
+                  ? `Editável até ${lockAt.toLocaleString('pt-PT', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hourCycle: 'h23',
+                    })}`
                   : 'Sem hora marcada — editável'}
             </p>
           </div>
