@@ -15,7 +15,7 @@ import EditClubLeagueTeamModal from './EditClubLeagueTeamModal';
 import ClubLeagueLineupModal from './ClubLeagueLineupModal';
 import ClubLeagueResultsModal from './ClubLeagueResultsModal';
 import ClubLeagueScheduleModal from './ClubLeagueScheduleModal';
-import { formatEuDate, formatEuDateTime, parseEuDate } from '../lib/clubLeagueScheduler';
+import { formatEuDate, formatEuDateTime, formatEuTime, parseEuDate, parseEuTime } from '../lib/clubLeagueScheduler';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
 
@@ -178,16 +178,17 @@ export default function ClubLeagueView({
       setError('Data do jogo inválida (usa dd/MM/aaaa).');
       return;
     }
-    if (!/^\d{2}:\d{2}$/.test(time)) {
-      setError('Hora do jogo inválida (usa HH:mm, 24h).');
+    if (!parseEuTime(time)) {
+      setError('Hora do jogo inválida (usa HH:mm em 24h, ex: 18:30).');
       return;
     }
     setBusy(true);
     setError('');
     try {
+      const hhmm = parseEuTime(time);
       const { error: confErr } = await supabase
         .from('club_league_confrontations')
-        .update({ scheduled_time: `${dateIso}T${time}:00` })
+        .update({ scheduled_time: `${dateIso}T${hhmm}:00` })
         .eq('id', confrontationId);
       if (confErr) throw confErr;
       await load();
@@ -453,7 +454,7 @@ export default function ClubLeagueView({
                         : md.matchday_date || '';
                     const timeValue =
                       scheduled && !Number.isNaN(scheduled.getTime())
-                        ? `${String(scheduled.getHours()).padStart(2, '0')}:${String(scheduled.getMinutes()).padStart(2, '0')}`
+                        ? formatEuTime(c.scheduled_time)
                         : '18:00';
                     return (
                       <div
@@ -548,25 +549,29 @@ export default function ClubLeagueView({
                             </div>
                             <div>
                               <label className="block text-[10px] text-gray-500 mb-0.5">
-                                Hora (24h)
+                                Hora 24h (HH:mm)
                               </label>
                               <input
-                                type="time"
-                                step={60}
+                                type="text"
+                                inputMode="numeric"
+                                placeholder="18:00"
                                 defaultValue={timeValue}
                                 key={`tm-${c.id}-${c.scheduled_time}`}
                                 disabled={busy}
                                 onBlur={e => {
-                                  const next = e.target.value;
+                                  const next = parseEuTime(e.target.value);
                                   if (next && next !== timeValue) {
                                     void updateConfrontationSchedule(
                                       c.id,
                                       formatEuDate(dateIso) || formatEuDate(md.matchday_date),
                                       next
                                     );
+                                  } else if (e.target.value.trim() && !next) {
+                                    setError('Hora inválida (usa HH:mm em 24h, ex: 18:30).');
+                                    e.target.value = timeValue;
                                   }
                                 }}
-                                className="border rounded-lg px-2 py-1 text-sm"
+                                className="border rounded-lg px-2 py-1 text-sm font-mono w-[5.5rem]"
                               />
                             </div>
                           </div>

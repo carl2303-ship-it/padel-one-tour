@@ -167,6 +167,27 @@ export function formatEuDateTime(iso: string | null | undefined): string {
   return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
 }
 
+/** Extract HH:mm (24h) from ISO timestamp */
+export function formatEuTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Parse HH:mm or H:mm (24h). Rejects AM/PM strings. */
+export function parseEuTime(input: string | null | undefined): string {
+  if (!input) return '';
+  const trimmed = input.trim().toLowerCase().replace(/\./g, ':');
+  if (/[ap]\.?m\.?/.test(trimmed)) return '';
+  const m = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!m) return '';
+  const hh = Number(m[1]);
+  const mi = Number(m[2]);
+  if (hh < 0 || hh > 23 || mi < 0 || mi > 59) return '';
+  return `${String(hh).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+}
+
 export function addDaysIso(isoDate: string, days: number): string {
   const d = new Date(isoDate + 'T12:00:00');
   d.setDate(d.getDate() + days);

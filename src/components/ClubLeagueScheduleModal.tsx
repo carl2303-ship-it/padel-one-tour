@@ -9,6 +9,7 @@ import {
   formatEuDate,
   generateClubLeagueSchedule,
   parseEuDate,
+  parseEuTime,
 } from '../lib/clubLeagueScheduler';
 
 type MatchdayInput = {
@@ -122,15 +123,15 @@ export default function ClubLeagueScheduleModal({
           return;
         }
       }
-      if (!r.defaultTime || !/^\d{2}:\d{2}$/.test(r.defaultTime)) {
-        setError(`Hora inválida na Jornada ${r.number} (usa HH:mm, 24h).`);
+      if (!r.defaultTime || !parseEuTime(r.defaultTime)) {
+        setError(`Hora inválida na Jornada ${r.number} (usa HH:mm em 24h, ex: 18:30).`);
         return;
       }
       parsed.push({
         number: r.number,
         day1Iso,
         day2Iso,
-        time: r.defaultTime,
+        time: parseEuTime(r.defaultTime),
         leg: r.leg,
       });
     }
@@ -301,13 +302,18 @@ export default function ClubLeagueScheduleModal({
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Hora base (24h)</label>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">Hora base 24h (HH:mm)</label>
                     <input
-                      type="time"
-                      step={60}
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="18:00"
                       value={row.defaultTime}
                       onChange={e => updateRow(idx, { defaultTime: e.target.value })}
-                      className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                      onBlur={e => {
+                        const parsed = parseEuTime(e.target.value);
+                        if (parsed) updateRow(idx, { defaultTime: parsed });
+                      }}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm font-mono"
                     />
                   </div>
                 </div>
