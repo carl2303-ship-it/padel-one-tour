@@ -553,7 +553,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
 
           {formData.format === 'club_league' && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm px-3 py-2 rounded-lg">
-              Liga de Clubes: inscrição só pelo organizador; jogos ao melhor de 2 sets + Super TB; lineups visíveis 30 min antes do jogo.
+              Liga de Clubes: inscrição só pelo organizador; o capitão submete a lineup na app Padel1 (secreta até 30 min antes do jogo); jogos ao melhor de 2 sets + Super TB.
             </div>
           )}
 

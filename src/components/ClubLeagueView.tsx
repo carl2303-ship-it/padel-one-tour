@@ -417,6 +417,10 @@ export default function ClubLeagueView({
 
           {matchdays.length > 0 && (
             <div className="bg-white rounded-xl shadow-lg p-3 space-y-3">
+              <p className="text-xs text-gray-500">
+                O capitão cria e submete a lineup na app Padel1. Fica secreta até 30 min antes da hora do jogo.
+                Aqui o organizador pode sobrescrever se necessário.
+              </p>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -510,13 +514,13 @@ export default function ClubLeagueView({
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {myTeam && (
+                            {myTeam && isOrganizer && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: myTeam })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup
+                                Lineup (org.)
                               </button>
                             )}
                             {isOrganizer && (
@@ -641,22 +645,22 @@ export default function ClubLeagueView({
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {home && (
+                            {isOrganizer && home && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: home })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup casa
+                                Lineup casa (org.)
                               </button>
                             )}
-                            {away && (
+                            {isOrganizer && away && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: away })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup fora
+                                Lineup fora (org.)
                               </button>
                             )}
                             {isOrganizer && (
