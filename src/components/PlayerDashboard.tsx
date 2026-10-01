@@ -4,6 +4,7 @@ import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistration
 import { useAuth } from '../lib/authContext';
 import { useI18n } from '../lib/i18nContext';
 import { usePushNotifications } from '../lib/usePushNotifications';
+import { normalizePhoneKey } from '../lib/phoneUtils';
 import ClubLeagueView from './ClubLeagueView';
 import {
   Calendar,
@@ -286,29 +287,42 @@ export default function PlayerDashboard() {
             .or(playerConditions)
         : { data: [] };
 
-      // Liga de Clubes: inscrição via club_league_players (account ou telefone)
+      // Liga de Clubes: inscrição via club_league_players (account ou telefone normalizado)
+      // NÃO usar .or() com phone E.164 (+351…) — o '+' parte o filtro PostgREST.
       let clubLeagueTournaments: any[] = [];
       {
-        const clFilters: string[] = [];
-        if (playerAccount.id) clFilters.push(`player_account_id.eq.${playerAccount.id}`);
-        if (playerAccount.phone_number) clFilters.push(`phone_number.eq.${playerAccount.phone_number}`);
-        if (clFilters.length > 0) {
-          const { data: clPlayers } = await supabase
-            .from('club_league_players')
-            .select('team_id')
-            .or(clFilters.join(','));
-          const clTeamIds = [...new Set((clPlayers || []).map(p => p.team_id).filter(Boolean))];
+        const clPlayerQueries = [];
+        if (playerAccount.id) {
+          clPlayerQueries.push(
+            supabase.from('club_league_players').select('team_id').eq('player_account_id', playerAccount.id)
+          );
+        }
+        const phoneKey = normalizePhoneKey(playerAccount.phone_number);
+        if (phoneKey && phoneKey.length >= 6) {
+          clPlayerQueries.push(
+            supabase.from('club_league_players').select('team_id').ilike('phone_number', `%${phoneKey}`)
+          );
+        }
+        if (clPlayerQueries.length > 0) {
+          const clResults = await Promise.all(clPlayerQueries);
+          const clTeamIds = [
+            ...new Set(
+              clResults.flatMap(r => (r.data || []).map((p: { team_id: string }) => p.team_id).filter(Boolean))
+            ),
+          ];
           if (clTeamIds.length > 0) {
-            const { data: clTeams } = await supabase
+            const { data: clTeams, error: clTeamsErr } = await supabase
               .from('club_league_teams')
               .select('tournament_id')
               .in('id', clTeamIds);
+            if (clTeamsErr) console.error('club_league_teams fetch:', clTeamsErr);
             const clTournamentIds = [...new Set((clTeams || []).map(t => t.tournament_id).filter(Boolean))];
             if (clTournamentIds.length > 0) {
-              const { data: clTs } = await supabase
+              const { data: clTs, error: clTsErr } = await supabase
                 .from('tournaments')
                 .select('id, name, start_date, end_date, status, format, round_robin_type')
                 .in('id', clTournamentIds);
+              if (clTsErr) console.error('club_league tournaments fetch:', clTsErr);
               clubLeagueTournaments = clTs || [];
             }
           }

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Save, Crown, Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { ClubLeaguePlayer, ClubLeagueTeam } from '../lib/supabase';
+import { normalizePhone, normalizePhoneKey } from '../lib/phoneUtils';
 
 type PlayerAccount = {
   id: string;
@@ -35,21 +36,6 @@ const emptyPlayer = (captain = false): PlayerRow => ({
   isCaptain: captain,
   playerAccountId: null,
 });
-
-function normalizePhone(phone: string): string {
-  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
-  let hadPrefix = false;
-  if (cleaned.startsWith('+00')) { cleaned = cleaned.slice(3); hadPrefix = true; }
-  else if (cleaned.startsWith('+')) { cleaned = cleaned.slice(1); hadPrefix = true; }
-  else if (cleaned.startsWith('00')) { cleaned = cleaned.slice(2); hadPrefix = true; }
-  if (hadPrefix) {
-    cleaned = cleaned.replace(/^(351|352|353)(?=\d{7,})/, '');
-  } else {
-    cleaned = cleaned.replace(/^351(?=[29]\d{8}$)/, '');
-  }
-  if (cleaned.startsWith('0') && cleaned.length >= 9) cleaned = cleaned.slice(1);
-  return cleaned;
-}
 
 export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Props) {
   const [teamName, setTeamName] = useState(team.name);
@@ -194,15 +180,28 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
 
       for (let i = 0; i < players.length; i++) {
         const p = players[i];
-        const phone = normalizePhone(p.phone);
+        const phone = normalizePhone(p.phone) || p.phone.trim();
         let playerAccountId = p.playerAccountId;
-        if (!playerAccountId) {
-          const { data: existing } = await supabase
+        if (!playerAccountId && phone) {
+          const { data: byExact } = await supabase
             .from('player_accounts')
             .select('id')
             .eq('phone_number', phone)
             .maybeSingle();
-          if (existing) playerAccountId = existing.id;
+          if (byExact) {
+            playerAccountId = byExact.id;
+          } else {
+            const key = normalizePhoneKey(phone);
+            if (key.length >= 9) {
+              const { data: byKey } = await supabase
+                .from('player_accounts')
+                .select('id')
+                .ilike('phone_number', `%${key}`)
+                .limit(1)
+                .maybeSingle();
+              if (byKey) playerAccountId = byKey.id;
+            }
+          }
         }
 
         if (p.id) {

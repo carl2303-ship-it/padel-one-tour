@@ -584,15 +584,27 @@ Deno.serve(async (req: Request) => {
 
     let clubLeagueTournaments: any[] = [];
     {
-      const clFilters: string[] = [];
-      if (playerAccountId) clFilters.push(`player_account_id.eq.${playerAccountId}`);
-      if (phone) clFilters.push(`phone_number.eq.${phone}`);
-      if (clFilters.length > 0) {
-        const { data: clPlayers } = await supabaseAdmin
-          .from('club_league_players')
-          .select('team_id')
-          .or(clFilters.join(','));
-        const clTeamIds = [...new Set((clPlayers || []).map((p: any) => p.team_id).filter(Boolean))];
+      // Avoid .or() with E.164 phones — '+' breaks PostgREST filter parsing
+      const clPlayerQueries: Promise<{ data: any[] | null }>[] = [];
+      if (playerAccountId) {
+        clPlayerQueries.push(
+          supabaseAdmin.from('club_league_players').select('team_id').eq('player_account_id', playerAccountId)
+        );
+      }
+      if (phone) {
+        const digits = phone.replace(/\D/g, '');
+        const last9 = digits.slice(-9);
+        if (last9.length >= 9) {
+          clPlayerQueries.push(
+            supabaseAdmin.from('club_league_players').select('team_id').ilike('phone_number', `%${last9}`)
+          );
+        }
+      }
+      if (clPlayerQueries.length > 0) {
+        const clResults = await Promise.all(clPlayerQueries);
+        const clTeamIds = [
+          ...new Set(clResults.flatMap((r) => (r.data || []).map((p: any) => p.team_id).filter(Boolean))),
+        ];
         if (clTeamIds.length > 0) {
           const { data: clTeams } = await supabaseAdmin
             .from('club_league_teams')
