@@ -15,6 +15,7 @@ import EditClubLeagueTeamModal from './EditClubLeagueTeamModal';
 import ClubLeagueLineupModal from './ClubLeagueLineupModal';
 import ClubLeagueResultsModal from './ClubLeagueResultsModal';
 import ClubLeagueScheduleModal from './ClubLeagueScheduleModal';
+import { formatEuDate, formatEuDateTime, parseEuDate } from '../lib/clubLeagueScheduler';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
 
@@ -133,33 +134,65 @@ export default function ClubLeagueView({
     setBusy(false);
   };
 
-  const updateMatchdaySchedule = async (
+  const updateMatchdayDates = async (
     matchday: ClubLeagueMatchday,
-    date: string,
-    time: string
+    day1Eu: string,
+    day2Eu: string
   ) => {
+    const day1 = parseEuDate(day1Eu);
+    if (!day1) {
+      setError(`Data dia 1 inválida na jornada ${matchday.matchday_number} (dd/MM/aaaa)`);
+      return;
+    }
+    let day2: string | null = null;
+    if (day2Eu.trim()) {
+      day2 = parseEuDate(day2Eu);
+      if (!day2) {
+        setError(`Data dia 2 inválida na jornada ${matchday.matchday_number} (dd/MM/aaaa)`);
+        return;
+      }
+    }
     setBusy(true);
     setError('');
     try {
       const { error: mdErr } = await supabase
         .from('club_league_matchdays')
-        .update({ matchday_date: date || null })
+        .update({ matchday_date: day1, matchday_date_2: day2 })
         .eq('id', matchday.id);
       if (mdErr) throw mdErr;
-
-      const list = confrontations.filter(c => c.matchday_id === matchday.id);
-      if (list.length > 0 && date && time) {
-        const timeFull = time.length === 5 ? `${time}:00` : time;
-        const scheduled = `${date}T${timeFull}`;
-        const { error: confErr } = await supabase
-          .from('club_league_confrontations')
-          .update({ scheduled_time: scheduled })
-          .eq('matchday_id', matchday.id);
-        if (confErr) throw confErr;
-      }
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erro ao atualizar jornada');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateConfrontationSchedule = async (
+    confrontationId: string,
+    dateEu: string,
+    time: string
+  ) => {
+    const dateIso = parseEuDate(dateEu);
+    if (!dateIso) {
+      setError('Data do jogo inválida (usa dd/MM/aaaa).');
+      return;
+    }
+    if (!/^\d{2}:\d{2}$/.test(time)) {
+      setError('Hora do jogo inválida (usa HH:mm, 24h).');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const { error: confErr } = await supabase
+        .from('club_league_confrontations')
+        .update({ scheduled_time: `${dateIso}T${time}:00` })
+        .eq('id', confrontationId);
+      if (confErr) throw confErr;
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Erro ao atualizar jogo');
     } finally {
       setBusy(false);
     }
@@ -341,114 +374,203 @@ export default function ClubLeagueView({
             </div>
           )}
           {matchdays.map(md => {
-            const list = confrontationsByMatchday.get(md.id) || [];
-            const firstTime = list.find(c => c.scheduled_time)?.scheduled_time;
-            const timeValue = firstTime
-              ? new Date(firstTime).toTimeString().slice(0, 5)
-              : '18:00';
+            const list = [...(confrontationsByMatchday.get(md.id) || [])].sort((a, b) => {
+              const ta = a.scheduled_time ? new Date(a.scheduled_time).getTime() : 0;
+              const tb = b.scheduled_time ? new Date(b.scheduled_time).getTime() : 0;
+              return ta - tb;
+            });
+            const dayOptions = [md.matchday_date, md.matchday_date_2].filter(Boolean) as string[];
             return (
               <div key={md.id} className="bg-white rounded-xl shadow-lg p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                  <div>
+                <div className="flex flex-col gap-3 mb-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <h3 className="font-semibold">
                       {md.label || `Jornada ${md.matchday_number}`}
                       <span className="ml-2 text-xs font-normal text-gray-500">
                         {md.leg === 'away' ? 'volta' : 'ida'}
                       </span>
                     </h3>
+                    {!isOrganizer && (
+                      <span className="text-xs text-gray-500">
+                        {formatEuDate(md.matchday_date)}
+                        {md.matchday_date_2 ? ` – ${formatEuDate(md.matchday_date_2)}` : ''}
+                      </span>
+                    )}
                   </div>
-                  {isOrganizer ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="date"
-                        defaultValue={md.matchday_date || ''}
-                        disabled={busy}
-                        onBlur={e => {
-                          const date = e.target.value;
-                          if (date !== (md.matchday_date || '')) {
-                            void updateMatchdaySchedule(md, date, timeValue);
-                          }
-                        }}
-                        className="border rounded-lg px-2 py-1 text-sm"
-                      />
-                      <input
-                        type="time"
-                        defaultValue={timeValue}
-                        disabled={busy}
-                        onBlur={e => {
-                          const time = e.target.value;
-                          if (time !== timeValue) {
-                            void updateMatchdaySchedule(md, md.matchday_date || '', time);
-                          }
-                        }}
-                        className="border rounded-lg px-2 py-1 text-sm"
-                      />
+                  {isOrganizer && (
+                    <div className="flex flex-wrap items-end gap-2 text-sm">
+                      <div>
+                        <label className="block text-[10px] text-gray-500 mb-0.5">Dia 1</label>
+                        <input
+                          type="text"
+                          placeholder="dd/MM/aaaa"
+                          defaultValue={formatEuDate(md.matchday_date)}
+                          key={`d1-${md.id}-${md.matchday_date}`}
+                          disabled={busy}
+                          onBlur={e => {
+                            const next = e.target.value.trim();
+                            const prev = formatEuDate(md.matchday_date);
+                            if (next && next !== prev) {
+                              void updateMatchdayDates(md, next, formatEuDate(md.matchday_date_2));
+                            }
+                          }}
+                          className="border rounded-lg px-2 py-1 w-[8.5rem]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-gray-500 mb-0.5">Dia 2</label>
+                        <input
+                          type="text"
+                          placeholder="dd/MM/aaaa"
+                          defaultValue={formatEuDate(md.matchday_date_2)}
+                          key={`d2-${md.id}-${md.matchday_date_2}`}
+                          disabled={busy}
+                          onBlur={e => {
+                            const next = e.target.value.trim();
+                            const prev = formatEuDate(md.matchday_date_2);
+                            if (next !== prev) {
+                              void updateMatchdayDates(
+                                md,
+                                formatEuDate(md.matchday_date) || next,
+                                next
+                              );
+                            }
+                          }}
+                          className="border rounded-lg px-2 py-1 w-[8.5rem]"
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    <span className="text-xs text-gray-500">
-                      {md.matchday_date || ''}
-                      {firstTime
-                        ? ` · ${new Date(firstTime).toLocaleTimeString('pt-PT', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}`
-                        : ''}
-                    </span>
                   )}
                 </div>
                 <div className="space-y-2">
                   {list.map(c => {
                     const home = c.home_team_id ? teamById.get(c.home_team_id) : null;
                     const away = c.away_team_id ? teamById.get(c.away_team_id) : null;
+                    const scheduled = c.scheduled_time ? new Date(c.scheduled_time) : null;
+                    const dateIso =
+                      scheduled && !Number.isNaN(scheduled.getTime())
+                        ? `${scheduled.getFullYear()}-${String(scheduled.getMonth() + 1).padStart(2, '0')}-${String(scheduled.getDate()).padStart(2, '0')}`
+                        : md.matchday_date || '';
+                    const timeValue =
+                      scheduled && !Number.isNaN(scheduled.getTime())
+                        ? `${String(scheduled.getHours()).padStart(2, '0')}:${String(scheduled.getMinutes()).padStart(2, '0')}`
+                        : '18:00';
                     return (
                       <div
                         key={c.id}
-                        className="border rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-2 justify-between"
+                        className="border rounded-lg p-3 flex flex-col gap-2"
                       >
-                        <div>
-                          <div className="font-medium text-sm">
-                            {home?.name || '?'} <span className="text-gray-400">vs</span>{' '}
-                            {away?.name || '?'}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+                          <div>
+                            <div className="font-medium text-sm">
+                              {home?.name || '?'} <span className="text-gray-400">vs</span>{' '}
+                              {away?.name || '?'}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatEuDateTime(c.scheduled_time) || 'Sem data/hora'}
+                              {c.venue ? ` · Casa: ${c.venue}` : ''}
+                              {c.status === 'completed'
+                                ? ` · ${c.home_duos_won}-${c.away_duos_won}`
+                                : ''}
+                            </div>
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {c.scheduled_time
-                              ? new Date(c.scheduled_time).toLocaleString('pt-PT')
-                              : 'Sem hora'}
-                            {c.venue ? ` · Casa: ${c.venue}` : ''}
-                            {c.status === 'completed'
-                              ? ` · ${c.home_duos_won}-${c.away_duos_won}`
-                              : ''}
+                          <div className="flex flex-wrap gap-2">
+                            {home && (
+                              <button
+                                type="button"
+                                onClick={() => setLineupCtx({ confrontation: c, team: home })}
+                                className="text-xs px-2 py-1 border rounded-lg"
+                              >
+                                Lineup casa
+                              </button>
+                            )}
+                            {away && (
+                              <button
+                                type="button"
+                                onClick={() => setLineupCtx({ confrontation: c, team: away })}
+                                className="text-xs px-2 py-1 border rounded-lg"
+                              >
+                                Lineup fora
+                              </button>
+                            )}
+                            {isOrganizer && (
+                              <button
+                                type="button"
+                                onClick={() => setResultsCtx(c)}
+                                className="text-xs px-2 py-1 bg-emerald-600 text-white rounded-lg"
+                              >
+                                Resultado
+                              </button>
+                            )}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {home && (
-                            <button
-                              type="button"
-                              onClick={() => setLineupCtx({ confrontation: c, team: home })}
-                              className="text-xs px-2 py-1 border rounded-lg"
-                            >
-                              Lineup casa
-                            </button>
-                          )}
-                          {away && (
-                            <button
-                              type="button"
-                              onClick={() => setLineupCtx({ confrontation: c, team: away })}
-                              className="text-xs px-2 py-1 border rounded-lg"
-                            >
-                              Lineup fora
-                            </button>
-                          )}
-                          {isOrganizer && (
-                            <button
-                              type="button"
-                              onClick={() => setResultsCtx(c)}
-                              className="text-xs px-2 py-1 bg-emerald-600 text-white rounded-lg"
-                            >
-                              Resultado
-                            </button>
-                          )}
-                        </div>
+                        {isOrganizer && (
+                          <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-gray-50">
+                            <div>
+                              <label className="block text-[10px] text-gray-500 mb-0.5">
+                                Dia do jogo
+                              </label>
+                              {dayOptions.length > 0 ? (
+                                <select
+                                  key={`sel-${c.id}-${c.scheduled_time}`}
+                                  defaultValue={dateIso}
+                                  disabled={busy}
+                                  onChange={e => {
+                                    void updateConfrontationSchedule(c.id, formatEuDate(e.target.value), timeValue);
+                                  }}
+                                  className="border rounded-lg px-2 py-1 text-sm"
+                                >
+                                  {dayOptions.map(d => (
+                                    <option key={d} value={d}>
+                                      {formatEuDate(d)}
+                                    </option>
+                                  ))}
+                                  {dateIso && !dayOptions.includes(dateIso) && (
+                                    <option value={dateIso}>{formatEuDate(dateIso)}</option>
+                                  )}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="dd/MM/aaaa"
+                                  defaultValue={formatEuDate(dateIso)}
+                                  key={`dt-${c.id}-${c.scheduled_time}`}
+                                  disabled={busy}
+                                  onBlur={e => {
+                                    const next = e.target.value.trim();
+                                    if (next && next !== formatEuDate(dateIso)) {
+                                      void updateConfrontationSchedule(c.id, next, timeValue);
+                                    }
+                                  }}
+                                  className="border rounded-lg px-2 py-1 text-sm w-[8.5rem]"
+                                />
+                              )}
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-gray-500 mb-0.5">
+                                Hora (24h)
+                              </label>
+                              <input
+                                type="time"
+                                step={60}
+                                defaultValue={timeValue}
+                                key={`tm-${c.id}-${c.scheduled_time}`}
+                                disabled={busy}
+                                onBlur={e => {
+                                  const next = e.target.value;
+                                  if (next && next !== timeValue) {
+                                    void updateConfrontationSchedule(
+                                      c.id,
+                                      formatEuDate(dateIso) || formatEuDate(md.matchday_date),
+                                      next
+                                    );
+                                  }
+                                }}
+                                className="border rounded-lg px-2 py-1 text-sm"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

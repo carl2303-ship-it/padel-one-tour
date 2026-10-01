@@ -184,6 +184,7 @@ export type ClubLeagueMatchday = {
   category_id: string | null;
   matchday_number: number;
   matchday_date: string | null;
+  matchday_date_2?: string | null;
   label: string | null;
   leg: 'home' | 'away';
   created_at: string;
