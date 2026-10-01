@@ -27,6 +27,7 @@ type Props = {
 };
 
 type Tab = 'teams' | 'calendar' | 'standings';
+type CalendarMode = 'matchdays' | 'teams';
 
 export default function ClubLeagueView({
   tournament,
@@ -35,6 +36,8 @@ export default function ClubLeagueView({
   embedded = false,
 }: Props) {
   const [tab, setTab] = useState<Tab>('teams');
+  const [calendarMode, setCalendarMode] = useState<CalendarMode>('teams');
+  const [calendarTeamId, setCalendarTeamId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -209,6 +212,43 @@ export default function ClubLeagueView({
     return map;
   }, [confrontations]);
 
+  const matchdayById = useMemo(() => {
+    const m = new Map<string, ClubLeagueMatchday>();
+    matchdays.forEach(md => m.set(md.id, md));
+    return m;
+  }, [matchdays]);
+
+  useEffect(() => {
+    if (teams.length === 0) {
+      setCalendarTeamId(null);
+      return;
+    }
+    if (!calendarTeamId || !teams.some(t => t.id === calendarTeamId)) {
+      setCalendarTeamId(teams[0].id);
+    }
+  }, [teams, calendarTeamId]);
+
+  const teamCalendar = useMemo(() => {
+    if (!calendarTeamId) return [];
+    return confrontations
+      .filter(c => c.home_team_id === calendarTeamId || c.away_team_id === calendarTeamId)
+      .map(c => {
+        const md = c.matchday_id ? matchdayById.get(c.matchday_id) : undefined;
+        const isHome = c.home_team_id === calendarTeamId;
+        const opponentId = isHome ? c.away_team_id : c.home_team_id;
+        const sortTime = c.scheduled_time
+          ? new Date(c.scheduled_time).getTime()
+          : md?.matchday_date
+            ? new Date(md.matchday_date + 'T12:00:00').getTime()
+            : (md?.matchday_number || 0) * 1e12;
+        return { c, md, isHome, opponentId, sortTime };
+      })
+      .sort((a, b) => {
+        if (a.sortTime !== b.sortTime) return a.sortTime - b.sortTime;
+        return (a.md?.matchday_number || 0) - (b.md?.matchday_number || 0);
+      });
+  }, [confrontations, calendarTeamId, matchdayById]);
+
   const rankedStandings = useMemo(() => {
     return [...standings].sort((a, b) => {
       if ((a.position || 999) !== (b.position || 999)) {
@@ -374,7 +414,132 @@ export default function ClubLeagueView({
               )}
             </div>
           )}
-          {matchdays.map(md => {
+
+          {matchdays.length > 0 && (
+            <div className="bg-white rounded-xl shadow-lg p-3 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCalendarMode('teams')}
+                  className={`px-3 py-1.5 text-sm rounded-lg ${
+                    calendarMode === 'teams' ? 'bg-emerald-600 text-white' : 'border hover:bg-gray-50'
+                  }`}
+                >
+                  Por equipa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCalendarMode('matchdays')}
+                  className={`px-3 py-1.5 text-sm rounded-lg ${
+                    calendarMode === 'matchdays'
+                      ? 'bg-emerald-600 text-white'
+                      : 'border hover:bg-gray-50'
+                  }`}
+                >
+                  Por jornadas
+                </button>
+              </div>
+
+              {calendarMode === 'teams' && (
+                <div className="flex flex-wrap gap-2">
+                  {teams.map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setCalendarTeamId(t.id)}
+                      className={`px-3 py-1.5 text-xs sm:text-sm rounded-lg border ${
+                        calendarTeamId === t.id
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-800 font-medium'
+                          : 'hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {calendarMode === 'teams' && matchdays.length > 0 && (
+            <div className="bg-white rounded-xl shadow-lg p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <h3 className="font-semibold">
+                  {calendarTeamId ? teamById.get(calendarTeamId)?.name : 'Equipa'}
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {teamCalendar.length} jogo{teamCalendar.length === 1 ? '' : 's'} · casa/fora
+                </p>
+              </div>
+              {teamCalendar.length === 0 ? (
+                <p className="text-sm text-gray-500">Sem jogos para esta equipa.</p>
+              ) : (
+                <div className="space-y-2">
+                  {teamCalendar.map(({ c, md, isHome, opponentId }) => {
+                    const opponent = opponentId ? teamById.get(opponentId) : null;
+                    const myTeam = calendarTeamId ? teamById.get(calendarTeamId) : null;
+                    return (
+                      <div key={c.id} className="border rounded-lg p-3 flex flex-col gap-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <span
+                                className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                                  isHome
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-sky-100 text-sky-800'
+                                }`}
+                              >
+                                {isHome ? 'Casa' : 'Fora'}
+                              </span>
+                              <span className="text-xs text-gray-500">
+                                {md?.label ||
+                                  (md ? `Jornada ${md.matchday_number}` : 'Jornada')}
+                                {md?.leg === 'away' ? ' · volta' : md ? ' · ida' : ''}
+                              </span>
+                            </div>
+                            <div className="font-medium text-sm">
+                              vs {opponent?.name || '?'}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatEuDateTime(c.scheduled_time) || 'Sem data/hora'}
+                              {c.venue ? ` · ${c.venue}` : ''}
+                              {c.status === 'completed'
+                                ? ` · ${c.home_duos_won}-${c.away_duos_won}`
+                                : ''}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {myTeam && (
+                              <button
+                                type="button"
+                                onClick={() => setLineupCtx({ confrontation: c, team: myTeam })}
+                                className="text-xs px-2 py-1 border rounded-lg"
+                              >
+                                Lineup
+                              </button>
+                            )}
+                            {isOrganizer && (
+                              <button
+                                type="button"
+                                onClick={() => setResultsCtx(c)}
+                                className="text-xs px-2 py-1 bg-emerald-600 text-white rounded-lg"
+                              >
+                                Resultado
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {calendarMode === 'matchdays' &&
+            matchdays.map(md => {
             const list = [...(confrontationsByMatchday.get(md.id) || [])].sort((a, b) => {
               const ta = a.scheduled_time ? new Date(a.scheduled_time).getTime() : 0;
               const tb = b.scheduled_time ? new Date(b.scheduled_time).getTime() : 0;
