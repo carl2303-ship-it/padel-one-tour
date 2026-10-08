@@ -8,7 +8,7 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from '../lib/playerTournamentPrice';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram, ListOrdered } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram, ListOrdered, ImagePlus } from 'lucide-react';
 import { notifyTournamentPlayers } from '../lib/notifyTournament';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
@@ -55,6 +55,7 @@ import AddSuperTeamModal from './AddSuperTeamModal';
 import LadderTournamentView from './LadderTournamentView';
 import ClubLeagueView from './ClubLeagueView';
 import InstagramPackModal from './InstagramPackModal';
+import TournamentPosterModal from './TournamentPosterModal';
 import SeedOrderModal from './SeedOrderModal';
 
 type TournamentDetailProps = {
@@ -161,6 +162,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [showEditTournament, setShowEditTournament] = useState(false);
   const [showInstagramPack, setShowInstagramPack] = useState(false);
+  const [showTournamentPoster, setShowTournamentPoster] = useState(false);
+  const [posterClub, setPosterClub] = useState<{ name: string; logo_url: string | null } | null>(null);
   const [showSeedOrder, setShowSeedOrder] = useState(false);
   const [showEditTeam, setShowEditTeam] = useState(false);
   const [showManageCategories, setShowManageCategories] = useState(false);
@@ -296,6 +299,28 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       fetchTournamentData();
     }
   };
+
+  useEffect(() => {
+    const clubId = (currentTournament as { club_id?: string | null }).club_id;
+    if (!clubId) {
+      setPosterClub(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('clubs')
+        .select('name, logo_url')
+        .eq('id', clubId)
+        .maybeSingle();
+      if (!cancelled) {
+        setPosterClub(data ? { name: data.name, logo_url: data.logo_url || null } : null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [(currentTournament as { club_id?: string | null }).club_id]);
 
   useEffect(() => {
     setSelectedCategory(null);
@@ -6941,6 +6966,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
               PDF
             </button>
             <button
+              onClick={() => setShowTournamentPoster(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+              title="Gerar cartaz automático (app Padel1 + WhatsApp)"
+            >
+              <ImagePlus className="w-4 h-4" />
+              Cartaz
+            </button>
+            <button
               onClick={() => setShowInstagramPack(true)}
               className="flex items-center gap-2 px-3 py-2 text-sm bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition"
               title="Gerar pack Instagram (pódio, classificação, fotos)"
@@ -8448,6 +8481,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             fetchTournamentData();
           }}
           isIndependentOrganizer={!(currentTournament as any).club_id}
+        />
+      )}
+
+      {showTournamentPoster && (
+        <TournamentPosterModal
+          tournament={currentTournament}
+          categories={categories}
+          clubName={posterClub?.name}
+          clubLogoUrl={posterClub?.logo_url}
+          onClose={() => setShowTournamentPoster(false)}
+          onApplied={(imageUrl) => {
+            setCurrentTournament((prev) => ({ ...prev, image_url: imageUrl }));
+          }}
         />
       )}
 

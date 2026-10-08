@@ -30,6 +30,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     daily_end_time: '21:00',
     member_price: 0,
     non_member_price: 0,
+    poster_includes: '',
     allow_club_payment: false,
     has_dinner_option: false,
     format: 'round_robin' as string,
@@ -323,6 +324,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
         match_duration_minutes: 30,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
+        poster_includes: formData.poster_includes?.trim() || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
         daily_schedules: isLadderFmt ? null : dailySchedules.length > 0 ? dailySchedules : null,
@@ -973,6 +975,23 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
             <p className="text-xs text-gray-500 mt-1 ml-7">
               Se ativo, os jogadores podem indicar na inscrição se querem jantar.
             </p>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                O que está incluído (cartaz / WhatsApp)
+              </label>
+              <textarea
+                value={formData.poster_includes}
+                onChange={(e) => setFormData({ ...formData, poster_includes: e.target.value })}
+                rows={2}
+                maxLength={180}
+                placeholder="Ex: bolas, água, t-shirt e jantar"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Aparece no cartaz automático junto ao preço.
+              </p>
+            </div>
           </div>
 
           {isIndependentOrganizer && (

@@ -35,6 +35,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
     status: tournament.status,
     member_price: (tournament as any).member_price || 0,
     non_member_price: (tournament as any).non_member_price || 0,
+    poster_includes: (tournament as any).poster_includes || '',
     allow_club_payment: (tournament as any).allow_club_payment || false,
     has_dinner_option: (tournament as any).has_dinner_option || false,
     allow_public_registration: (tournament as any).allow_public_registration || false,
@@ -355,6 +356,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
         status: formData.status,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
+        poster_includes: formData.poster_includes?.trim() || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
         visibility: formData.format === 'club_league' ? 'invite_only' : formData.visibility,
@@ -1176,6 +1178,23 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
             <p className="text-xs text-gray-500 mt-1 ml-7">
               Se ativo, os jogadores podem indicar na inscrição se querem jantar.
             </p>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                O que está incluído (cartaz / WhatsApp)
+              </label>
+              <textarea
+                value={formData.poster_includes}
+                onChange={(e) => setFormData({ ...formData, poster_includes: e.target.value })}
+                rows={2}
+                maxLength={180}
+                placeholder="Ex: bolas, água, t-shirt e jantar"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Aparece no cartaz automático junto ao preço.
+              </p>
+            </div>
           </div>
 
           <div className="border-t border-gray-200 pt-6">
