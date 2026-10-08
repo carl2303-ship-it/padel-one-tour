@@ -1,6 +1,5 @@
 import type { Tournament, TournamentCategory } from './supabase';
 import {
-  formatTournamentDate,
   resolvePackTheme,
   type PackTheme,
 } from './instagramPack';
@@ -43,11 +42,256 @@ export type TournamentPosterInput = {
   gender?: string | null;
   memberPrice?: number | null;
   nonMemberPrice?: number | null;
-  /** Free-text: what the fee includes (balls, dinner, t-shirt…) */
+  /** Free-text: what the fee includes (balls, dinner, t-shirt…) — fallback if description empty */
   includes?: string | null;
+  /** Tournament settings description (HTML/plain): format, prizes, includes… */
+  description?: string | null;
   /** Public registration URL (QR + caption). Images themselves are not clickable on WhatsApp. */
   registrationUrl?: string | null;
 };
+
+type DescRun = { text: string; bold?: boolean; italic?: boolean; underline?: boolean };
+type DescLine = { runs: DescRun[]; bullet?: boolean; spacer?: boolean };
+
+/** Strip HTML from RichText description for canvas text (flat). */
+export function plainTextFromDescription(html?: string | null): string {
+  return descriptionLinesFromHtml(html)
+    .map((l) => {
+      if (l.spacer) return '';
+      return l.bullet ? `• ${l.runs.map((r) => r.text).join('')}` : l.runs.map((r) => r.text).join('');
+    })
+    .join('\n')
+    .trim();
+}
+
+/** Parse RichText HTML into lines preserving breaks, blank lines, lists, bold/italic/underline. */
+export function descriptionLinesFromHtml(html?: string | null): DescLine[] {
+  if (!html || !html.trim()) return [];
+
+  const root = document.createElement('div');
+  root.innerHTML = html;
+
+  const lines: DescLine[] = [];
+  let current: DescRun[] = [];
+  let bullet = false;
+
+  const isEmptyLine = (l: DescLine) =>
+    !!l.spacer || (!l.bullet && !l.runs.some((r) => r.text.trim()));
+
+  const pushSpacer = () => {
+    // Keep at most one blank line in a row, but always allow interline gaps
+    if (lines.length === 0) return;
+    if (isEmptyLine(lines[lines.length - 1])) return;
+    lines.push({ runs: [{ text: '' }], spacer: true });
+  };
+
+  const flush = (opts?: { forceEmpty?: boolean }) => {
+    const text = current.map((r) => r.text).join('');
+    const hasContent = Boolean(text.trim()) || bullet;
+    if (hasContent) {
+      lines.push({
+        runs: current.length ? current : [{ text: '' }],
+        bullet,
+      });
+    } else if (opts?.forceEmpty) {
+      pushSpacer();
+    }
+    current = [];
+    bullet = false;
+  };
+
+  const pushRun = (text: string, style: { bold?: boolean; italic?: boolean; underline?: boolean }) => {
+    const cleaned = text.replace(/\u00a0/g, ' ');
+    if (!cleaned) return;
+    const last = current[current.length - 1];
+    if (
+      last &&
+      !!last.bold === !!style.bold &&
+      !!last.italic === !!style.italic &&
+      !!last.underline === !!style.underline
+    ) {
+      last.text += cleaned;
+    } else {
+      current.push({ text: cleaned, ...style });
+    }
+  };
+
+  const walk = (
+    node: Node,
+    style: { bold?: boolean; italic?: boolean; underline?: boolean }
+  ) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const raw = node.textContent || '';
+      // Preserve intentional newlines inside text nodes
+      const parts = raw.split(/\n/);
+      parts.forEach((part, i) => {
+        if (i > 0) flush({ forceEmpty: true });
+        pushRun(part, style);
+      });
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === 'br') {
+      flush({ forceEmpty: true });
+      return;
+    }
+
+    const nextStyle = {
+      bold: style.bold || tag === 'b' || tag === 'strong',
+      italic: style.italic || tag === 'i' || tag === 'em',
+      underline: style.underline || tag === 'u',
+    };
+
+    if (tag === 'li') {
+      flush();
+      bullet = true;
+      Array.from(el.childNodes).forEach((c) => walk(c, nextStyle));
+      flush();
+      return;
+    }
+
+    if (tag === 'p' || tag === 'div' || tag === 'h1' || tag === 'h2' || tag === 'h3') {
+      if (current.length) flush();
+      // Empty <p><br></p> / <p></p> → blank line (interlinha)
+      const before = lines.length;
+      Array.from(el.childNodes).forEach((c) => walk(c, nextStyle));
+      const produced = lines.length > before || current.some((r) => r.text.trim());
+      if (!produced) {
+        flush({ forceEmpty: true });
+      } else {
+        flush();
+        // Extra gap after each block paragraph for visual interline
+        pushSpacer();
+      }
+      return;
+    }
+
+    if (tag === 'ul' || tag === 'ol') {
+      if (current.length) flush();
+      Array.from(el.childNodes).forEach((c) => walk(c, nextStyle));
+      pushSpacer();
+      return;
+    }
+
+    Array.from(el.childNodes).forEach((c) => walk(c, nextStyle));
+  };
+
+  Array.from(root.childNodes).forEach((c) => walk(c, {}));
+  if (current.length) flush();
+
+  // Drop trailing blank lines only
+  while (lines.length && isEmptyLine(lines[lines.length - 1])) {
+    lines.pop();
+  }
+  return lines;
+}
+
+function fontForRun(size: number, run: DescRun): string {
+  const weight = run.bold ? '800' : '600';
+  const style = run.italic ? 'italic ' : '';
+  return `${style}${weight} ${size}px Inter, system-ui, sans-serif`;
+}
+
+/** Draw rich description lines with wrapping; returns height used. */
+function drawDescriptionLines(
+  ctx: CanvasRenderingContext2D,
+  lines: DescLine[],
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+  maxLines: number,
+  fontSize: number
+): number {
+  let drawn = 0;
+  let cursorY = y;
+
+  for (const line of lines) {
+    if (drawn >= maxLines) break;
+
+    // Blank interline (paragraph gap)
+    if (line.spacer || (!line.bullet && !line.runs.some((r) => r.text.trim()))) {
+      cursorY += Math.round(lineHeight * 0.65);
+      drawn += 1;
+      continue;
+    }
+
+    const prefix = line.bullet ? '•  ' : '';
+    const prefixW = line.bullet
+      ? (() => {
+          ctx.font = fontForRun(fontSize, { text: '', bold: true });
+          return ctx.measureText(prefix).width;
+        })()
+      : 0;
+
+    // Flatten runs into wrapped visual lines
+    type Piece = { text: string; run: DescRun };
+    const pieces: Piece[] = [];
+    for (const run of line.runs) {
+      const words = run.text.split(/(\s+)/);
+      for (const w of words) {
+        if (w) pieces.push({ text: w, run });
+      }
+    }
+
+    let row: Piece[] = [];
+    let rowW = prefixW;
+
+    const paintRow = (parts: Piece[], isFirst: boolean) => {
+      if (drawn >= maxLines) return;
+      let cx = x;
+      if (isFirst && line.bullet) {
+        ctx.font = fontForRun(fontSize, { text: '', bold: true });
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(prefix, cx, cursorY);
+        cx += prefixW;
+      }
+      for (const p of parts) {
+        ctx.font = fontForRun(fontSize, p.run);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(p.text, cx, cursorY);
+        if (p.run.underline) {
+          const tw = ctx.measureText(p.text).width;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cursorY + 4);
+          ctx.lineTo(cx + tw, cursorY + 4);
+          ctx.stroke();
+        }
+        cx += ctx.measureText(p.text).width;
+      }
+      cursorY += lineHeight;
+      drawn += 1;
+    };
+
+    if (pieces.length === 0) {
+      paintRow([], true);
+      continue;
+    }
+
+    let first = true;
+    for (const piece of pieces) {
+      ctx.font = fontForRun(fontSize, piece.run);
+      const w = ctx.measureText(piece.text).width;
+      if (row.length && rowW + w > maxWidth && !/^\s+$/.test(piece.text)) {
+        paintRow(row, first);
+        first = false;
+        row = [];
+        rowW = prefixW;
+        if (drawn >= maxLines) break;
+      }
+      row.push(piece);
+      rowW += w;
+    }
+    if (row.length && drawn < maxLines) paintRow(row, first);
+  }
+
+  return cursorY - y;
+}
 
 function createCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
@@ -164,12 +408,33 @@ function formatTimeLabel(start?: string | null, end?: string | null): string {
   return s || e || '';
 }
 
+function parseLocalDate(iso: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso.trim());
+  if (!m) {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+function formatDateWithWeekday(iso: string): string {
+  const d = parseLocalDate(iso);
+  if (!d) return '';
+  const weekday = d.toLocaleDateString('pt-PT', { weekday: 'long' });
+  const cap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  return `${cap} ${dd}/${mm}/${yyyy}`;
+}
+
 function formatDateLabel(startDate: string, endDate?: string | null): string {
-  const fake = {
-    start_date: startDate,
-    end_date: endDate || startDate,
-  } as Tournament;
-  return formatTournamentDate(fake);
+  const startLabel = formatDateWithWeekday(startDate);
+  if (!startLabel) return '';
+  if (!endDate || endDate === startDate) return startLabel;
+  const endLabel = formatDateWithWeekday(endDate);
+  if (!endLabel) return startLabel;
+  return `${startLabel} – ${endLabel}`;
 }
 
 function formatEuro(n?: number | null): string | null {
@@ -256,11 +521,11 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
 
   const logo = await tryLoadImage(input.logoUrl);
   const qr = input.registrationUrl ? await loadQrImage(input.registrationUrl) : null;
-  const pad = 56;
-  let y = 40;
+  const pad = 52;
+  let y = 32;
 
   // —— Large centered club logo ——
-  const logoSize = 220;
+  const logoSize = 180;
   if (logo) {
     const scale = Math.min(logoSize / logo.width, logoSize / logo.height);
     const dw = logo.width * scale;
@@ -272,60 +537,119 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fill();
   }
-  y += logoSize + 18;
+  y += logoSize + 12;
 
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '700 22px Inter, system-ui, sans-serif';
+  ctx.font = '700 20px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('CLUBE', POSTER_WIDTH / 2, y);
-  y += 36;
+  y += 30;
   ctx.fillStyle = '#ffffff';
-  ctx.font = '900 42px Inter, system-ui, sans-serif';
+  ctx.font = '900 36px Inter, system-ui, sans-serif';
   const clubH = wrapText(
     ctx,
     input.clubName?.trim() || 'Padel One',
     pad,
     y,
     POSTER_WIDTH - pad * 2,
-    46,
+    40,
     2,
     'center'
   );
   ctx.textAlign = 'left';
-  y += clubH + 20;
+  y += clubH + 14;
 
   // Accent
   roundRect(ctx, (POSTER_WIDTH - 100) / 2, y, 100, 7, 4);
   ctx.fillStyle = theme.accent;
   ctx.fill();
-  y += 36;
+  y += 30;
 
   ctx.fillStyle = theme.accentSoft;
-  ctx.font = '800 24px Inter, system-ui, sans-serif';
+  ctx.font = '800 22px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('TORNEIO', POSTER_WIDTH / 2, y);
-  y += 44;
+  y += 38;
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = '900 52px Inter, system-ui, sans-serif';
+  ctx.font = '900 48px Inter, system-ui, sans-serif';
   const titleH = wrapText(
     ctx,
     input.tournamentName.trim() || 'Torneio',
     pad,
     y,
     POSTER_WIDTH - pad * 2,
-    56,
+    52,
     2,
     'center'
   );
   ctx.textAlign = 'left';
-  y += titleH + 22;
+  y += titleH + 18;
+
+  // —— Categories + levels (right after title, larger) ——
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = '800 22px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('CATEGORIAS · NÍVEIS PADEL1', POSTER_WIDTH / 2, y);
+  ctx.textAlign = 'left';
+  y += 14;
+
+  const cats = input.categories.length > 0 ? input.categories : [{ name: 'Open' }];
+  const footerReserve = input.registrationUrl ? 190 : 60;
+  const maxY = POSTER_HEIGHT - footerReserve;
+  const catRowH = 88;
+  // Reserve room below for date/price/description (~280px)
+  const catBudget = Math.min(maxY - y - 280, cats.length * catRowH);
+  const maxCats = Math.max(1, Math.floor(Math.max(catBudget, catRowH) / catRowH));
+  const visibleCats = cats.slice(0, maxCats);
+
+  for (const cat of visibleCats) {
+    y += 14;
+    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, 74, 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fill();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 34px Inter, system-ui, sans-serif';
+    ctx.fillText(cat.name, pad + 26, y + 46);
+
+    const levels = levelsForCategory(cat);
+    let chipX = POSTER_WIDTH - pad - 26;
+    ctx.font = '900 24px Inter, system-ui, sans-serif';
+    for (let i = levels.length - 1; i >= 0; i--) {
+      const code = levels[i];
+      const tw = ctx.measureText(code).width + 28;
+      chipX -= tw;
+      roundRect(ctx, chipX, y + 16, tw, 42, 12);
+      ctx.fillStyle = colorForLevel(code);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(code, chipX + 14, y + 45);
+      chipX -= 10;
+    }
+    if (levels.length === 0) {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '700 22px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('Todos os níveis', POSTER_WIDTH - pad - 26, y + 46);
+      ctx.textAlign = 'left';
+    }
+    y += 74;
+  }
+  if (cats.length > visibleCats.length) {
+    y += 10;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = '700 20px Inter, system-ui, sans-serif';
+    ctx.fillText(`+${cats.length - visibleCats.length} categorias`, pad, y);
+    y += 8;
+  }
+  y += 16;
 
   // Date / time
   const dateLabel = formatDateLabel(input.startDate, input.endDate);
   const timeLabel = formatTimeLabel(input.startTime, input.endTime);
-  const dateCardH = 96;
-  roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, dateCardH, 20);
+  const dateCardH = 88;
+  roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, dateCardH, 18);
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.fill();
   ctx.strokeStyle = theme.accent;
@@ -333,100 +657,93 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
   ctx.stroke();
 
   ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  ctx.font = '700 18px Inter, system-ui, sans-serif';
-  ctx.fillText('DATA', pad + 28, y + 32);
+  ctx.font = '700 16px Inter, system-ui, sans-serif';
+  ctx.fillText('DATA', pad + 26, y + 28);
   ctx.fillStyle = '#ffffff';
-  ctx.font = '900 34px Inter, system-ui, sans-serif';
-  ctx.fillText(dateLabel || '—', pad + 28, y + 70);
+  ctx.font = '900 30px Inter, system-ui, sans-serif';
+  ctx.fillText(dateLabel || '—', pad + 26, y + 62);
   if (timeLabel) {
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.font = '700 18px Inter, system-ui, sans-serif';
-    ctx.fillText('HORA', pad + 520, y + 32);
+    ctx.font = '700 16px Inter, system-ui, sans-serif';
+    ctx.fillText('HORA', pad + 520, y + 28);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 34px Inter, system-ui, sans-serif';
-    ctx.fillText(timeLabel, pad + 520, y + 70);
+    ctx.font = '900 30px Inter, system-ui, sans-serif';
+    ctx.fillText(timeLabel, pad + 520, y + 62);
   }
-  y += dateCardH + 18;
+  y += dateCardH + 14;
 
-  // Price + includes
+  // Price
   const member = formatEuro(input.memberPrice);
   const nonMember = formatEuro(input.nonMemberPrice);
-  const includes = (input.includes || '').trim();
-  if (member || nonMember || includes) {
-    const priceH = includes ? 150 : 100;
-    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, priceH, 20);
+  if (member || nonMember) {
+    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, 78, 18);
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     ctx.fill();
-
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.font = '700 18px Inter, system-ui, sans-serif';
-    ctx.fillText('PREÇO', pad + 28, y + 32);
-
+    ctx.font = '700 16px Inter, system-ui, sans-serif';
+    ctx.fillText('PREÇO', pad + 26, y + 28);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 32px Inter, system-ui, sans-serif';
-    let priceLine = '';
-    if (member && nonMember && member !== nonMember) {
-      priceLine = `Membros ${member}  ·  Não-membros ${nonMember}`;
-    } else {
-      priceLine = member || nonMember || '';
-    }
-    if (priceLine) ctx.fillText(priceLine, pad + 28, y + 72);
-
-    if (includes) {
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.font = '700 18px Inter, system-ui, sans-serif';
-      ctx.fillText('INCLUI', pad + 28, y + 104);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 26px Inter, system-ui, sans-serif';
-      wrapText(ctx, includes, pad + 28, y + 134, POSTER_WIDTH - pad * 2 - 56, 28, 1);
-    }
-    y += priceH + 16;
+    ctx.font = '900 28px Inter, system-ui, sans-serif';
+    const priceLine =
+      member && nonMember && member !== nonMember
+        ? `Membros ${member}  ·  Não-membros ${nonMember}`
+        : member || nonMember || '';
+    ctx.fillText(priceLine, pad + 26, y + 60);
+    y += 90;
   }
 
-  // Categories (compact)
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '800 20px Inter, system-ui, sans-serif';
-  ctx.fillText('CATEGORIAS · NÍVEIS PADEL1', pad, y + 8);
-  y += 18;
+  // Description from settings — keep RichText structure (breaks, lists, bold/italic)
+  let descLines = descriptionLinesFromHtml(input.description);
+  if (descLines.length === 0 && (input.includes || '').trim()) {
+    descLines = [{ runs: [{ text: (input.includes || '').trim() }] }];
+  }
+  if (descLines.length > 0) {
+    const descMaxH = Math.max(80, maxY - y - 8);
+    const fontSize = 24;
+    const lineH = 30;
+    const headerH = 36;
+    const maxLines = Math.max(2, Math.floor((descMaxH - headerH - 12) / lineH));
 
-  const cats = input.categories.length > 0 ? input.categories : [{ name: 'Open' }];
-  const footerReserve = input.registrationUrl ? 210 : 70;
-  const maxY = POSTER_HEIGHT - footerReserve;
-  const rowH = 68;
-  const visibleCats = cats.slice(0, Math.max(1, Math.floor((maxY - y) / rowH)));
+    // Offscreen measure: draw to temp then copy — simpler: estimate lines * lineH
+    const estimated = Math.min(
+      maxLines,
+      Math.max(
+        descLines.length,
+        descLines.reduce((acc, l) => {
+          const plain = (l.bullet ? '•  ' : '') + l.runs.map((r) => r.text).join('');
+          ctx.font = fontForRun(fontSize, { text: '', bold: true });
+          const charsPerLine = Math.max(20, Math.floor((POSTER_WIDTH - pad * 2 - 52) / (fontSize * 0.55)));
+          return acc + Math.max(1, Math.ceil(plain.length / charsPerLine));
+        }, 0)
+      )
+    );
+    const boxH = Math.min(descMaxH, headerH + estimated * lineH + 20);
 
-  for (const cat of visibleCats) {
-    y += 12;
-    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, 56, 14);
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, boxH, 18);
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = '700 16px Inter, system-ui, sans-serif';
+    ctx.fillText('INFO · FORMATO · PRÉMIOS · INCLUI', pad + 26, y + 28);
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '800 26px Inter, system-ui, sans-serif';
-    ctx.fillText(cat.name, pad + 22, y + 36);
-
-    const levels = levelsForCategory(cat);
-    let chipX = POSTER_WIDTH - pad - 22;
-    ctx.font = '800 18px Inter, system-ui, sans-serif';
-    for (let i = levels.length - 1; i >= 0; i--) {
-      const code = levels[i];
-      const tw = ctx.measureText(code).width + 22;
-      chipX -= tw;
-      roundRect(ctx, chipX, y + 12, tw, 32, 10);
-      ctx.fillStyle = colorForLevel(code);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(code, chipX + 11, y + 34);
-      chipX -= 8;
-    }
-    y += 56;
+    drawDescriptionLines(
+      ctx,
+      descLines,
+      pad + 26,
+      y + 58,
+      POSTER_WIDTH - pad * 2 - 52,
+      lineH,
+      maxLines,
+      fontSize
+    );
+    y += boxH + 10;
   }
 
   // Registration CTA: QR + pill (WA images aren't clickable — QR opens the link)
   if (input.registrationUrl) {
-    const blockY = POSTER_HEIGHT - 200;
-    const qrSize = 132;
-    roundRect(ctx, pad, blockY, POSTER_WIDTH - pad * 2, 148, 22);
+    const blockY = POSTER_HEIGHT - 186;
+    const qrSize = 120;
+    roundRect(ctx, pad, blockY, POSTER_WIDTH - pad * 2, 136, 20);
     ctx.fillStyle = 'rgba(0,0,0,0.40)';
     ctx.fill();
     ctx.strokeStyle = theme.accent;
@@ -435,29 +752,29 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
 
     if (qr) {
       ctx.fillStyle = '#ffffff';
-      roundRect(ctx, pad + 18, blockY + 8, qrSize, qrSize, 12);
+      roundRect(ctx, pad + 16, blockY + 8, qrSize, qrSize, 12);
       ctx.fill();
-      ctx.drawImage(qr, pad + 22, blockY + 12, qrSize - 8, qrSize - 8);
+      ctx.drawImage(qr, pad + 20, blockY + 12, qrSize - 8, qrSize - 8);
     }
 
-    const pillX = pad + (qr ? qrSize + 36 : 28);
-    const pillW = POSTER_WIDTH - pad - pillX - 28;
-    const pillY = blockY + 28;
-    const pillH = 56;
+    const pillX = pad + (qr ? qrSize + 32 : 24);
+    const pillW = POSTER_WIDTH - pad - pillX - 24;
+    const pillY = blockY + 24;
+    const pillH = 52;
     roundRect(ctx, pillX, pillY, pillW, pillH, pillH / 2);
     ctx.fillStyle = theme.accent;
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 26px Inter, system-ui, sans-serif';
+    ctx.font = '900 24px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('INSCRIÇÃO ONLINE', pillX + pillW / 2, pillY + 36);
+    ctx.fillText('INSCRIÇÃO ONLINE', pillX + pillW / 2, pillY + 34);
     ctx.textAlign = 'left';
 
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = '600 18px Inter, system-ui, sans-serif';
+    ctx.font = '600 16px Inter, system-ui, sans-serif';
     const shortUrl = input.registrationUrl.replace(/^https?:\/\//, '');
-    wrapText(ctx, shortUrl, pillX, pillY + 88, pillW, 22, 2);
+    wrapText(ctx, shortUrl, pillX, pillY + 80, pillW, 20, 2);
   }
 
   ctx.fillStyle = theme.accentSoft;

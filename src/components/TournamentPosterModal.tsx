@@ -85,7 +85,7 @@ export default function TournamentPosterModal({
         gender: (tournament as { gender?: string | null }).gender || null,
         memberPrice: (tournament as { member_price?: number | null }).member_price ?? null,
         nonMemberPrice: (tournament as { non_member_price?: number | null }).non_member_price ?? null,
-        includes: (tournament as { poster_includes?: string | null }).poster_includes ?? null,
+        description: tournament.description || null,
         registrationUrl,
       });
       setPreview(dataUrl);
@@ -186,8 +186,8 @@ export default function TournamentPosterModal({
 
           <p className="text-xs text-gray-500">
             Clube: <strong>{effectiveClub}</strong>
-            {(tournament as { poster_includes?: string | null }).poster_includes
-              ? ` · Inclui: ${(tournament as { poster_includes?: string }).poster_includes}`
+            {tournament.description
+              ? ' · Usa a descrição das definições (formato, prémios, incluído)'
               : ''}
           </p>
         </div>
