@@ -1,1 +1,31 @@
-$file:/workspace/.github/workflows/assemble-tournament-detail.yml
+name: Assemble TournamentDetail
+on:
+  push:
+    branches: [cursor/fix-payment-no-stub-accounts-2750]
+    paths:
+      - '.restore/td.gz.b64.part1'
+permissions:
+  contents: write
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode and restore
+        run: |
+          python3 << 'PY'
+          import base64, gzip
+          from pathlib import Path
+          b64 = Path('.restore/td.gz.b64.part0').read_text() + Path('.restore/td.gz.b64.part1').read_text()
+          data = gzip.decompress(base64.b64decode(b64))
+          assert b'phoneLookupCandidates' in data and len(data) > 100000
+          Path('src/components/TournamentDetail.tsx').write_bytes(data)
+          print('restored', len(data))
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/TournamentDetail.tsx
+          git diff --cached --quiet || git commit -m "fix: marcar pagamento sem criar stubs em player_accounts"
+          git push
