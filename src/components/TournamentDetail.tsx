@@ -1,1 +1,1 @@
-PLACEHOLDER
+$file:/tmp/tour-restore/TournamentDetail.tsx
