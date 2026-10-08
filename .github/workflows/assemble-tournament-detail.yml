@@ -3,7 +3,7 @@ on:
   push:
     branches: [cursor/fix-payment-no-stub-accounts-2750]
     paths:
-      - '.restore/td.gz.b64.part1'
+      - '.restore/td.gz.b64.chunk11'
 permissions:
   contents: write
 jobs:
@@ -16,7 +16,7 @@ jobs:
           python3 << 'PY'
           import base64, gzip
           from pathlib import Path
-          b64 = Path('.restore/td.gz.b64.part0').read_text() + Path('.restore/td.gz.b64.part1').read_text()
+          b64 = Path('.restore/td.gz.b64.chunk0').read_text() + Path('.restore/td.gz.b64.chunk1').read_text() + Path('.restore/td.gz.b64.chunk2').read_text() + Path('.restore/td.gz.b64.chunk3').read_text() + Path('.restore/td.gz.b64.chunk4').read_text() + Path('.restore/td.gz.b64.chunk5').read_text() + Path('.restore/td.gz.b64.chunk6').read_text() + Path('.restore/td.gz.b64.chunk7').read_text() + Path('.restore/td.gz.b64.chunk8').read_text() + Path('.restore/td.gz.b64.chunk9').read_text() + Path('.restore/td.gz.b64.chunk10').read_text() + Path('.restore/td.gz.b64.chunk11').read_text()
           data = gzip.decompress(base64.b64decode(b64))
           assert b'phoneLookupCandidates' in data and len(data) > 100000
           Path('src/components/TournamentDetail.tsx').write_bytes(data)
