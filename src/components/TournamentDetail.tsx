@@ -1,1 +1,1 @@
-$file:/tmp/tour-restore/TournamentDetail.tsx
+file:///workspace/.restore/TournamentDetail.tsx
