@@ -29,21 +29,48 @@ export default function TournamentPosterModal({
   onClose,
   onApplied,
 }: Props) {
-  const { logoUrl: organizerLogo } = useCustomLogo(tournament.user_id);
+  const { logoUrl: organizerLogo, hasCustomLogo } = useCustomLogo(tournament.user_id);
   const [preview, setPreview] = useState<string>('');
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  /** Fresh logo from settings — avoids stale club/cache after user updates logo */
+  const [settingsLogo, setSettingsLogo] = useState<string | null>(null);
 
-  const effectiveLogo = clubLogoUrl || organizerLogo;
+  const effectiveLogo = settingsLogo || (hasCustomLogo ? organizerLogo : null) || clubLogoUrl || organizerLogo;
   const effectiveClub =
     clubName?.trim() ||
     (tournament as { club_name?: string | null }).club_name ||
     'Padel One';
 
   const registrationUrl = buildRegistrationUrl(tournament.id);
-  const dateLabel = formatTournamentDate(tournament);
+  const startTime =
+    (tournament as { daily_start_time?: string | null }).daily_start_time ||
+    (tournament as { start_time?: string | null }).start_time ||
+    null;
+  const endTime =
+    (tournament as { daily_end_time?: string | null }).daily_end_time ||
+    (tournament as { end_time?: string | null }).end_time ||
+    null;
+  const dateLabel = (() => {
+    const start = tournament.start_date;
+    const d = new Date(
+      Number(start.slice(0, 4)),
+      Number(start.slice(5, 7)) - 1,
+      Number(start.slice(8, 10))
+    );
+    if (Number.isNaN(d.getTime())) return formatTournamentDate(tournament);
+    const weekday = d.toLocaleDateString('pt-PT', { weekday: 'long' });
+    const cap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+    return `${cap} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  })();
+  const timeLabel =
+    startTime && endTime
+      ? `${startTime.slice(0, 5)} – ${endTime.slice(0, 5)}`
+      : startTime
+        ? startTime.slice(0, 5)
+        : null;
 
   const categoryInputs = useMemo(
     () =>
@@ -61,31 +88,44 @@ export default function TournamentPosterModal({
     clubName: effectiveClub,
     registrationUrl,
     dateLabel,
+    timeLabel,
+    descriptionHtml: tournament.description || null,
+    memberPrice: (tournament as { member_price?: number | null }).member_price ?? null,
+    nonMemberPrice: (tournament as { non_member_price?: number | null }).non_member_price ?? null,
   });
+
+  const fetchLatestLogo = async (): Promise<string | null> => {
+    if (!tournament.user_id) return null;
+    const { data } = await supabase
+      .from('user_logo_settings')
+      .select('logo_url')
+      .eq('user_id', tournament.user_id)
+      .maybeSingle();
+    const url = data?.logo_url?.trim() || null;
+    setSettingsLogo(url);
+    return url;
+  };
 
   const regenerate = async () => {
     setGenerating(true);
     setError('');
     try {
+      const latestSettings = await fetchLatestLogo();
+      const logoUrl =
+        latestSettings ||
+        (hasCustomLogo ? organizerLogo : null) ||
+        clubLogoUrl ||
+        organizerLogo;
       const dataUrl = await generateTournamentPoster({
         tournamentName: tournament.name,
         clubName: effectiveClub,
-        logoUrl: effectiveLogo,
+        logoUrl,
         startDate: tournament.start_date,
         endDate: tournament.end_date,
-        startTime:
-          (tournament as { daily_start_time?: string | null }).daily_start_time ||
-          (tournament as { start_time?: string | null }).start_time ||
-          null,
-        endTime:
-          (tournament as { daily_end_time?: string | null }).daily_end_time ||
-          (tournament as { end_time?: string | null }).end_time ||
-          null,
+        startTime,
+        endTime,
         categories: categoryInputs,
         gender: (tournament as { gender?: string | null }).gender || null,
-        memberPrice: (tournament as { member_price?: number | null }).member_price ?? null,
-        nonMemberPrice: (tournament as { non_member_price?: number | null }).non_member_price ?? null,
-        description: tournament.description || null,
         registrationUrl,
       });
       setPreview(dataUrl);
@@ -99,7 +139,7 @@ export default function TournamentPosterModal({
   useEffect(() => {
     void regenerate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tournament.id, effectiveLogo, effectiveClub, categories.length]);
+  }, [tournament.id, organizerLogo, clubLogoUrl, effectiveClub, categories.length]);
 
   const handleDownload = () => {
     if (!preview) return;
@@ -155,7 +195,7 @@ export default function TournamentPosterModal({
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Cartaz do torneio</h2>
             <p className="text-xs text-gray-500 mt-1">
-              App Padel1 + WhatsApp (QR + texto com link clicável)
+              Cartaz limpo (mobile). Descrição e preço vão no texto do WhatsApp.
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-2 hover:bg-gray-100 rounded-xl">
@@ -187,7 +227,7 @@ export default function TournamentPosterModal({
           <p className="text-xs text-gray-500">
             Clube: <strong>{effectiveClub}</strong>
             {tournament.description
-              ? ' · Usa a descrição das definições (formato, prémios, incluído)'
+              ? ' · Descrição incluída no texto a copiar para o WA'
               : ''}
           </p>
         </div>
