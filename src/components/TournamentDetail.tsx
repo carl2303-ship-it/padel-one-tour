@@ -726,8 +726,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         ? 'text-green-700'
         : 'text-gray-900';
     return (
-      <div className="text-right min-w-[4.5rem]">
-        <p className={`text-sm font-bold ${colors}`}>
+      <div className="text-center sm:text-right">
+        <p className={`text-sm font-bold leading-tight ${colors}`}>
           {info.kind === 'exempt' ? 'Isento' : `${info.amount}€`}
         </p>
         <p className="text-[10px] text-gray-500 leading-tight">{info.label}</p>
@@ -7502,15 +7502,18 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                     {filteredIndividualPlayers.map(player => (
                       <div
                         key={player.id}
-                        className="flex items-center justify-between bg-white border rounded-lg p-3 hover:shadow-md transition"
+                        className="flex items-start gap-2 bg-white border rounded-lg p-3 hover:shadow-md transition"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-10 h-10 flex-shrink-0 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
                             {player.name.charAt(0).toUpperCase()}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-medium text-gray-900">{player.name}</p>
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 truncate">{player.name}</p>
+                            {player.email && (
+                              <p className="text-sm text-gray-500 truncate">{player.email}</p>
+                            )}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
                               {(() => {
                                 const lvl = getPlayerLevel(player);
                                 return lvl != null ? (
@@ -7535,24 +7538,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                 </span>
                               )}
                             </div>
-                            {player.email && (
-                              <p className="text-sm text-gray-500">{player.email}</p>
-                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
                           <PlayerPriceBadge player={player} />
                           <PaymentToggleButton player={player} />
-                          <button
-                            onClick={() => {
-                              setSelectedPlayer(player);
-                              setShowEditPlayer(true);
-                            }}
-                            className="p-2 hover:bg-gray-100 rounded-lg transition"
-                          >
-                            <Pencil className="w-4 h-4 text-gray-500" />
-                          </button>
                         </div>
+                        <button
+                          onClick={() => {
+                            setSelectedPlayer(player);
+                            setShowEditPlayer(true);
+                          }}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition flex-shrink-0 self-center"
+                          aria-label="Editar jogador"
+                        >
+                          <Pencil className="w-4 h-4 text-gray-500" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -7610,9 +7611,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                           </div>
                           <div className="p-4 space-y-2">
                             {groupTeams.map(team => (
-                              <div key={team.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg gap-2">
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-gray-900">
+                              <div key={team.id} className="flex items-start p-2 hover:bg-gray-50 rounded-lg gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-semibold text-gray-900 truncate">
                                     {team.seed != null && Number(team.seed) > 0 && (
                                       <span className="text-xs text-blue-500 mr-1.5 font-semibold">CS{team.seed}</span>
                                     )}
@@ -7621,7 +7622,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                       <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-violet-100 text-violet-700 rounded-full font-medium align-middle">Via parceiro</span>
                                     )}
                                   </p>
-                                  <p className="text-sm text-gray-600">
+                                  <p className="text-sm text-gray-600 truncate">
                                     {team.player1?.name}
                                     {(() => { const l = getPlayerLevel(team.player1); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                     {' / '}
@@ -7629,12 +7630,12 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                     {(() => { const l = getPlayerLevel(team.player2); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                                   </p>
                                   <PartnerTeamReviewBadges team={team} />
-                                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                                    <div className="flex items-center gap-1">
+                                  <div className="flex items-start gap-2 mt-1.5 flex-wrap">
+                                    <div className="flex flex-col items-center gap-1">
                                       <PlayerPriceBadge player={team.player1} />
                                       <PaymentToggleButton player={team.player1} />
                                     </div>
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex flex-col items-center gap-1">
                                       <PlayerPriceBadge player={team.player2} />
                                       <PaymentToggleButton player={team.player2} />
                                     </div>
@@ -7645,7 +7646,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                     setSelectedTeam(team);
                                     setShowEditTeam(true);
                                   }}
-                                  className="p-1 hover:bg-gray-100 rounded transition flex-shrink-0"
+                                  className="p-1 hover:bg-gray-100 rounded transition flex-shrink-0 self-center"
+                                  aria-label="Editar equipa"
                                 >
                                   <Pencil className="w-4 h-4 text-gray-500" />
                                 </button>
@@ -7660,10 +7662,10 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                       {filteredTeams.map(team => (
                         <div
                           key={team.id}
-                          className="flex items-center justify-between bg-white border rounded-lg p-4 hover:shadow-md transition"
+                          className="flex items-start gap-2 bg-white border rounded-lg p-4 hover:shadow-md transition"
                         >
-                          <div>
-                            <p className="font-semibold text-gray-900">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-gray-900 truncate">
                               {team.seed != null && Number(team.seed) > 0 && (
                                 <span className="text-xs text-blue-500 mr-1.5 font-semibold">CS{team.seed}</span>
                               )}
@@ -7672,7 +7674,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                                 <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-violet-100 text-violet-700 rounded-full font-medium align-middle">Via parceiro</span>
                               )}
                             </p>
-                            <p className="text-sm text-gray-600">
+                            <p className="text-sm text-gray-600 truncate">
                               {team.player1?.name}
                               {(() => { const l = getPlayerLevel(team.player1); return l != null ? <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-700 rounded-full font-medium">Nv {l.toFixed(2)}</span> : null; })()}
                               {(team.player1 as any)?.wants_dinner ? ' 🍽️' : ''}
@@ -7682,20 +7684,20 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               {(team.player2 as any)?.wants_dinner ? ' 🍽️' : ''}
                             </p>
                             <PartnerTeamReviewBadges team={team} />
-                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                            <div className="flex items-start gap-2 flex-wrap mt-1">
                               {team.group_name && (
-                                <span className="text-xs text-blue-600">Grupo {team.group_name}</span>
+                                <span className="text-xs text-blue-600 self-center">Grupo {team.group_name}</span>
                               )}
                               {((team.player1 as any)?.wants_dinner || (team.player2 as any)?.wants_dinner) && (
-                                <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">
+                                <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full self-center">
                                   🍽️ {[(team.player1 as any)?.wants_dinner && team.player1?.name, (team.player2 as any)?.wants_dinner && team.player2?.name].filter(Boolean).join(', ')}
                                 </span>
                               )}
-                              <div className="flex items-center gap-1">
+                              <div className="flex flex-col items-center gap-1">
                                 <PlayerPriceBadge player={team.player1} />
                                 <PaymentToggleButton player={team.player1} />
                               </div>
-                              <div className="flex items-center gap-1">
+                              <div className="flex flex-col items-center gap-1">
                                 <PlayerPriceBadge player={team.player2} />
                                 <PaymentToggleButton player={team.player2} />
                               </div>
@@ -7706,7 +7708,8 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                               setSelectedTeam(team);
                               setShowEditTeam(true);
                             }}
-                            className="p-2 hover:bg-gray-100 rounded-lg transition"
+                            className="p-2 hover:bg-gray-100 rounded-lg transition flex-shrink-0 self-center"
+                            aria-label="Editar equipa"
                           >
                             <Pencil className="w-4 h-4 text-gray-500" />
                           </button>
