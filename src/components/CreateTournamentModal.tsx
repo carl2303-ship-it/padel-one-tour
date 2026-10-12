@@ -1,1 +1,1 @@
-__LOAD_FROM_FILE__:/workspace/.push_CreateTournamentModal.tsx
+@/workspace/.push_CreateTournamentModal.tsx
