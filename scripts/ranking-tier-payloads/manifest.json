@@ -1,0 +1,14 @@
+[
+  {
+    "path": "src/components/CreateTournamentModal.tsx",
+    "b64_file": "src__components__CreateTournamentModal.tsx.zlib.b64",
+    "md5": "b35c52d0164dee4275aa322b84f3559b",
+    "len": 59165
+  },
+  {
+    "path": "src/components/EditTournamentModal.tsx",
+    "b64_file": "src__components__EditTournamentModal.tsx.zlib.b64",
+    "md5": "9354f18dcfaa1b475991b7cc9f271ad5",
+    "len": 65148
+  }
+]
