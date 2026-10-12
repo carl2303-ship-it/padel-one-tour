@@ -8,13 +8,19 @@
   {
     "path": "src/components/EditTournamentModal.tsx",
     "b64_file": "src__components__EditTournamentModal.tsx.zlib.b64",
-    "md5": "97586becb6c34902f1e1491778f10a64",
+    "md5": "9354f18dcfaa1b475991b7cc9f271ad5",
     "len": 65148
   },
   {
     "path": "src/lib/translations.ts",
     "b64_file": "src__lib__translations.ts.zlib.b64",
-    "md5": "2a53429016dabef63e04da97f066f8d3",
-    "len": 186689
+    "md5": "440cb21d3a0b50af96db83dd90ce4269",
+    "len": 186689,
+    "parts": [
+      "src__lib__translations.ts.zlib.b64.part1",
+      "src__lib__translations.ts.zlib.b64.part2",
+      "src__lib__translations.ts.zlib.b64.part3",
+      "src__lib__translations.ts.zlib.b64.part4"
+    ]
   }
 ]

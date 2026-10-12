@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: cursor/ranking-tier-tournament-settings-2750
+      - name: Fix corrupted payloads
+        run: python3 scripts/ranking-tier-payloads/fix_payloads.py
       - name: Decode and commit UI files
         run: |
           set -euo pipefail
@@ -23,15 +25,19 @@ jobs:
           root = Path('scripts/ranking-tier-payloads')
           manifest = json.loads((root / 'manifest.json').read_text())
           for item in manifest:
-              b64 = (root / item['b64_file']).read_text().strip()
+              if item.get('parts'):
+                  b64 = ''.join((root / p).read_text().strip() for p in item['parts'])
+              else:
+                  b64 = (root / item['b64_file']).read_text().strip()
               data = zlib.decompress(base64.b64decode(b64))
-              assert hashlib.md5(data).hexdigest() == item['md5'], item['path']
+              assert hashlib.md5(data).hexdigest() == item['md5'], (item['path'], hashlib.md5(data).hexdigest())
               Path(item['path']).write_bytes(data)
               print('wrote', item['path'], len(data))
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/components/CreateTournamentModal.tsx src/components/EditTournamentModal.tsx src/lib/translations.ts
+          git add scripts/ranking-tier-payloads/*.zlib.b64 || true
           if git diff --cached --quiet; then
             echo "No changes"
             exit 0
