@@ -22,11 +22,23 @@ export function AdminPasswordReset({ onClose }: AdminPasswordResetProps) {
       });
 
       if (error) {
+        let detail = (data as { error?: string } | null)?.error;
+        if (!detail) {
+          try {
+            const ctx = (error as { context?: Response }).context;
+            if (ctx) {
+              const body = await ctx.clone().json();
+              detail = body?.error || body?.message;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         setResult({
           success: false,
-          message: `Error: ${error.message}`,
+          message: detail || error.message,
         });
-      } else if (data.error) {
+      } else if (data?.error) {
         setResult({
           success: false,
           message: data.error,

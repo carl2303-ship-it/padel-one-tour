@@ -8,8 +8,11 @@ import {
   expectedMatchdayCount,
   formatEuDate,
   generateClubLeagueSchedule,
+  homeWeekdayLabel,
+  normalizeHomeTime,
   parseEuDate,
   parseEuTime,
+  scheduledTimeForHomeGame,
 } from '../lib/clubLeagueScheduler';
 
 type MatchdayInput = {
@@ -95,9 +98,30 @@ export default function ClubLeagueScheduleModal({
     setError('');
   };
 
+  const teamsMissingHomeSlot = useMemo(
+    () =>
+      teams.filter(
+        t =>
+          t.home_weekday == null ||
+          t.home_weekday < 1 ||
+          t.home_weekday > 7 ||
+          !normalizeHomeTime(t.home_time)
+      ),
+    [teams]
+  );
+
   const generate = async () => {
     if (teams.length < 2) {
       setError('São necessários pelo menos 2 clubes.');
+      return;
+    }
+
+    if (teamsMissingHomeSlot.length > 0) {
+      setError(
+        `Define dia e hora em casa em todos os clubes antes de gerar. Em falta: ${teamsMissingHomeSlot
+          .map(t => t.name)
+          .join(', ')}.`
+      );
       return;
     }
 
@@ -112,7 +136,7 @@ export default function ClubLeagueScheduleModal({
     for (const r of rows) {
       const day1Iso = parseEuDate(r.day1);
       if (!day1Iso) {
-        setError(`Data do dia 1 inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
+        setError(`Data de referência inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
         return;
       }
       let day2Iso: string | null = null;
@@ -123,15 +147,13 @@ export default function ClubLeagueScheduleModal({
           return;
         }
       }
-      if (!r.defaultTime || !parseEuTime(r.defaultTime)) {
-        setError(`Hora inválida na Jornada ${r.number} (usa HH:mm em 24h, ex: 18:30).`);
-        return;
-      }
+      // Fallback time only if a club somehow lacks home_time
+      const fallbackTime = parseEuTime(r.defaultTime) || baseTime;
       parsed.push({
         number: r.number,
         day1Iso,
         day2Iso,
-        time: parseEuTime(r.defaultTime),
+        time: fallbackTime,
         leg: r.leg,
       });
     }
@@ -159,26 +181,52 @@ export default function ClubLeagueScheduleModal({
       delMd = categoryId ? delMd.eq('category_id', categoryId) : delMd.is('category_id', null);
       await delMd;
 
-      // Ordenar clubes por registration_order para resultado estável
       const orderedTeams = [...teams].sort(
         (a, b) => (a.registration_order || 0) - (b.registration_order || 0)
       );
-      const schedule = generateClubLeagueSchedule(orderedTeams.map(t => t.id));
+      // Round-robin + no máximo 1 jogo em casa por clube (agrupa I/II) por jornada;
+      // a 2.ª volta inverte casa/fora.
+      const schedule = generateClubLeagueSchedule(
+        orderedTeams.map(t => ({
+          id: t.id,
+          name: t.name,
+          clubId: t.club_id,
+        }))
+      );
       const teamById = new Map(orderedTeams.map(t => [t.id, t]));
       const mdByNumber = new Map<number, string>();
       const metaByNumber = new Map(parsed.map(r => [r.number, r]));
 
+      // Pré-calcular datas reais dos jogos (dia/hora do clube da casa na semana da jornada)
+      const gameSlots = schedule.map(s => {
+        const home = teamById.get(s.homeTeamId);
+        const meta = metaByNumber.get(s.matchdayNumber)!;
+        const slot = scheduledTimeForHomeGame({
+          weekRefIso: meta.day1Iso,
+          defaultTime: meta.time,
+          homeWeekday: home?.home_weekday,
+          homeTime: home?.home_time,
+        });
+        return { ...s, home, slot };
+      });
+
       for (const row of parsed) {
         const legFromSchedule =
           schedule.find(s => s.matchdayNumber === row.number)?.leg || row.leg;
+        const mdGames = gameSlots.filter(g => g.matchdayNumber === row.number);
+        const dates = [...new Set(mdGames.map(g => g.slot.dateIso))].sort();
+        const matchdayDate = dates[0] || row.day1Iso;
+        const matchdayDate2 =
+          dates.length > 1 ? dates[dates.length - 1] : row.day2Iso;
+
         const { data: md, error: mdErr } = await supabase
           .from('club_league_matchdays')
           .insert({
             tournament_id: tournament.id,
             category_id: categoryId,
             matchday_number: row.number,
-            matchday_date: row.day1Iso,
-            matchday_date_2: row.day2Iso,
+            matchday_date: matchdayDate,
+            matchday_date_2: matchdayDate2 && matchdayDate2 !== matchdayDate ? matchdayDate2 : null,
             label: `Jornada ${row.number}`,
             leg: legFromSchedule,
           })
@@ -188,35 +236,16 @@ export default function ClubLeagueScheduleModal({
         mdByNumber.set(row.number, md.id);
       }
 
-      // Dentro de cada jornada, escalonar horas (+90 min) se vários jogos no mesmo dia
-      const slotIndexByMd = new Map<number, number>();
-      const inserts = schedule.map(s => {
-        const home = teamById.get(s.homeTeamId);
-        const meta = metaByNumber.get(s.matchdayNumber);
-        const day = meta?.day1Iso;
-        const base = meta?.time || baseTime;
-        const slot = slotIndexByMd.get(s.matchdayNumber) || 0;
-        slotIndexByMd.set(s.matchdayNumber, slot + 1);
-
-        let hour = Number(base.slice(0, 2));
-        let minute = Number(base.slice(3, 5));
-        minute += slot * 90;
-        hour += Math.floor(minute / 60);
-        minute = minute % 60;
-        hour = hour % 24;
-        const timeFull = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
-
-        return {
-          tournament_id: tournament.id,
-          category_id: categoryId,
-          matchday_id: mdByNumber.get(s.matchdayNumber) || null,
-          home_team_id: s.homeTeamId,
-          away_team_id: s.awayTeamId,
-          scheduled_time: day ? `${day}T${timeFull}` : null,
-          venue: home?.name || null,
-          status: 'scheduled',
-        };
-      });
+      const inserts = gameSlots.map(g => ({
+        tournament_id: tournament.id,
+        category_id: categoryId,
+        matchday_id: mdByNumber.get(g.matchdayNumber) || null,
+        home_team_id: g.homeTeamId,
+        away_team_id: g.awayTeamId,
+        scheduled_time: g.slot.scheduledTime,
+        venue: g.home?.name || null,
+        status: 'scheduled',
+      }));
 
       const { error: insErr } = await supabase.from('club_league_confrontations').insert(inserts);
       if (insErr) throw insErr;
@@ -249,16 +278,36 @@ export default function ClubLeagueScheduleModal({
 
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
           <p className="text-sm text-gray-600">
-            Cada jornada pode ter <strong>2 dias</strong>. O sistema gera os confrontos casa/fora
-            equilibrados; depois podes definir o dia e a hora de cada jogo no calendário.
+            Cada jornada = uma semana de referência. Cada jogo usa o <strong>dia e hora em casa</strong> do
+            anfitrião; na volta inverte-se. Regra fixa: no máximo{' '}
+            <strong>1 equipa em casa por clube</strong> (ex.: Blu I e Blu II não jogam os dois em casa
+            na mesma jornada).
           </p>
+
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-900 space-y-1">
+            <p className="font-medium">Slots em casa dos clubes</p>
+            {teams.length === 0 ? (
+              <p>Sem clubes inscritos.</p>
+            ) : (
+              <ul className="space-y-0.5">
+                {teams.map(t => (
+                  <li key={t.id}>
+                    <strong>{t.name}</strong>:{' '}
+                    {t.home_weekday != null && normalizeHomeTime(t.home_time)
+                      ? `${homeWeekdayLabel(t.home_weekday)} · ${normalizeHomeTime(t.home_time)}`
+                      : '⚠️ falta dia/hora — edita o clube'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <button
             type="button"
             onClick={applyWeeklyFromFirst}
             className="text-xs text-emerald-700 hover:underline"
           >
-            Preencher semanalmente (dia 1 + dia 2) a partir da 1ª jornada
+            Preencher semanas (+7 dias) a partir da 1ª jornada
           </button>
 
           {error && (
@@ -276,9 +325,11 @@ export default function ClubLeagueScheduleModal({
                     </span>
                   </p>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Dia 1 (dd/MM/aaaa)</label>
+                    <label className="block text-[10px] text-gray-500 mb-0.5">
+                      Semana de referência (dd/MM/aaaa)
+                    </label>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -287,10 +338,13 @@ export default function ClubLeagueScheduleModal({
                       onChange={e => updateRow(idx, { day1: e.target.value })}
                       className="w-full border rounded-lg px-2 py-1.5 text-sm"
                     />
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      Qualquer dia dessa semana — os jogos caem no dia em casa de cada clube.
+                    </p>
                   </div>
                   <div>
                     <label className="block text-[10px] text-gray-500 mb-0.5">
-                      Dia 2 (opcional)
+                      Dia 2 (opcional, só referência)
                     </label>
                     <input
                       type="text"
@@ -299,21 +353,6 @@ export default function ClubLeagueScheduleModal({
                       value={row.day2}
                       onChange={e => updateRow(idx, { day2: e.target.value })}
                       className="w-full border rounded-lg px-2 py-1.5 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">Hora base 24h (HH:mm)</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="18:00"
-                      value={row.defaultTime}
-                      onChange={e => updateRow(idx, { defaultTime: e.target.value })}
-                      onBlur={e => {
-                        const parsed = parseEuTime(e.target.value);
-                        if (parsed) updateRow(idx, { defaultTime: parsed });
-                      }}
-                      className="w-full border rounded-lg px-2 py-1.5 text-sm font-mono"
                     />
                   </div>
                 </div>

@@ -42,26 +42,37 @@ export default function ClubLeagueLineupModal({
     ? new Date(new Date(confrontation.scheduled_time).getTime() - 30 * 60 * 1000)
     : null;
   const isLocked = lockAt ? new Date() >= lockAt : false;
-  const canEdit = isOrganizer || !isLocked;
+  // Before T−30: only captains edit (isOrganizer=false in Padel1).
+  // After T−30: content is public; organizer may override if needed.
+  const canEdit = isOrganizer ? isLocked : !isLocked;
+  const canViewContent = !isOrganizer || isLocked || !confrontation.scheduled_time;
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      const { data } = await supabase
+      setError('');
+      if (isOrganizer && !canViewContent) {
+        setError('As equipas só são visíveis a partir de 30 min antes do jogo.');
+        setLoading(false);
+        return;
+      }
+      const { data, error: loadErr } = await supabase
         .from('club_league_lineups')
         .select('*')
         .eq('confrontation_id', confrontation.id)
         .eq('team_id', team.id)
         .maybeSingle();
-      if (data) {
+      if (loadErr) {
+        setError('Não foi possível carregar a lineup (ainda secreta ou sem permissão).');
+      } else if (data) {
         setDuo1([data.duo1_player1_id || '', data.duo1_player2_id || '']);
         setDuo2([data.duo2_player1_id || '', data.duo2_player2_id || '']);
         setDuo3([data.duo3_player1_id || '', data.duo3_player2_id || '']);
       }
       setLoading(false);
     };
-    load();
-  }, [confrontation.id, team.id]);
+    void load();
+  }, [confrontation.id, team.id, isOrganizer, canViewContent]);
 
   const usedIds = new Set([...duo1, ...duo2, ...duo3].filter(Boolean));
 
@@ -153,18 +164,22 @@ export default function ClubLeagueLineupModal({
           <div>
             <h2 className="text-lg font-semibold">Lineup — {team.name}</h2>
             <p className="text-xs text-gray-500">
-              {isLocked
-                ? 'Bloqueada (T−30 min). Só o organizador pode alterar.'
-                : lockAt
-                  ? `Editável até ${lockAt.toLocaleString('pt-PT', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hourCycle: 'h23',
-                    })}`
-                  : 'Sem hora marcada — editável'}
+              {isOrganizer && !isLocked
+                ? 'Secreta até T−30. Só o capitão pode ver e submeter na Padel1.'
+                : isLocked
+                  ? isOrganizer
+                    ? 'Revelada (T−30). Podes ver; alteração só com override de organizador.'
+                    : 'Bloqueada (T−30). Já não podes alterar.'
+                  : lockAt
+                    ? `Editável pelo capitão até ${lockAt.toLocaleString('pt-PT', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hourCycle: 'h23',
+                      })}`
+                    : 'Sem hora marcada — editável pelo capitão'}
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1 hover:bg-gray-100 rounded">

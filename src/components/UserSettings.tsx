@@ -306,8 +306,20 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
       });
 
       if (error) {
-        setResetMessage({ type: 'error', text: error.message });
-      } else if (data.error) {
+        let detail = (data as { error?: string } | null)?.error;
+        if (!detail) {
+          try {
+            const ctx = (error as { context?: Response }).context;
+            if (ctx) {
+              const body = await ctx.clone().json();
+              detail = body?.error || body?.message;
+            }
+          } catch {
+            /* ignore parse errors */
+          }
+        }
+        setResetMessage({ type: 'error', text: detail || error.message });
+      } else if (data?.error) {
         setResetMessage({ type: 'error', text: data.error });
       } else {
         setResetMessage({

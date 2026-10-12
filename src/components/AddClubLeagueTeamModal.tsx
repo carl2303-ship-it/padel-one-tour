@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Save, Crown, Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { normalizePhone, normalizePhoneKey } from '../lib/phoneUtils';
+import { HOME_WEEKDAY_OPTIONS, parseEuTime } from '../lib/clubLeagueScheduler';
 
 type Category = { id: string; name: string };
 
@@ -45,6 +46,8 @@ export default function AddClubLeagueTeamModal({
 }: Props) {
   const [teamName, setTeamName] = useState('');
   const [categoryId, setCategoryId] = useState(selectedCategory || categories[0]?.id || '');
+  const [homeWeekday, setHomeWeekday] = useState<number | ''>('');
+  const [homeTime, setHomeTime] = useState('20:00');
   const [players, setPlayers] = useState<PlayerRow[]>([
     emptyPlayer(true),
   ]);
@@ -126,6 +129,9 @@ export default function AddClubLeagueTeamModal({
   const handleSubmit = async () => {
     setError('');
     if (!teamName.trim()) { setError('Introduza o nome do clube/equipa'); return; }
+    if (!homeWeekday) { setError('Escolha o dia da semana dos jogos em casa'); return; }
+    const homeTimeParsed = parseEuTime(homeTime);
+    if (!homeTimeParsed) { setError('Hora dos jogos em casa inválida (usa HH:mm, ex: 20:00)'); return; }
     if (players.length < 1) { setError('É preciso pelo menos o capitão'); return; }
 
     for (let i = 0; i < players.length; i++) {
@@ -159,6 +165,8 @@ export default function AddClubLeagueTeamModal({
           category_id: categoryId || null,
           name: teamName.trim(),
           registration_order: (count || 0) + 1,
+          home_weekday: homeWeekday,
+          home_time: homeTimeParsed,
         })
         .select()
         .single();
@@ -276,6 +284,37 @@ export default function AddClubLeagueTeamModal({
                 </select>
               </div>
             )}
+            <div>
+              <label className="block text-sm font-medium mb-1">Dia dos jogos em casa *</label>
+              <select
+                value={homeWeekday === '' ? '' : String(homeWeekday)}
+                onChange={e => setHomeWeekday(e.target.value ? Number(e.target.value) : '')}
+                className="w-full border rounded-lg px-3 py-2"
+              >
+                <option value="">Escolher dia…</option>
+                {HOME_WEEKDAY_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Hora em casa * (24h)</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="20:00"
+                value={homeTime}
+                onChange={e => setHomeTime(e.target.value)}
+                onBlur={e => {
+                  const parsed = parseEuTime(e.target.value);
+                  if (parsed) setHomeTime(parsed);
+                }}
+                className="w-full border rounded-lg px-3 py-2 font-mono"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Usado na geração do calendário: cada jogo em casa neste dia/hora.
+              </p>
+            </div>
           </div>
 
           <div>

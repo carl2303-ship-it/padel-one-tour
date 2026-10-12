@@ -8,14 +8,14 @@ import {
   normalizePhoneKey,
   type MemberPriceInfo,
 } from '../lib/playerTournamentPrice';
-import { ArrowLeft, Users, Calendar, Trophy, Plus, CreditCard as Edit, CalendarClock, Award, Link, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram, ListOrdered, ImagePlus } from 'lucide-react';
+import { ArrowLeft, Users, Calendar, Trophy, Plus, CalendarClock, Award, Check, Trash2, FolderTree, Pencil, Clock, ChevronDown, Shuffle, Hand, FileDown, TrendingUp, Mail, RotateCcw, Bell, Instagram, ListOrdered, ImagePlus, Link } from 'lucide-react';
 import { notifyTournamentPlayers } from '../lib/notifyTournament';
 import AddTeamModal from './AddTeamModal';
 import AddIndividualPlayerModal from './AddIndividualPlayerModal';
 import MatchModal from './MatchModal';
-import EditTournamentModal from './EditTournamentModal';
 import EditTeamModal from './EditTeamModal';
 import EditIndividualPlayerModal from './EditIndividualPlayerModal';
+import EditTournamentModal from './EditTournamentModal';
 import Standings from './Standings';
 import BracketView from './BracketView';
 import ManageCategoriesModal from './ManageCategoriesModal';
@@ -160,9 +160,9 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
   const [showAddTeam, setShowAddTeam] = useState(false);
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [showMatchModal, setShowMatchModal] = useState(false);
-  const [showEditTournament, setShowEditTournament] = useState(false);
   const [showInstagramPack, setShowInstagramPack] = useState(false);
   const [showTournamentPoster, setShowTournamentPoster] = useState(false);
+  const [showEditTournament, setShowEditTournament] = useState(false);
   const [posterClub, setPosterClub] = useState<{ name: string; logo_url: string | null } | null>(null);
   const [showSeedOrder, setShowSeedOrder] = useState(false);
   const [showEditTeam, setShowEditTeam] = useState(false);
@@ -4606,12 +4606,24 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         alert(result.error || result.message || 'Não foi possível enviar a alerta.');
         return;
       }
-      const skipped = result.details?.[0]?.skipped;
-      if (skipped === 'no_targets' || skipped === 'no_targets_after_filter') {
+      const d0 = result.details?.[0];
+      const skipped = d0?.skipped;
+      if (skipped === 'no_targets' || skipped === 'no_targets_after_filter' || skipped === 'no_players') {
         alert('Nenhum jogador elegível encontrado (nível/género/clube).');
         return;
       }
-      alert(`Alerta enviada. Push entregues: ${result.notified ?? 0}`);
+      if (skipped === 'invite_only' || skipped === 'registration_closed' || skipped === 'not_active') {
+        alert(`Não foi possível enviar: ${String(skipped)}`);
+        return;
+      }
+      const targets = Number(d0?.targets ?? 0);
+      const sent = Number(d0?.sent ?? result.notified ?? 0);
+      const withPush = Number(d0?.with_push ?? d0?.eligible_with_push ?? 0);
+      alert(
+        `Alerta enviada.\nPush entregues: ${sent}` +
+          (targets ? `\nAlvos filtrados: ${targets}` : '') +
+          (withPush ? `\nCom subscrição push: ${withPush}` : ''),
+      );
     } catch (err) {
       console.error('[Push] resend error:', err);
       alert('Erro ao enviar a alerta. Tente novamente.');
@@ -6929,114 +6941,143 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
             </div>
           </div>
 
-          {/* Lado direito: Botões de links e edição */}
-          <div className="flex flex-wrap gap-2 lg:flex-shrink-0">
-            <button
-              onClick={copyRegistrationLink}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              {linkCopied ? <Check className="w-4 h-4" /> : <Link className="w-4 h-4" />}
-              {linkCopied ? 'Copiado!' : 'Link Inscrição'}
-            </button>
-            <button
-              onClick={copyLiveLink}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
-            >
-              {liveLinkCopied ? <Check className="w-4 h-4" /> : <Trophy className="w-4 h-4" />}
-              {liveLinkCopied ? 'Copiado!' : 'Link Live'}
-            </button>
-            {(currentTournament.status === 'active' || currentTournament.status === 'in_progress') &&
-              (currentTournament as any).visibility !== 'invite_only' &&
-              (currentTournament as any).allow_public_registration !== false && (
-              <button
-                onClick={handleResendTournamentAlert}
-                disabled={notifySending}
-                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition disabled:opacity-60"
-                title="Reenviar alerta push (filtra por nível das categorias)"
-              >
-                <Bell className="w-4 h-4" />
-                {notifySending ? 'A enviar...' : 'Reenviar Alerta'}
-              </button>
-            )}
-            <button
-              onClick={handleExportPDF}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
-            >
-              <FileDown className="w-4 h-4" />
-              PDF
-            </button>
-            <button
-              onClick={() => setShowTournamentPoster(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
-              title="Gerar cartaz automático (app Padel1 + WhatsApp)"
-            >
-              <ImagePlus className="w-4 h-4" />
-              Cartaz
-            </button>
-            <button
-              onClick={() => setShowInstagramPack(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition"
-              title="Gerar pack Instagram (pódio, classificação, fotos)"
-            >
-              <Instagram className="w-4 h-4" />
-              Pack IG
-            </button>
-            <button
-              onClick={() => setShowEditTournament(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
-            >
-              <Pencil className="w-4 h-4" />
-              Editar
-            </button>
-            {(currentTournament as any).visibility === 'invite_only' && (
-              <button
-                onClick={() => setShowManageInvites(true)}
-                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition"
-              >
-                <Mail className="w-4 h-4" />
-                {t.tournament?.manageInvites || 'Gerir Convites'}
-              </button>
-            )}
-            {currentTournament.status !== 'completed' && (
-              <button
-                onClick={handleFinalizeTournament}
-                className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-              >
-                <Trophy className="w-4 h-4" />
-                Finalizar Torneio
-              </button>
-            )}
-            {currentTournament.status === 'completed' && (
-              <button
-                onClick={async () => {
-                  if (!confirm('Reprocessar ratings e rewards para todos os jogos deste torneio?')) return;
-                  setLoading(true);
-                  try {
-                    // Reverte com segurança o delta de cada jogo (via histórico)
-                    // antes de o reaplicar — evita duplicar/corromper nível,
-                    // jogos e V/D a cada clique em "Reprocessar".
-                    const ratingResult = await reprocessTournamentRatings(tournament.id);
-                    const rewardResult = await awardTournamentRewardPoints(tournament.id);
+          {/* Ações agrupadas: Antes / Durante / Depois */}
+          <div className="w-full lg:w-auto lg:min-w-[18rem] space-y-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                Antes
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowEditTournament(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={copyRegistrationLink}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                >
+                  {linkCopied ? <Check className="w-3.5 h-3.5" /> : <Link className="w-3.5 h-3.5" />}
+                  {linkCopied ? 'Copiado!' : 'Link inscrição'}
+                </button>
+                {(currentTournament as any).visibility === 'invite_only' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowManageInvites(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    {t.tournament?.manageInvites || 'Gerir Convites'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowTournamentPoster(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+                  title="Gerar cartaz automático (app Padel1 + WhatsApp)"
+                >
+                  <ImagePlus className="w-3.5 h-3.5" />
+                  Cartaz
+                </button>
+                {(currentTournament.status === 'active' || currentTournament.status === 'in_progress') &&
+                  (currentTournament as any).visibility !== 'invite_only' &&
+                  (currentTournament as any).allow_public_registration !== false && (
+                  <button
+                    type="button"
+                    onClick={handleResendTournamentAlert}
+                    disabled={notifySending}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition disabled:opacity-60"
+                    title="Reenviar alerta push (filtra por nível das categorias)"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    {notifySending ? 'A enviar...' : 'Reenviar Alerta'}
+                  </button>
+                )}
+              </div>
+            </div>
 
-                    let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.blocked} bloqueados (sem histórico p/ reverter em segurança), ${ratingResult.errors} erros`;
-                    msg += `\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
-                    if (rewardResult.details.length > 0) {
-                      msg += '\n\nDetalhes:\n' + rewardResult.details.join('\n');
-                    }
-                    alert(msg);
-                  } catch (err) {
-                    console.error('[REPROCESS] Error:', err);
-                    alert('Erro ao reprocessar. Ver consola para detalhes.');
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                className="flex items-center gap-2 px-3 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
-              >
-                <Award className="w-4 h-4" />
-                Reprocessar Ratings & Rewards
-              </button>
-            )}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                Durante
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={copyLiveLink}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                >
+                  {liveLinkCopied ? <Check className="w-3.5 h-3.5" /> : <Trophy className="w-3.5 h-3.5" />}
+                  {liveLinkCopied ? 'Copiado!' : 'Link Live'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">
+                Depois
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowInstagramPack(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition"
+                  title="Gerar pack Instagram (pódio, classificação, fotos)"
+                >
+                  <Instagram className="w-3.5 h-3.5" />
+                  Pack IG
+                </button>
+                {currentTournament.status !== 'completed' ? (
+                  <button
+                    type="button"
+                    onClick={handleFinalizeTournament}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                  >
+                    <Trophy className="w-3.5 h-3.5" />
+                    Finalizar Torneio
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!confirm('Reprocessar ratings e rewards para todos os jogos deste torneio?')) return;
+                      setLoading(true);
+                      try {
+                        const ratingResult = await reprocessTournamentRatings(tournament.id);
+                        const rewardResult = await awardTournamentRewardPoints(tournament.id);
+
+                        let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.blocked} bloqueados (sem histórico p/ reverter em segurança), ${ratingResult.errors} erros`;
+                        msg += `\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
+                        if (rewardResult.details.length > 0) {
+                          msg += '\n\nDetalhes:\n' + rewardResult.details.join('\n');
+                        }
+                        alert(msg);
+                      } catch (err) {
+                        console.error('[REPROCESS] Error:', err);
+                        alert('Erro ao reprocessar. Ver consola para detalhes.');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
+                  >
+                    <Award className="w-3.5 h-3.5" />
+                    Reprocessar Ratings & Rewards
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

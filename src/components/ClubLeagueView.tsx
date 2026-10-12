@@ -15,7 +15,14 @@ import EditClubLeagueTeamModal from './EditClubLeagueTeamModal';
 import ClubLeagueLineupModal from './ClubLeagueLineupModal';
 import ClubLeagueResultsModal from './ClubLeagueResultsModal';
 import ClubLeagueScheduleModal from './ClubLeagueScheduleModal';
-import { formatEuDate, formatEuDateTime, formatEuTime, parseEuDate, parseEuTime } from '../lib/clubLeagueScheduler';
+import {
+  formatEuDate,
+  formatEuDateTime,
+  formatEuTime,
+  homeWeekdayLabel,
+  parseEuDate,
+  parseEuTime,
+} from '../lib/clubLeagueScheduler';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
 
@@ -28,6 +35,51 @@ type Props = {
 
 type Tab = 'teams' | 'calendar' | 'standings';
 type CalendarMode = 'matchdays' | 'teams';
+
+type LineupStatusRow = {
+  confrontation_id: string;
+  team_id: string;
+  submitted: boolean;
+  submitted_at: string | null;
+};
+
+/** Lineups are public from T−30 (same rule for organizer and players). */
+function isLineupRevealed(scheduledTime: string | null | undefined): boolean {
+  if (!scheduledTime) return false;
+  const t = new Date(scheduledTime).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() >= t - 30 * 60 * 1000;
+}
+
+function LineupTeamStatusPills({
+  homeName,
+  awayName,
+  homeSubmitted,
+  awaySubmitted,
+}: {
+  homeName: string;
+  awayName: string;
+  homeSubmitted: boolean;
+  awaySubmitted: boolean;
+}) {
+  const pill = (name: string, ok: boolean) => (
+    <span
+      className={`inline-flex max-w-full items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${
+        ok ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+      }`}
+      title={ok ? `${name}: lineup submetida` : `${name}: lineup por submeter`}
+    >
+      <span className="truncate">{name}</span>
+      <span className="flex-shrink-0">{ok ? '· submetida' : '· a submeter'}</span>
+    </span>
+  );
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1.5">
+      {pill(homeName, homeSubmitted)}
+      {pill(awayName, awaySubmitted)}
+    </div>
+  );
+}
 
 export default function ClubLeagueView({
   tournament,
@@ -45,6 +97,8 @@ export default function ClubLeagueView({
   const [matchdays, setMatchdays] = useState<ClubLeagueMatchday[]>([]);
   const [confrontations, setConfrontations] = useState<ClubLeagueConfrontation[]>([]);
   const [standings, setStandings] = useState<ClubLeagueStanding[]>([]);
+  /** Submitted lineup keys: `${confrontationId}:${teamId}` — metadata only, no players */
+  const [lineupSubmitted, setLineupSubmitted] = useState<Set<string>>(new Set());
   const [showAdd, setShowAdd] = useState(false);
   const [editingTeam, setEditingTeam] = useState<TeamWithPlayers | null>(null);
   const [lineupCtx, setLineupCtx] = useState<{
@@ -101,7 +155,13 @@ export default function ClubLeagueView({
         .order('position', { ascending: true, nullsFirst: false });
       if (selectedCategory) stQ = stQ.eq('category_id', selectedCategory);
 
-      const [teamsRes, mdRes, confRes, stRes] = await Promise.all([teamsQ, mdQ, confQ, stQ]);
+      const [teamsRes, mdRes, confRes, stRes, statusRes] = await Promise.all([
+        teamsQ,
+        mdQ,
+        confQ,
+        stQ,
+        supabase.rpc('get_club_league_lineup_status', { p_tournament_id: tournament.id }),
+      ]);
       if (teamsRes.error) throw teamsRes.error;
       if (mdRes.error) throw mdRes.error;
       if (confRes.error) throw confRes.error;
@@ -111,6 +171,14 @@ export default function ClubLeagueView({
       setMatchdays((mdRes.data || []) as ClubLeagueMatchday[]);
       setConfrontations((confRes.data || []) as ClubLeagueConfrontation[]);
       setStandings((stRes.data || []) as ClubLeagueStanding[]);
+
+      const submitted = new Set<string>();
+      if (!statusRes.error && Array.isArray(statusRes.data)) {
+        for (const row of statusRes.data as LineupStatusRow[]) {
+          if (row.submitted) submitted.add(`${row.confrontation_id}:${row.team_id}`);
+        }
+      }
+      setLineupSubmitted(submitted);
     } catch (err: unknown) {
       const msg =
         err && typeof err === 'object' && 'message' in err
@@ -355,6 +423,12 @@ export default function ClubLeagueView({
                       {roster.length} jogadores · Capitão:{' '}
                       {roster.find(p => p.is_captain)?.name || '—'}
                     </p>
+                    <p className="text-xs text-emerald-700 mt-0.5">
+                      Casa:{' '}
+                      {team.home_weekday != null && team.home_time
+                        ? `${homeWeekdayLabel(team.home_weekday)} · ${String(team.home_time).slice(0, 5)}`
+                        : 'dia/hora por definir'}
+                    </p>
                   </div>
                   {isOrganizer && (
                     <div className="flex items-center gap-1">
@@ -418,8 +492,8 @@ export default function ClubLeagueView({
           {matchdays.length > 0 && (
             <div className="bg-white rounded-xl shadow-lg p-3 space-y-3">
               <p className="text-xs text-gray-500">
-                O capitão cria e submete a lineup na app Padel1. Fica secreta até 30 min antes da hora do jogo.
-                Aqui o organizador pode sobrescrever se necessário.
+                Só os capitães submetem e veem as suas equipas na Padel1 até 30 min antes do jogo.
+                Até lá o organizador vê apenas se as equipas já foram submetidas (sem jogadores).
               </p>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -482,6 +556,15 @@ export default function ClubLeagueView({
                   {teamCalendar.map(({ c, md, isHome, opponentId }) => {
                     const opponent = opponentId ? teamById.get(opponentId) : null;
                     const myTeam = calendarTeamId ? teamById.get(calendarTeamId) : null;
+                    const homeTeam = c.home_team_id ? teamById.get(c.home_team_id) : null;
+                    const awayTeam = c.away_team_id ? teamById.get(c.away_team_id) : null;
+                    const homeSubmitted = c.home_team_id
+                      ? lineupSubmitted.has(`${c.id}:${c.home_team_id}`)
+                      : false;
+                    const awaySubmitted = c.away_team_id
+                      ? lineupSubmitted.has(`${c.id}:${c.away_team_id}`)
+                      : false;
+                    const revealed = isLineupRevealed(c.scheduled_time);
                     return (
                       <div key={c.id} className="border rounded-lg p-3 flex flex-col gap-2">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
@@ -512,15 +595,21 @@ export default function ClubLeagueView({
                                 ? ` · ${c.home_duos_won}-${c.away_duos_won}`
                                 : ''}
                             </div>
+                            <LineupTeamStatusPills
+                              homeName={homeTeam?.name || 'Casa'}
+                              awayName={awayTeam?.name || 'Fora'}
+                              homeSubmitted={homeSubmitted}
+                              awaySubmitted={awaySubmitted}
+                            />
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {myTeam && isOrganizer && (
+                            {revealed && myTeam && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: myTeam })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup (org.)
+                                Ver lineup
                               </button>
                             )}
                             {isOrganizer && (
@@ -625,6 +714,13 @@ export default function ClubLeagueView({
                       scheduled && !Number.isNaN(scheduled.getTime())
                         ? formatEuTime(c.scheduled_time)
                         : '18:00';
+                    const homeSubmitted = c.home_team_id
+                      ? lineupSubmitted.has(`${c.id}:${c.home_team_id}`)
+                      : false;
+                    const awaySubmitted = c.away_team_id
+                      ? lineupSubmitted.has(`${c.id}:${c.away_team_id}`)
+                      : false;
+                    const revealed = isLineupRevealed(c.scheduled_time);
                     return (
                       <div
                         key={c.id}
@@ -643,24 +739,30 @@ export default function ClubLeagueView({
                                 ? ` · ${c.home_duos_won}-${c.away_duos_won}`
                                 : ''}
                             </div>
+                            <LineupTeamStatusPills
+                              homeName={home?.name || 'Casa'}
+                              awayName={away?.name || 'Fora'}
+                              homeSubmitted={homeSubmitted}
+                              awaySubmitted={awaySubmitted}
+                            />
                           </div>
                           <div className="flex flex-wrap gap-2">
-                            {isOrganizer && home && (
+                            {revealed && home && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: home })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup casa (org.)
+                                Ver lineup casa
                               </button>
                             )}
-                            {isOrganizer && away && (
+                            {revealed && away && (
                               <button
                                 type="button"
                                 onClick={() => setLineupCtx({ confrontation: c, team: away })}
                                 className="text-xs px-2 py-1 border rounded-lg"
                               >
-                                Lineup fora (org.)
+                                Ver lineup fora
                               </button>
                             )}
                             {isOrganizer && (

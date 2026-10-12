@@ -7,6 +7,14 @@ export type GeneratedConfrontation = {
   awayTeamId: string;
 };
 
+/** Team input for schedule generation (clubKey groups I/II from the same club). */
+export type ScheduleTeamInput = {
+  id: string;
+  name?: string | null;
+  clubId?: string | null;
+  clubKey?: string | null;
+};
+
 type RoundGames = [string, string][]; // unordered pairs per round
 
 function shuffleInPlace<T>(arr: T[]): void {
@@ -14,6 +22,89 @@ function shuffleInPlace<T>(arr: T[]): void {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+}
+
+/**
+ * Group key for "same club" (e.g. "Padel Blu M6 I" + "Padel Blu M6 II" → same key).
+ * Prefers club_id when set; otherwise strips category/roman suffixes from the name.
+ */
+export function deriveClubKey(params: {
+  name?: string | null;
+  clubId?: string | null;
+  clubKey?: string | null;
+}): string {
+  if (params.clubKey?.trim()) return params.clubKey.trim().toLowerCase();
+  if (params.clubId) return `club:${params.clubId}`;
+  const name = (params.name || '').trim();
+  if (!name) return `unknown:${Math.random()}`;
+  const cleaned = name
+    .replace(/\s+M\d+\s*(?:I{1,3}|IV|VI{0,3}|IX|X|\d+)\s*$/i, '')
+    .replace(/\s+(?:I{1,3}|IV|VI{0,3}|IX|X)\s*$/i, '')
+    .replace(/\s+[12]\s*$/i, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return cleaned || name.toLowerCase();
+}
+
+function buildClubKeyMap(teams: ScheduleTeamInput[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const t of teams) {
+    map.set(t.id, deriveClubKey(t));
+  }
+  return map;
+}
+
+/** How many times a club appears as home more than once in the same matchday. */
+function clubHomeConflictCount(
+  schedule: GeneratedConfrontation[],
+  clubKeyByTeamId: Map<string, string>
+): number {
+  const byMd = new Map<number, string[]>();
+  for (const g of schedule) {
+    const list = byMd.get(g.matchdayNumber) || [];
+    list.push(g.homeTeamId);
+    byMd.set(g.matchdayNumber, list);
+  }
+  let conflicts = 0;
+  for (const homes of byMd.values()) {
+    const counts = new Map<string, number>();
+    for (const teamId of homes) {
+      const key = clubKeyByTeamId.get(teamId) || teamId;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    for (const n of counts.values()) {
+      if (n > 1) conflicts += n - 1;
+    }
+  }
+  return conflicts;
+}
+
+/** Orientation masks for a round that keep ≤1 home game per club. */
+function validOriMasksForRound(
+  games: RoundGames,
+  clubKeyByTeamId: Map<string, string>
+): number[] {
+  const bits = games.length;
+  if (bits === 0) return [0];
+  const valid: number[] = [];
+  const limit = 1 << bits;
+  for (let mask = 0; mask < limit; mask++) {
+    const seen = new Set<string>();
+    let ok = true;
+    for (let i = 0; i < bits; i++) {
+      const [a, b] = games[i];
+      const home = ((mask >> i) & 1) === 1 ? a : b;
+      const key = clubKeyByTeamId.get(home) || home;
+      if (seen.has(key)) {
+        ok = false;
+        break;
+      }
+      seen.add(key);
+    }
+    if (ok) valid.push(mask);
+  }
+  return valid.length > 0 ? valid : Array.from({ length: limit }, (_, i) => i);
 }
 
 /** Circle method: rounds of unordered pairs. */
@@ -87,7 +178,15 @@ function buildSchedule(
   return [...first, ...second];
 }
 
-function scoreSchedule(schedule: GeneratedConfrontation[], teamIds: string[]): number {
+function scoreSchedule(
+  schedule: GeneratedConfrontation[],
+  teamIds: string[],
+  clubKeyByTeamId: Map<string, string>
+): number {
+  const clubConflicts = clubHomeConflictCount(schedule, clubKeyByTeamId);
+  // Hard rule: never two home games from the same club in one jornada
+  const clubPenalty = clubConflicts * 1_000_000;
+
   const maxMd = Math.max(...schedule.map(c => c.matchdayNumber), 0);
   const role = new Map<string, Map<number, 'H' | 'A' | null>>();
   teamIds.forEach(id => {
@@ -135,23 +234,39 @@ function scoreSchedule(schedule: GeneratedConfrontation[], teamIds: string[]): n
   let balance = 0;
   for (const h of homeTotals) balance += Math.abs(h - avg);
 
-  // Prioritize: no team with 2+ HH streaks, then total HH, then fewer teams affected
-  return maxPer * 5000 + hh * 1000 + teamsWithHh * 50 + aa * 20 + balance * 5;
+  return clubPenalty + maxPer * 5000 + hh * 1000 + teamsWithHh * 50 + aa * 20 + balance * 5;
+}
+
+function pickValidOriMasks(
+  rounds: RoundGames[],
+  clubKeyByTeamId: Map<string, string>
+): number[] {
+  return rounds.map(games => {
+    const valid = validOriMasksForRound(games, clubKeyByTeamId);
+    return valid[Math.floor(Math.random() * valid.length)] ?? 0;
+  });
 }
 
 /**
  * Full season home+away.
- * Note: with an even number of teams it is mathematically impossible for every
- * team to avoid all consecutive homes (each plays every jornada). We minimize
- * total consecutive homes and cap per-team streaks.
+ * Hard constraint: at most one home game per club per matchday (I and II of the
+ * same club cannot both host on the same jornada). Return leg inverts home/away.
  */
-export function generateClubLeagueSchedule(teamIds: string[]): GeneratedConfrontation[] {
-  if (teamIds.length < 2) return [];
+export function generateClubLeagueSchedule(
+  teamsOrIds: Array<string | ScheduleTeamInput>
+): GeneratedConfrontation[] {
+  if (teamsOrIds.length < 2) return [];
+
+  const teams: ScheduleTeamInput[] = teamsOrIds.map(t =>
+    typeof t === 'string' ? { id: t, clubKey: t } : t
+  );
+  const teamIds = teams.map(t => t.id);
+  const clubKeyByTeamId = buildClubKeyMap(teams);
 
   let best: GeneratedConfrontation[] = [];
   let bestScore = Infinity;
 
-  const orderTries = teamIds.length <= 4 ? 48 : teamIds.length <= 6 ? 80 : 40;
+  const orderTries = teamIds.length <= 4 ? 64 : teamIds.length <= 6 ? 120 : 60;
 
   for (let orderTry = 0; orderTry < orderTries; orderTry++) {
     const order = [...teamIds];
@@ -161,23 +276,24 @@ export function generateClubLeagueSchedule(teamIds: string[]): GeneratedConfront
     const R = rounds.length;
     if (R === 0) continue;
 
-    let oriMasks = Array.from({ length: R }, () => Math.floor(Math.random() * 8));
+    let oriMasks = pickValidOriMasks(rounds, clubKeyByTeamId);
     let returnOrder = Array.from({ length: R }, (_, i) => i + 1);
     if (orderTry % 3 === 1) returnOrder = Array.from({ length: R }, (_, i) => R - i);
 
     let cur = buildSchedule(rounds, oriMasks, returnOrder);
-    let curScore = scoreSchedule(cur, teamIds);
+    let curScore = scoreSchedule(cur, teamIds, clubKeyByTeamId);
 
-    for (let iter = 0; iter < 350; iter++) {
+    for (let iter = 0; iter < 400; iter++) {
       let improved = false;
 
       for (let r = 0; r < R; r++) {
-        const bits = Math.max(rounds[r].length, 1);
-        for (let bit = 0; bit < bits; bit++) {
+        const valid = validOriMasksForRound(rounds[r], clubKeyByTeamId);
+        for (const mask of valid) {
+          if (mask === oriMasks[r]) continue;
           const next = [...oriMasks];
-          next[r] ^= 1 << bit;
+          next[r] = mask;
           const trial = buildSchedule(rounds, next, returnOrder);
-          const s = scoreSchedule(trial, teamIds);
+          const s = scoreSchedule(trial, teamIds, clubKeyByTeamId);
           if (s < curScore) {
             oriMasks = next;
             cur = trial;
@@ -192,7 +308,7 @@ export function generateClubLeagueSchedule(teamIds: string[]): GeneratedConfront
           const next = [...returnOrder];
           [next[i], next[j]] = [next[j], next[i]];
           const trial = buildSchedule(rounds, oriMasks, next);
-          const s = scoreSchedule(trial, teamIds);
+          const s = scoreSchedule(trial, teamIds, clubKeyByTeamId);
           if (s < curScore) {
             returnOrder = next;
             cur = trial;
@@ -203,21 +319,23 @@ export function generateClubLeagueSchedule(teamIds: string[]): GeneratedConfront
       }
 
       if (!improved) {
-        if (Math.random() < 0.5) {
-          oriMasks[Math.floor(Math.random() * R)] = Math.floor(Math.random() * 8);
+        if (Math.random() < 0.6) {
+          const r = Math.floor(Math.random() * R);
+          const valid = validOriMasksForRound(rounds[r], clubKeyByTeamId);
+          oriMasks[r] = valid[Math.floor(Math.random() * valid.length)] ?? oriMasks[r];
         } else {
           const i = Math.floor(Math.random() * R);
           const j = Math.floor(Math.random() * R);
           [returnOrder[i], returnOrder[j]] = [returnOrder[j], returnOrder[i]];
         }
         cur = buildSchedule(rounds, oriMasks, returnOrder);
-        curScore = scoreSchedule(cur, teamIds);
+        curScore = scoreSchedule(cur, teamIds, clubKeyByTeamId);
       }
 
       if (curScore < bestScore) {
         bestScore = curScore;
         best = cur;
-        // Ideal for odd teams (byes); for even, maxPer<=1 and low HH is the practical optimum
+        // Zero club conflicts + low HH streak score
         if (bestScore < 1000) break;
       }
     }
@@ -225,7 +343,77 @@ export function generateClubLeagueSchedule(teamIds: string[]): GeneratedConfront
     if (bestScore < 1000) break;
   }
 
+  // Safety: if best still has club conflicts, force-repair first-leg orientations
+  if (clubHomeConflictCount(best, clubKeyByTeamId) > 0 && best.length > 0) {
+    const repaired = repairClubHomeConflicts(best, clubKeyByTeamId);
+    if (clubHomeConflictCount(repaired, clubKeyByTeamId) < clubHomeConflictCount(best, clubKeyByTeamId)) {
+      best = repaired;
+    }
+  }
+
   return best;
+}
+
+/**
+ * Flip home/away within a matchday until no club hosts twice (greedy).
+ * Prefers flipping non-derby games.
+ */
+function repairClubHomeConflicts(
+  schedule: GeneratedConfrontation[],
+  clubKeyByTeamId: Map<string, string>
+): GeneratedConfrontation[] {
+  const maxMd = Math.max(...schedule.map(c => c.matchdayNumber), 0);
+  const half = Math.ceil(maxMd / 2);
+  const out = schedule.map(g => ({ ...g }));
+
+  for (let md = 1; md <= half; md++) {
+    const idxs = out.map((g, i) => (g.matchdayNumber === md ? i : -1)).filter(i => i >= 0);
+    // Greedy: while conflict, flip a home that shares club with another home
+    for (let guard = 0; guard < 20; guard++) {
+      const homeClubs = new Map<string, number[]>();
+      for (const i of idxs) {
+        const key = clubKeyByTeamId.get(out[i].homeTeamId) || out[i].homeTeamId;
+        const list = homeClubs.get(key) || [];
+        list.push(i);
+        homeClubs.set(key, list);
+      }
+      const conflictIdxs = [...homeClubs.values()].filter(list => list.length > 1).flat();
+      if (conflictIdxs.length === 0) break;
+
+      // Flip the last conflicting game in the group
+      const flipI = conflictIdxs[conflictIdxs.length - 1];
+      const g = out[flipI];
+      out[flipI] = {
+        ...g,
+        homeTeamId: g.awayTeamId,
+        awayTeamId: g.homeTeamId,
+      };
+    }
+  }
+
+  // Rebuild return leg from repaired first leg (invert pairs by opponent mapping)
+  const firstByPair = new Map<string, GeneratedConfrontation>();
+  const pairKey = (a: string, b: string) => [a, b].sort().join('|');
+  for (const g of out) {
+    if (g.matchdayNumber <= half && g.leg === 'home') {
+      firstByPair.set(pairKey(g.homeTeamId, g.awayTeamId), g);
+    }
+  }
+  for (let i = 0; i < out.length; i++) {
+    const g = out[i];
+    if (g.matchdayNumber <= half) continue;
+    const src = firstByPair.get(pairKey(g.homeTeamId, g.awayTeamId));
+    if (!src) continue;
+    // Return must be exact invert of first meeting
+    out[i] = {
+      ...g,
+      homeTeamId: src.awayTeamId,
+      awayTeamId: src.homeTeamId,
+      leg: 'away',
+    };
+  }
+
+  return out;
 }
 
 export function expectedMatchdayCount(teamCount: number): number {
@@ -313,4 +501,67 @@ export function addDaysIso(isoDate: string, days: number): string {
   const d = new Date(isoDate + 'T12:00:00');
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** ISO weekday labels (1=Monday … 7=Sunday) for PT UI. */
+export const HOME_WEEKDAY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: 'Segunda-feira' },
+  { value: 2, label: 'Terça-feira' },
+  { value: 3, label: 'Quarta-feira' },
+  { value: 4, label: 'Quinta-feira' },
+  { value: 5, label: 'Sexta-feira' },
+  { value: 6, label: 'Sábado' },
+  { value: 7, label: 'Domingo' },
+];
+
+export function homeWeekdayLabel(weekday?: number | null): string {
+  if (weekday == null) return '—';
+  return HOME_WEEKDAY_OPTIONS.find(o => o.value === weekday)?.label || '—';
+}
+
+/** JS getDay() 0=Sun…6=Sat → ISO 1=Mon…7=Sun */
+export function jsDayToIsoWeekday(jsDay: number): number {
+  return jsDay === 0 ? 7 : jsDay;
+}
+
+/**
+ * Date (YYYY-MM-DD) with the given ISO weekday in the same ISO week as refIso.
+ * E.g. ref=Wednesday week → Monday of that week if isoWeekday=1.
+ */
+export function dateOnWeekdayInSameWeek(refIso: string, isoWeekday: number): string {
+  const d = new Date(refIso + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return refIso;
+  const currentIso = jsDayToIsoWeekday(d.getDay());
+  const clamped = Math.min(7, Math.max(1, Math.round(isoWeekday)));
+  d.setDate(d.getDate() + (clamped - currentIso));
+  return d.toISOString().slice(0, 10);
+}
+
+/** Normalize DB time ("18:00:00") or input to HH:mm */
+export function normalizeHomeTime(raw?: string | null): string | null {
+  if (!raw) return null;
+  const parsed = parseEuTime(String(raw).slice(0, 5));
+  return parsed || null;
+}
+
+/**
+ * Build scheduled_time for a home game from the home team's slot + jornada week.
+ * Falls back to jornada day1 + defaultTime when the team has no slot.
+ */
+export function scheduledTimeForHomeGame(params: {
+  weekRefIso: string;
+  defaultTime: string;
+  homeWeekday?: number | null;
+  homeTime?: string | null;
+}): { dateIso: string; timeHm: string; scheduledTime: string } {
+  const dateIso =
+    params.homeWeekday != null && params.homeWeekday >= 1 && params.homeWeekday <= 7
+      ? dateOnWeekdayInSameWeek(params.weekRefIso, params.homeWeekday)
+      : params.weekRefIso;
+  const timeHm = normalizeHomeTime(params.homeTime) || parseEuTime(params.defaultTime) || '18:00';
+  return {
+    dateIso,
+    timeHm,
+    scheduledTime: `${dateIso}T${timeHm}:00`,
+  };
 }

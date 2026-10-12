@@ -37,21 +37,19 @@ function generateAmericanMatchesForGroup(
     return [];
   }
 
-  // Americano Padel: each player plays n-1 matches (one per round, different partner each round)
+  // Americano: cada jogador joga tipicamente n-1 jogos (com o tamanho ACTUAL do grupo).
+  // Se já houve resultados com um jogador entretanto removido, o americanScheduler
+  // conta esses jogos e só gera o que falta para equilibrar o grupo.
   const matchesPerPlayer = n - 1;
 
-  // If all matches already completed, nothing to generate
   const playerIds = new Set(players.map(p => p.id));
-  const relevantCompleted = completedGroupMatches.filter(m =>
-    playerIds.has(m.player1_id) && playerIds.has(m.player2_id) &&
-    playerIds.has(m.player3_id) && playerIds.has(m.player4_id)
-  );
-  const maxCompleted = Math.max(0, ...players.map(p => relevantCompleted.filter(m =>
-    m.player1_id === p.id || m.player2_id === p.id || m.player3_id === p.id || m.player4_id === p.id
-  ).length));
-  if (maxCompleted >= matchesPerPlayer) {
-    return [];
-  }
+
+  // Incluir TODOS os jogos completed em que pelo menos 1 jogador restante participou
+  // (mesmo que o 4.º tenha sido removido). Assim o recálculo adapta-se a N-1.
+  const relevantCompleted = completedGroupMatches.filter(m => {
+    const ids = [m.player1_id, m.player2_id, m.player3_id, m.player4_id];
+    return ids.some(id => id && playerIds.has(id));
+  });
 
   const americanPlayers: AmericanPlayer[] = players.map(p => ({ id: p.id, name: p.name || 'Player' }));
   const americanMatches = generateAmericanSchedule(
@@ -66,15 +64,12 @@ function generateAmericanMatchesForGroup(
     relevantCompleted
   );
 
-  const result = americanMatches.map(m => ({
+  return americanMatches.map(m => ({
     player1_id: m.player1_id,
     player2_id: m.player2_id,
     player3_id: m.player3_id,
     player4_id: m.player4_id,
   }));
-
-
-  return result;
 }
 
 function parseTime(timeStr: string): { hours: number; minutes: number } {

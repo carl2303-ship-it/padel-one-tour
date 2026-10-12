@@ -1033,7 +1033,7 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
               // O auto-fill correto (com cruzamento F+M) é feito no fetchTournamentData / handleMatchRealtime
               if (resolvedFormat === 'mixed_american') {
               } else {
-                await populatePlacementMatches(tournamentId);
+                await populatePlacementMatches(tournamentId, currentMatch.category_id || undefined);
               }
             }
           }

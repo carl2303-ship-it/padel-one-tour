@@ -4,7 +4,21 @@ import { fetchTournamentRegistrationCounts } from '../lib/tournamentRegistration
 import { selectInChunks } from '../lib/selectInChunks';
 import { useI18n } from '../lib/i18nContext';
 import { useAuth } from '../lib/authContext';
-import { Trophy, Calendar, Users, Plus, UserPlus, Copy, Trash2, Filter, Calculator } from 'lucide-react';
+import {
+  Trophy,
+  Calendar,
+  Users,
+  Plus,
+  UserPlus,
+  Copy,
+  Trash2,
+  Filter,
+  Calculator,
+  Pencil,
+  Link,
+  Check,
+} from 'lucide-react';
+import EditTournamentModal from './EditTournamentModal';
 
 type TournamentListProps = {
   onSelectTournament: (tournament: Tournament) => void;
@@ -26,6 +40,8 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
   const [registrationCounts, setRegistrationCounts] = useState<Record<string, number>>({});
   const [categoryMaxTeams, setCategoryMaxTeams] = useState<Record<string, number>>({});
   const [tournamentCategories, setTournamentCategories] = useState<Record<string, string[]>>({});
+  const [editingTournament, setEditingTournament] = useState<Tournament | null>(null);
+  const [linkCopiedId, setLinkCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchTournaments();
@@ -403,6 +419,39 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
                 </button>
                 <div className="flex gap-2">
                   <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTournament(tournament);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                    title="Editar torneio"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const link = `${window.location.origin}?register=${tournament.id}`;
+                      void navigator.clipboard.writeText(link);
+                      setLinkCopiedId(tournament.id);
+                      setTimeout(() => setLinkCopiedId(null), 2000);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                    title="Copiar link de inscrição"
+                  >
+                    {linkCopiedId === tournament.id ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <Link className="w-3.5 h-3.5" />
+                    )}
+                    {linkCopiedId === tournament.id ? 'Copiado!' : 'Link inscrição'}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button
                     onClick={(e) => handleCopyTournament(e, tournament)}
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-blue-600/10 text-blue-600 rounded-lg hover:bg-blue-600/20 transition-colors text-sm font-bold"
                     title="Copy tournament"
@@ -423,6 +472,20 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
             </div>
           ))}
         </div>
+      )}
+
+      {editingTournament && (
+        <EditTournamentModal
+          tournament={editingTournament}
+          onClose={() => setEditingTournament(null)}
+          onSuccess={(updated) => {
+            setEditingTournament(null);
+            setAllTournaments(prev => prev.map(t => (t.id === updated.id ? { ...t, ...updated } : t)));
+            setTournaments(prev => prev.map(t => (t.id === updated.id ? { ...t, ...updated } : t)));
+            void fetchTournaments();
+          }}
+          isIndependentOrganizer={!(editingTournament as { club_id?: string | null }).club_id}
+        />
       )}
     </div>
   );

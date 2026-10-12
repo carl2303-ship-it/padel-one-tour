@@ -31,7 +31,7 @@ Deno.serve(async (req: Request) => {
       },
     });
 
-    // ── Autenticação: só um organizador com sessão válida pode chamar isto ──
+    // ── Autenticação: organizador, dono de clube ou super-admin ───────────
     const authHeader = req.headers.get('Authorization') ?? '';
     const token = authHeader.replace(/^Bearer\s+/i, '');
     const { data: callerData, error: callerError } = await supabaseAdmin.auth.getUser(token);
@@ -44,15 +44,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { data: organizerRow } = await supabaseAdmin
-      .from('organizers')
-      .select('id')
-      .eq('user_id', callerId)
-      .maybeSingle();
+    const [{ data: organizerRow }, { data: clubRow }, { data: superAdminRow }] = await Promise.all([
+      supabaseAdmin.from('organizers').select('id').eq('user_id', callerId).maybeSingle(),
+      supabaseAdmin.from('clubs').select('id').eq('owner_id', callerId).maybeSingle(),
+      supabaseAdmin.from('super_admins').select('id').eq('user_id', callerId).maybeSingle(),
+    ]);
 
-    if (!organizerRow) {
+    const isSuperAdmin = !!superAdminRow;
+    const canReset = isSuperAdmin || !!organizerRow || !!clubRow;
+
+    if (!canReset) {
       return new Response(
-        JSON.stringify({ error: 'Only organizers can reset player passwords' }),
+        JSON.stringify({ error: 'Only organizers, club owners or super-admins can reset player passwords' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
@@ -73,6 +76,7 @@ Deno.serve(async (req: Request) => {
 
     console.log('[DEBUG] Input phone:', phone_number);
     console.log('[DEBUG] Normalized phone:', normalizedPhone);
+    console.log('[DEBUG] Caller:', callerId, { isSuperAdmin, organizer: !!organizerRow, club: !!clubRow });
 
     let { data: playerAccount, error: accountError } = await supabaseAdmin
       .from('player_accounts')
@@ -100,9 +104,9 @@ Deno.serve(async (req: Request) => {
 
     if (!playerAccount) {
       return new Response(
-        JSON.stringify({ 
-          error: 'Player account not found', 
-          debug: { normalizedPhone } 
+        JSON.stringify({
+          error: 'Player account not found',
+          debug: { normalizedPhone },
         }),
         {
           status: 404,
@@ -116,37 +120,66 @@ Deno.serve(async (req: Request) => {
     console.log('[DEBUG] Found player_account email:', playerAccount.email);
     console.log('[DEBUG] Found player_account phone:', playerAccount.phone_number);
 
-    // ── Ownership: o organizador só pode repor password de jogadores que
-    // geriu (contacto próprio ou inscrito nalgum torneio dele) ─────────────
-    const [{ data: ownContact }, { data: ownRegistration }] = await Promise.all([
-      supabaseAdmin
-        .from('organizer_players')
-        .select('id')
-        .eq('organizer_id', callerId)
-        .eq('phone_number', playerAccount.phone_number)
-        .limit(1)
-        .maybeSingle(),
-      supabaseAdmin
-        .from('players')
-        .select('id, tournaments!inner(user_id)')
-        .eq('player_account_id', playerAccount.id)
-        .eq('tournaments.user_id', callerId)
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    if (!ownContact && !ownRegistration) {
-      return new Response(
-        JSON.stringify({ error: 'This player is not linked to your organizer account' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    // Super-admins can reset any player. Others must own the contact/registration.
+    if (!isSuperAdmin) {
+      const phoneVariants = Array.from(
+        new Set(
+          [playerAccount.phone_number, normalizedPhone, phone_number]
+            .filter(Boolean)
+            .map((p) => String(p)),
+        ),
       );
+      const last9 = normalizedPhone.slice(-9);
+
+      const [{ data: ownContact }, { data: ownRegistration }, { data: ownByPhone }] =
+        await Promise.all([
+          supabaseAdmin
+            .from('organizer_players')
+            .select('id')
+            .eq('organizer_id', callerId)
+            .in('phone_number', phoneVariants)
+            .limit(1)
+            .maybeSingle(),
+          supabaseAdmin
+            .from('players')
+            .select('id, tournaments!inner(user_id)')
+            .eq('player_account_id', playerAccount.id)
+            .eq('tournaments.user_id', callerId)
+            .limit(1)
+            .maybeSingle(),
+          supabaseAdmin
+            .from('players')
+            .select('id, tournaments!inner(user_id)')
+            .eq('tournaments.user_id', callerId)
+            .or(
+              phoneVariants
+                .map((p) => `phone_number.eq.${p}`)
+                .concat(last9 ? [`phone_number.ilike.%${last9}`] : [])
+                .join(','),
+            )
+            .limit(1)
+            .maybeSingle(),
+        ]);
+
+      if (!ownContact && !ownRegistration && !ownByPhone) {
+        console.log('[DEBUG] Ownership check failed for caller', callerId);
+        return new Response(
+          JSON.stringify({
+            error:
+              'Este jogador não está ligado à sua conta de organizador (contacto ou inscrição num torneio seu).',
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+    } else {
+      console.log('[DEBUG] Super-admin bypass ownership check');
     }
 
     if (!playerAccount.user_id) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'Player account has no user_id. The player needs to login first to create their auth account.',
-          hint: 'Tell the player to try logging in first with their phone number. The system will create their account automatically.'
+          hint: 'Tell the player to try logging in first with their phone number. The system will create their account automatically.',
         }),
         {
           status: 400,
@@ -163,10 +196,10 @@ Deno.serve(async (req: Request) => {
     if (userError || !authUser?.user) {
       console.error('[DEBUG] Auth user not found:', userError);
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: 'User not found in auth system',
           hint: 'The auth user may have been deleted. Tell the player to try logging in first.',
-          details: userError?.message
+          details: userError?.message,
         }),
         {
           status: 404,
@@ -215,7 +248,7 @@ Deno.serve(async (req: Request) => {
     const accountPhone = playerAccount.phone_number || normalizedPhone;
     const last4Digits = accountPhone.replace(/[^\d]/g, '').slice(-4);
     const standardPassword = `Player${last4Digits}!`;
-    
+
     console.log('[DEBUG] Account phone:', accountPhone);
     console.log('[DEBUG] User ID:', playerAccount.user_id);
 
@@ -237,9 +270,7 @@ Deno.serve(async (req: Request) => {
     }
 
     console.log('[DEBUG] Password updated successfully');
-    
-    // Double-check: verify that signInWithPassword would work
-    // by confirming the email matches
+
     const finalEmail = authEmail || playerAccount.email;
     console.log('[DEBUG] Login should use email:', finalEmail);
 

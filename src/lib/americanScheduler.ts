@@ -66,7 +66,10 @@ export function generateAmericanSchedule(
     });
   });
 
-  // Pre-seed counters with existing completed matches
+  // Pre-seed counters with existing completed matches.
+  // Matches may include a player who was later removed from the group:
+  // - still count the game for remaining players
+  // - only seed partnerships/opponents among players who are still present
   const playerMatchCount = new Map<string, number>();
   players.forEach(p => playerMatchCount.set(p.id, 0));
 
@@ -74,20 +77,27 @@ export function generateAmericanSchedule(
     const playerIds = new Set(players.map(p => p.id));
     for (const em of existingMatches) {
       const p1 = em.player1_id, p2 = em.player2_id, p3 = em.player3_id, p4 = em.player4_id;
-      if (!playerIds.has(p1) || !playerIds.has(p2) || !playerIds.has(p3) || !playerIds.has(p4)) continue;
+      if (!p1 || !p2 || !p3 || !p4) continue;
 
-      // Record partnerships: p1+p2 and p3+p4
-      if (partnershipCounts.has(p1)) partnershipCounts.get(p1)!.set(p2, (partnershipCounts.get(p1)!.get(p2) || 0) + 1);
-      if (partnershipCounts.has(p3)) partnershipCounts.get(p3)!.set(p4, (partnershipCounts.get(p3)!.get(p4) || 0) + 1);
+      const present = [p1, p2, p3, p4].filter(id => playerIds.has(id));
+      if (present.length === 0) continue;
 
-      // Record opponents
-      if (opponentCounts.has(p1)) opponentCounts.get(p1)!.set(p3, (opponentCounts.get(p1)!.get(p3) || 0) + 1);
-      if (opponentCounts.has(p1)) opponentCounts.get(p1)!.set(p4, (opponentCounts.get(p1)!.get(p4) || 0) + 1);
-      if (opponentCounts.has(p2)) opponentCounts.get(p2)!.set(p3, (opponentCounts.get(p2)!.get(p3) || 0) + 1);
-      if (opponentCounts.has(p2)) opponentCounts.get(p2)!.set(p4, (opponentCounts.get(p2)!.get(p4) || 0) + 1);
+      present.forEach(pid => playerMatchCount.set(pid, (playerMatchCount.get(pid) || 0) + 1));
 
-      // Count matches per player
-      [p1, p2, p3, p4].forEach(pid => playerMatchCount.set(pid, (playerMatchCount.get(pid) || 0) + 1));
+      if (playerIds.has(p1) && playerIds.has(p2)) {
+        partnershipCounts.get(p1)!.set(p2, (partnershipCounts.get(p1)!.get(p2) || 0) + 1);
+      }
+      if (playerIds.has(p3) && playerIds.has(p4)) {
+        partnershipCounts.get(p3)!.set(p4, (partnershipCounts.get(p3)!.get(p4) || 0) + 1);
+      }
+
+      const team1 = [p1, p2].filter(id => playerIds.has(id));
+      const team2 = [p3, p4].filter(id => playerIds.has(id));
+      for (const a of team1) {
+        for (const b of team2) {
+          opponentCounts.get(a)!.set(b, (opponentCounts.get(a)!.get(b) || 0) + 1);
+        }
+      }
     }
   }
 

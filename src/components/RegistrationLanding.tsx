@@ -5,6 +5,10 @@ import { useAuth } from '../lib/authContext';
 import { useCustomLogo } from '../lib/useCustomLogo';
 import {
   normalizePhone,
+  composeInternationalPhone,
+  dialCodeForIso,
+  defaultCountryIso,
+  COUNTRY_DIAL_CODES,
   phoneLookupCandidates,
   phonesEqual,
   normalizePhoneKey,
@@ -130,11 +134,13 @@ async function findPlayerAccountByPhone(phone: string) {
 }
 
 export default function RegistrationLanding({ tournament, onClose }: RegistrationLandingProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { user } = useAuth();
   const { logoUrl } = useCustomLogo(tournament.user_id);
   const [step, setStep] = useState<RegistrationStep>('check_account');
   const [checkPhone, setCheckPhone] = useState('');
+  const [checkDialIso, setCheckDialIso] = useState(() => defaultCountryIso(language));
+  const [partnerDialIso, setPartnerDialIso] = useState(() => defaultCountryIso(language));
   const [existingAccount, setExistingAccount] = useState<PlayerAccount | null>(null);
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -507,9 +513,10 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
     setLoading(true);
     setError('');
 
-    const normalizedPhone = normalizePhone(checkPhone) || checkPhone.trim().replace(/[\s\-\(\)\.]/g, '');
+    const composed = composeInternationalPhone(dialCodeForIso(checkDialIso), checkPhone);
+    const normalizedPhone = normalizePhone(composed) || composed;
     if (!normalizedPhone || normalizedPhone.replace(/\D/g, '').length < 8) {
-      setError(t.registration.pleaseEnterPhoneWithCountryCode);
+      setError('Indica o indicativo do país e o número completo (ex: +33 612 937 777).');
       setLoading(false);
       return;
     }
@@ -606,7 +613,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
 
     setPartnerLookupLoading(true);
 
-    const normalizedPhone = normalizePhone(phone) || phone.trim().replace(/[\s\-\(\)\.]/g, '');
+    const composed = composeInternationalPhone(dialCodeForIso(partnerDialIso), phone);
+    const normalizedPhone = normalizePhone(composed) || composed;
 
     // Block using the same phone as player 1
     if (phonesEqual(normalizedPhone, formData.player1Phone)) {
@@ -787,9 +795,14 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
         }
       }
 
-      formData.player1Phone = normalizePhone(formData.player1Phone) || formData.player1Phone;
+      // Ensure phones carry the selected dial code (avoid FR/ES 6/7 ambiguity)
+      formData.player1Phone = normalizePhone(formData.player1Phone)
+        || composeInternationalPhone(dialCodeForIso(checkDialIso), formData.player1Phone)
+        || formData.player1Phone;
       if (!isIndividualFormat()) {
-        formData.player2Phone = normalizePhone(formData.player2Phone) || formData.player2Phone;
+        formData.player2Phone = normalizePhone(formData.player2Phone)
+          || composeInternationalPhone(dialCodeForIso(partnerDialIso), formData.player2Phone)
+          || formData.player2Phone;
       }
 
       const player1Result = await createOrGetPlayerAccount(
@@ -1299,17 +1312,31 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
             <Phone className="w-4 h-4 inline mr-2" />
             {t.registration.phoneNumber}
           </label>
-          <input
-            type="tel"
-            value={checkPhone}
-            onChange={(e) => setCheckPhone(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleCheckPhone()}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
-            placeholder="+351 912 345 678"
-            autoFocus
-          />
+          <div className="flex gap-2">
+            <select
+              value={checkDialIso}
+              onChange={(e) => setCheckDialIso(e.target.value)}
+              className="px-2 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white text-sm font-medium min-w-[7.5rem]"
+              aria-label="Indicativo"
+            >
+              {COUNTRY_DIAL_CODES.map((c) => (
+                <option key={c.iso + c.dial} value={c.iso}>
+                  {c.flag} +{c.dial}
+                </option>
+              ))}
+            </select>
+            <input
+              type="tel"
+              value={checkPhone}
+              onChange={(e) => setCheckPhone(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleCheckPhone()}
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
+              placeholder="612 937 777"
+              autoFocus
+            />
+          </div>
           <p className="text-xs text-gray-500 mt-2">
-            {t.registration.phoneWithCountryCodeHint}
+            Escolhe o indicativo do país. Números FR/ES começam ambos por 6 ou 7 — o indicativo é obrigatório.
           </p>
         </div>
 
@@ -1768,11 +1795,6 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                   placeholder="+351 912 345 678"
                   disabled={!!loggedInPlayer || !!existingAccount}
                 />
-                {!(loggedInPlayer || existingAccount) && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    {t.registration.phoneWithCountryCodeHint}
-                  </p>
-                )}
               </div>
 
               {(existingAccount || loggedInPlayer) && (
@@ -1809,7 +1831,19 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">{t.registration.phone} *</label>
-                  <div className="relative">
+                  <div className="relative flex gap-2">
+                    <select
+                      value={partnerDialIso}
+                      onChange={(e) => setPartnerDialIso(e.target.value)}
+                      className="px-2 py-2 border border-gray-300 rounded-lg bg-white text-sm font-medium min-w-[7rem]"
+                      aria-label="Indicativo parceiro"
+                    >
+                      {COUNTRY_DIAL_CODES.map((c) => (
+                        <option key={'p2-' + c.iso + c.dial} value={c.iso}>
+                          {c.flag} +{c.dial}
+                        </option>
+                      ))}
+                    </select>
                     <input
                       type="tel"
                       required
@@ -1819,8 +1853,8 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                         setPartnerFound(false);
                       }}
                       onBlur={(e) => lookupPartnerByPhone(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="+351 912 345 678"
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="612 937 777"
                     />
                     {partnerLookupLoading && (
                       <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -1829,7 +1863,7 @@ export default function RegistrationLanding({ tournament, onClose }: Registratio
                     )}
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    {t.registration.phoneWithCountryCodeHint}
+                    Introduza o telefone do parceiro para verificar se ja esta registado
                   </p>
                 </div>
 

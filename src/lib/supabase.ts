@@ -175,6 +175,10 @@ export type ClubLeagueTeam = {
   name: string;
   captain_player_id: string | null;
   registration_order: number;
+  /** ISO weekday for home matches: 1=Monday … 7=Sunday */
+  home_weekday?: number | null;
+  /** Preferred home kickoff (HH:mm or HH:mm:ss) */
+  home_time?: string | null;
   created_at: string;
   updated_at: string;
   club_league_players?: ClubLeaguePlayer[];

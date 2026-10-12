@@ -3,6 +3,7 @@ import { X, Save, Crown, Plus, Trash2, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { ClubLeaguePlayer, ClubLeagueTeam } from '../lib/supabase';
 import { normalizePhone, normalizePhoneKey } from '../lib/phoneUtils';
+import { HOME_WEEKDAY_OPTIONS, normalizeHomeTime, parseEuTime } from '../lib/clubLeagueScheduler';
 
 type PlayerAccount = {
   id: string;
@@ -39,6 +40,12 @@ const emptyPlayer = (captain = false): PlayerRow => ({
 
 export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Props) {
   const [teamName, setTeamName] = useState(team.name);
+  const [homeWeekday, setHomeWeekday] = useState<number | ''>(
+    team.home_weekday != null ? team.home_weekday : ''
+  );
+  const [homeTime, setHomeTime] = useState(
+    normalizeHomeTime(team.home_time) || '20:00'
+  );
   const [players, setPlayers] = useState<PlayerRow[]>(() => {
     const roster = [...(team.club_league_players || [])].sort((a, b) => a.player_order - b.player_order);
     if (roster.length === 0) {
@@ -135,6 +142,9 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
   const handleSubmit = async () => {
     setError('');
     if (!teamName.trim()) { setError('Introduza o nome do clube/equipa'); return; }
+    if (!homeWeekday) { setError('Escolha o dia da semana dos jogos em casa'); return; }
+    const homeTimeParsed = parseEuTime(homeTime);
+    if (!homeTimeParsed) { setError('Hora dos jogos em casa inválida (usa HH:mm, ex: 20:00)'); return; }
     if (players.length < 1) { setError('É preciso pelo menos o capitão'); return; }
 
     for (let i = 0; i < players.length; i++) {
@@ -158,7 +168,12 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
     try {
       const { error: teamError } = await supabase
         .from('club_league_teams')
-        .update({ name: teamName.trim(), updated_at: new Date().toISOString() })
+        .update({
+          name: teamName.trim(),
+          home_weekday: homeWeekday,
+          home_time: homeTimeParsed,
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', team.id);
       if (teamError) throw teamError;
 
@@ -275,13 +290,43 @@ export default function EditClubLeagueTeamModal({ team, onClose, onSuccess }: Pr
             <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded">{error}</div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Nome do clube</label>
-            <input
-              value={teamName}
-              onChange={e => setTeamName(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-1">Nome do clube</label>
+              <input
+                value={teamName}
+                onChange={e => setTeamName(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Dia dos jogos em casa *</label>
+              <select
+                value={homeWeekday === '' ? '' : String(homeWeekday)}
+                onChange={e => setHomeWeekday(e.target.value ? Number(e.target.value) : '')}
+                className="w-full border rounded-lg px-3 py-2"
+              >
+                <option value="">Escolher dia…</option>
+                {HOME_WEEKDAY_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Hora em casa * (24h)</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder="20:00"
+                value={homeTime}
+                onChange={e => setHomeTime(e.target.value)}
+                onBlur={e => {
+                  const parsed = parseEuTime(e.target.value);
+                  if (parsed) setHomeTime(parsed);
+                }}
+                className="w-full border rounded-lg px-3 py-2 font-mono"
+              />
+            </div>
           </div>
 
           <div>

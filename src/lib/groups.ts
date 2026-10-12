@@ -1211,25 +1211,47 @@ export async function populatePlacementMatches(
     return filtered;
   };
 
-  // Optional category override for qualified_per_group
+  // Prefer category.qualified_per_group (torneio-level is often stale/wrong).
   let categoryQualifiedPerGroup: number | null = null;
-  if (categoryId) {
+  let resolvedCategoryId = categoryId || null;
+  if (!resolvedCategoryId) {
+    const fromKo = allMatches.find(
+      (m) =>
+        m.category_id &&
+        (m.round === 'quarterfinal' ||
+          m.round === 'quarter_final' ||
+          m.round === 'round_of_16' ||
+          m.round === 'semifinal' ||
+          m.round === 'semi_final')
+    )?.category_id;
+    if (fromKo) resolvedCategoryId = fromKo;
+  }
+  if (resolvedCategoryId) {
     const { data: catRow } = await supabase
       .from('tournament_categories')
       .select('qualified_per_group')
-      .eq('id', categoryId)
+      .eq('id', resolvedCategoryId)
       .maybeSingle();
     if (catRow?.qualified_per_group != null && catRow.qualified_per_group > 0) {
       categoryQualifiedPerGroup = catRow.qualified_per_group;
     }
   } else {
-    const { data: tRow } = await supabase
-      .from('tournaments')
-      .select('qualified_per_group')
-      .eq('id', tournamentId)
-      .maybeSingle();
-    if (tRow?.qualified_per_group != null && tRow.qualified_per_group > 0) {
-      categoryQualifiedPerGroup = tRow.qualified_per_group;
+    const { data: cats } = await supabase
+      .from('tournament_categories')
+      .select('id, qualified_per_group')
+      .eq('tournament_id', tournamentId);
+    if (cats && cats.length === 1 && cats[0].qualified_per_group != null && cats[0].qualified_per_group > 0) {
+      resolvedCategoryId = cats[0].id;
+      categoryQualifiedPerGroup = cats[0].qualified_per_group;
+    } else {
+      const { data: tRow } = await supabase
+        .from('tournaments')
+        .select('qualified_per_group')
+        .eq('id', tournamentId)
+        .maybeSingle();
+      if (tRow?.qualified_per_group != null && tRow.qualified_per_group > 0) {
+        categoryQualifiedPerGroup = tRow.qualified_per_group;
+      }
     }
   }
 
@@ -1302,22 +1324,7 @@ export async function populatePlacementMatches(
       }).eq('id', unpopulatedRo16[i].id);
     }
 
-    // Delete extra empty RO16 matches
-    const { data: updatedRo16 } = await supabase
-      .from('matches')
-      .select('id, player1_individual_id, player3_individual_id')
-      .eq('tournament_id', tournamentId)
-      .in('round', allRo16Rounds);
-
-    if (updatedRo16) {
-      const emptyRo16 = updatedRo16.filter(m => !m.player1_individual_id && !m.player3_individual_id);
-      if (emptyRo16.length > 0) {
-        for (const empty of emptyRo16) {
-          await supabase.from('matches').delete().eq('id', empty.id);
-        }
-      }
-    }
-
+    // NUNCA apagar oitavos vazios — o calendário deve manter a estrutura KO.
     return;
   }
 
@@ -1377,15 +1384,16 @@ export async function populatePlacementMatches(
         }).eq('id', unpopulatedQFs[i].id);
       }
     } else {
-      // 3+ grupos: só top N/grupo + melhores da posição seguinte (ex. melhores 3.ºs),
-      // depois cruzamento rotativo — NÃO usar o ranking completo (4.ºs ficavam a entrar).
+      // 3+ grupos: top N/grupo + melhores da posição seguinte, depois cruzamento.
+      // IMPORTANTE: com nº ímpar de grupos o cruzamento gera nº ímpar de pares;
+      // temos de garantir exactamente QF*2 pares (senão o 4º QF fica vazio).
       const nGroups = sortedGroups.length;
-      const totalSlotsNeeded = unpopulatedQFs.length * 4;
+      const neededPairs = unpopulatedQFs.length * 2;
+      const totalSlotsNeeded = neededPairs * 2;
       const filteredRankings = selectQualifiedRankings(totalSlotsNeeded, categoryQualifiedPerGroup);
       const rankings = sortedGroups.map(g => filteredRankings.get(g) || []);
       const usedPlayers = new Set<string>();
 
-      // Fase 1: pares cruzados — grupo G pos 0 com grupo (G+1)%N pos 1
       const crossedPairs: Array<[string, string]> = [];
       for (let g = 0; g < nGroups; g++) {
         const gNext = (g + 1) % nGroups;
@@ -1398,7 +1406,6 @@ export async function populatePlacementMatches(
         }
       }
 
-      // Reordenar pares cruzados: [0, 2, 1] para que A1+B2 vs C1+A2, depois B1+C2
       const reordered: Array<[string, string]> = [];
       if (crossedPairs.length === 3) {
         reordered.push(crossedPairs[0], crossedPairs[2], crossedPairs[1]);
@@ -1406,7 +1413,6 @@ export async function populatePlacementMatches(
         reordered.push(...crossedPairs);
       }
 
-      // Fase 2: restantes (inclui melhores 3.ºs) em ordem de ranking
       const remaining: string[] = [];
       const maxLen = Math.max(0, ...rankings.map(r => r.length));
       for (let pos = 0; pos < maxLen; pos++) {
@@ -1418,17 +1424,91 @@ export async function populatePlacementMatches(
         }
       }
 
+      // Se sobrar 1 jogador (nº ímpar), puxar o melhor ainda não usado do ranking completo
+      if (remaining.length % 2 === 1) {
+        const extras: Array<{ id: string; wins: number; diff: number; gf: number }> = [];
+        for (const g of sortedGroups) {
+          for (const id of rankedByGroup.get(g) || []) {
+            if (!usedPlayers.has(id)) {
+              const s = playerStats.get(id);
+              if (s) extras.push({ id, wins: s.wins, diff: s.gamesWon - s.gamesLost, gf: s.gamesWon });
+            }
+          }
+        }
+        extras.sort((a, b) => {
+          if (a.wins !== b.wins) return b.wins - a.wins;
+          if (a.diff !== b.diff) return b.diff - a.diff;
+          return b.gf - a.gf;
+        });
+        if (extras[0]) {
+          remaining.push(extras[0].id);
+          usedPlayers.add(extras[0].id);
+        } else {
+          // Sem parceiro: não deixar o ímpar bloquear — junta ao último par se existir
+          remaining.pop();
+        }
+      }
+
       const allPairs = [...reordered];
-      for (let i = 0; i < remaining.length - 1; i += 2) {
+      for (let i = 0; i + 1 < remaining.length; i += 2) {
         allPairs.push([remaining[i], remaining[i + 1]]);
       }
-      const crossPairs = allPairs;
 
+      // Garantir número PAR de pares (cada QF precisa de 2). Se ainda for ímpar,
+      // juntar o último par solto com o próximo melhor disponível.
+      if (allPairs.length % 2 === 1) {
+        const lone = allPairs.pop()!;
+        const extras: Array<{ id: string; wins: number; diff: number; gf: number }> = [];
+        for (const g of sortedGroups) {
+          for (const id of rankedByGroup.get(g) || []) {
+            if (!usedPlayers.has(id)) {
+              const s = playerStats.get(id);
+              if (s) extras.push({ id, wins: s.wins, diff: s.gamesWon - s.gamesLost, gf: s.gamesWon });
+            }
+          }
+        }
+        extras.sort((a, b) => {
+          if (a.wins !== b.wins) return b.wins - a.wins;
+          if (a.diff !== b.diff) return b.diff - a.diff;
+          return b.gf - a.gf;
+        });
+        if (extras.length >= 2) {
+          allPairs.push(lone);
+          allPairs.push([extras[0].id, extras[1].id]);
+          usedPlayers.add(extras[0].id);
+          usedPlayers.add(extras[1].id);
+        } else if (extras.length === 1) {
+          // Re-emparelhar o lone com o extra (troca o 2º do lone)
+          allPairs.push([lone[0], extras[0].id]);
+          usedPlayers.add(extras[0].id);
+          // lone[1] volta a remaining pool — tentar formar outro par mais tarde se possível
+          if (!usedPlayers.has(lone[1])) {
+            const more = extras.slice(1);
+            // already used extras[0]; try find anyone else
+            for (const g of sortedGroups) {
+              for (const id of rankedByGroup.get(g) || []) {
+                if (!usedPlayers.has(id) && id !== lone[1]) {
+                  allPairs.push([lone[1], id]);
+                  usedPlayers.add(lone[1]);
+                  usedPlayers.add(id);
+                  break;
+                }
+              }
+              if (usedPlayers.has(lone[1])) break;
+            }
+          }
+        } else {
+          // Sem extras: não dá para completar — mantém o que temos (pares pares)
+          console.warn('[POPULATE_PLACEMENT] Odd crossed pairs with no spare players; some QFs may stay empty');
+        }
+      }
+
+      const crossPairs = allPairs;
 
       for (let i = 0; i < unpopulatedQFs.length && (i * 2 + 1) < crossPairs.length; i++) {
         const pair1 = crossPairs[i * 2];
         const pair2 = crossPairs[i * 2 + 1];
-        if (!pair1 || !pair2) break;
+        if (!pair1?.[0] || !pair1?.[1] || !pair2?.[0] || !pair2?.[1]) break;
 
         await supabase.from('matches').update({
           player1_individual_id: pair1[0],
@@ -1437,29 +1517,17 @@ export async function populatePlacementMatches(
           player4_individual_id: pair2[1],
         }).eq('id', unpopulatedQFs[i].id);
       }
-    }
-    
-    // Delete extra unpopulated QF matches that can't be filled
-    const stillUnpopulated = allQuarterfinals.filter(m => 
-      !m.player1_individual_id && !m.player3_individual_id
-    );
-    // Re-fetch to check which are still empty after our updates
-    const { data: updatedQFs } = await supabase
-      .from('matches')
-      .select('id, player1_individual_id, player3_individual_id')
-      .eq('tournament_id', tournamentId)
-      .in('round', allQuarterfinalRounds);
-    
-    if (updatedQFs) {
-      const emptyQFs = updatedQFs.filter(m => !m.player1_individual_id && !m.player3_individual_id);
-      if (emptyQFs.length > 0) {
-        for (const emptyQF of emptyQFs) {
-          await supabase.from('matches').delete().eq('id', emptyQF.id);
-        }
+
+      const filled = Math.min(unpopulatedQFs.length, Math.floor(crossPairs.length / 2));
+      if (filled < unpopulatedQFs.length) {
+        console.warn(
+          `[POPULATE_PLACEMENT] Only filled ${filled}/${unpopulatedQFs.length} quarterfinals ` +
+          `(${crossPairs.length} pairs from ${nGroups} groups). Empty QFs are KEPT.`
+        );
       }
     }
     
-
+    // NUNCA apagar quartos vazios — isso destruía o calendário (ex.: 4 QFs → 3).
     return;
   }
 
