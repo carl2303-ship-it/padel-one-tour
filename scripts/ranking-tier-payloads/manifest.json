@@ -1,0 +1,20 @@
+[
+  {
+    "path": "src/components/CreateTournamentModal.tsx",
+    "b64_file": "src__components__CreateTournamentModal.tsx.zlib.b64",
+    "md5": "b35c52d0164dee4275aa322b84f3559b",
+    "len": 59165
+  },
+  {
+    "path": "src/components/EditTournamentModal.tsx",
+    "b64_file": "src__components__EditTournamentModal.tsx.zlib.b64",
+    "md5": "97586becb6c34902f1e1491778f10a64",
+    "len": 65148
+  },
+  {
+    "path": "src/lib/translations.ts",
+    "b64_file": "src__lib__translations.ts.zlib.b64",
+    "md5": "2a53429016dabef63e04da97f066f8d3",
+    "len": 186689
+  }
+]
