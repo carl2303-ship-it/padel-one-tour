@@ -69,15 +69,19 @@ export function isPlayerEligibleForCategory(
   const hasLevelRange = cat.min_level != null || cat.max_level != null;
 
   if (hasAcceptedLevels || hasLevelRange) {
-    if (hasAcceptedLevels && !cat.accepted_levels!.includes(player.player_category || "")) {
-      return false;
+    if (hasAcceptedLevels) {
+      const accepted = cat.accepted_levels!.map((a) => String(a).toUpperCase().trim());
+      const playerCat = String(player.player_category || "").toUpperCase().trim();
+      if (!playerCat || !accepted.includes(playerCat)) {
+        return false;
+      }
     }
     if (hasLevelRange && player.level == null) {
       return false;
     }
     if (hasLevelRange) {
-      if (cat.min_level != null && player.level < cat.min_level) return false;
-      if (cat.max_level != null && player.level > cat.max_level) return false;
+      if (cat.min_level != null && player.level! < cat.min_level) return false;
+      if (cat.max_level != null && player.level! > cat.max_level) return false;
     }
     return true;
   }

@@ -1,6 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { deliverWebPushNotifications } from "../_shared/deliverPush.ts";
+import {
+  isPlayerEligibleForCategory,
+  type TournamentCategoryEligibility,
+} from "../_shared/categoryEligibility.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,13 +20,13 @@ const corsHeaders = {
  * - tournamentId?: string
  * - forceResend?: boolean  — bypass already_sent, use update copy, filter by category levels
  * - mode?: "cron" | "direct"
- *
- * Skips draft / cancelled. Cron only looks at recently activated tournaments.
  */
 
 interface RequestBody {
   tournamentId?: string;
+  tournament_id?: string;
   forceResend?: boolean;
+  force_resend?: boolean;
   mode?: "cron" | "direct";
 }
 
@@ -31,7 +35,9 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
@@ -66,34 +72,12 @@ function parseClubIds(tournament: Record<string, unknown>): string[] {
   return clubIds;
 }
 
-function playerLevelMatches(
-  level: number | null | undefined,
-  ranges: Array<{ min: number | null; max: number | null; accepted: string[] | null }>,
+function playerMatchesAnyCategory(
+  player: { player_category: string | null; level: number | null },
+  categories: TournamentCategoryEligibility[],
 ): boolean {
-  if (!ranges.length) return true; // no category constraints → all levels
-  if (level == null || Number.isNaN(level)) return true; // unknown level: include
-
-  return ranges.some((r) => {
-    if (r.accepted && r.accepted.length > 0) {
-      const levelStr = String(level);
-      const levelOneDecimal = level.toFixed(1);
-      const levelInt = String(Math.floor(level));
-      if (
-        r.accepted.includes(levelStr) ||
-        r.accepted.includes(levelOneDecimal) ||
-        r.accepted.includes(levelInt)
-      ) {
-        return true;
-      }
-    }
-    const minOk = r.min == null || level >= Number(r.min);
-    const maxOk = r.max == null || level <= Number(r.max);
-    // If only accepted_levels was set (no min/max), don't match via range
-    if (r.min == null && r.max == null && r.accepted && r.accepted.length > 0) {
-      return false;
-    }
-    return minOk && maxOk;
-  });
+  if (!categories.length) return true;
+  return categories.some((cat) => isPlayerEligibleForCategory(cat, player));
 }
 
 Deno.serve(async (req: Request) => {
@@ -124,23 +108,23 @@ Deno.serve(async (req: Request) => {
       body = { mode: "cron" };
     }
 
-    const forceResend = !!body.forceResend;
+    const tournamentId = body.tournamentId || body.tournament_id || undefined;
+    const forceResend = !!(body.forceResend || body.force_resend);
     let tournamentsToNotify: any[] = [];
 
-    if (body.tournamentId) {
+    if (tournamentId) {
       const { data: tournament } = await admin
         .from("tournaments")
         .select(
           "id, name, start_date, end_date, status, image_url, club_id, club_ids, visibility, format, gender, allow_public_registration, user_id, venue_lat, venue_lng, visibility_radius_km, updated_at",
         )
-        .eq("id", body.tournamentId)
+        .eq("id", tournamentId)
         .maybeSingle();
 
       if (tournament) {
         tournamentsToNotify = [tournament];
       }
     } else {
-      // Cron: only recently activated tournaments (not drafts)
       const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const today = new Date().toISOString().split("T")[0];
 
@@ -201,10 +185,7 @@ Deno.serve(async (req: Request) => {
       const clubIds = parseClubIds(tournament);
 
       if (clubIds.length > 0) {
-        const { data: clubs } = await admin
-          .from("clubs")
-          .select("name")
-          .in("id", clubIds);
+        const { data: clubs } = await admin.from("clubs").select("name").in("id", clubIds);
         if (clubs && clubs.length > 0) {
           clubName = clubs.map((c: any) => c.name).join(" · ");
         }
@@ -234,19 +215,25 @@ Deno.serve(async (req: Request) => {
       const locationPart = clubName ? ` · ${clubName}` : "";
       const formatPart = formatLabel ? ` · ${formatLabel}` : "";
 
-      // Load category level ranges for filtering (always useful; required intent on resend)
       const { data: categories } = await admin
         .from("tournament_categories")
         .select("min_level, max_level, accepted_levels, name")
         .eq("tournament_id", tournament.id);
 
-      const levelRanges = (categories || []).map((c: any) => ({
-        min: c.min_level != null ? Number(c.min_level) : null,
-        max: c.max_level != null ? Number(c.max_level) : null,
-        accepted: Array.isArray(c.accepted_levels) ? c.accepted_levels.map(String) : null,
+      const eligibilityCats: TournamentCategoryEligibility[] = (categories || []).map((c: any) => ({
+        name: c.name || "",
+        min_level: c.min_level != null ? Number(c.min_level) : null,
+        max_level: c.max_level != null ? Number(c.max_level) : null,
+        accepted_levels: Array.isArray(c.accepted_levels)
+          ? c.accepted_levels.map(String)
+          : null,
       }));
-      const hasLevelConstraints = levelRanges.some(
-        (r) => r.min != null || r.max != null || (r.accepted && r.accepted.length > 0),
+
+      const hasLevelConstraints = eligibilityCats.some(
+        (r) =>
+          r.min_level != null ||
+          r.max_level != null ||
+          (r.accepted_levels && r.accepted_levels.length > 0),
       );
 
       const categoryNames = (categories || [])
@@ -310,7 +297,12 @@ Deno.serve(async (req: Request) => {
 
           if (nearbyPlayers) {
             for (const p of nearbyPlayers) {
-              const dist = haversineKm(tournament.venue_lat, tournament.venue_lng, p.lat, p.lng);
+              const dist = haversineKm(
+                tournament.venue_lat,
+                tournament.venue_lng,
+                p.lat,
+                p.lng,
+              );
               if (dist <= radius) targetSet.add(p.id);
             }
           }
@@ -318,17 +310,70 @@ Deno.serve(async (req: Request) => {
 
         targetPlayerIds = [...targetSet];
       } else {
-        const { data: clubPlayers } = await admin
+        // Nested select avoids huge `.in(id, …)` URL limits on PostgREST
+        const { data: clubPlayers, error: clubPlayersErr } = await admin
           .from("player_clubs")
-          .select("player_account_id")
+          .select("player_account_id, player_accounts(id, gender, player_category, level)")
           .in("club_id", clubIds);
 
-        const clubPlayerIds = [...new Set(
-          (clubPlayers || []).map((r: any) => r.player_account_id).filter(Boolean),
-        )];
+        if (clubPlayersErr) {
+          console.error("[notify-new-tournament] player_clubs error:", clubPlayersErr);
+          details.push({
+            id: tournament.id,
+            skipped: "club_players_error",
+            error: clubPlayersErr.message,
+          });
+          continue;
+        }
 
-        if (clubPlayerIds.length > 0) {
-          targetPlayerIds = clubPlayerIds;
+        const rows = (clubPlayers || [])
+          .map((r: any) => {
+            const pa = Array.isArray(r.player_accounts)
+              ? r.player_accounts[0]
+              : r.player_accounts;
+            return pa || (r.player_account_id ? { id: r.player_account_id } : null);
+          })
+          .filter(Boolean);
+
+        if (rows.length > 0) {
+          const filteredIds: string[] = [];
+          const seen = new Set<string>();
+          for (const p of rows) {
+            if (!p?.id || seen.has(p.id)) continue;
+            seen.add(p.id);
+
+            if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
+              const rawGender = String(p.gender || "").toLowerCase();
+              const playerGender =
+                rawGender === "m" || rawGender === "male"
+                  ? "male"
+                  : rawGender === "f" || rawGender === "female"
+                  ? "female"
+                  : p.player_category?.toUpperCase?.().startsWith("M")
+                  ? "male"
+                  : p.player_category?.toUpperCase?.().startsWith("F")
+                  ? "female"
+                  : null;
+              if (playerGender && playerGender !== String(tournament.gender).toLowerCase()) {
+                continue;
+              }
+            }
+
+            if (hasLevelConstraints) {
+              const lvl = p.level != null ? Number(p.level) : null;
+              if (
+                !playerMatchesAnyCategory(
+                  { player_category: p.player_category ?? null, level: lvl },
+                  eligibilityCats,
+                )
+              ) {
+                continue;
+              }
+            }
+
+            filteredIds.push(p.id);
+          }
+          targetPlayerIds = filteredIds;
         } else {
           const { data: subscriptions } = await admin
             .from("push_subscriptions")
@@ -336,49 +381,54 @@ Deno.serve(async (req: Request) => {
             .eq("app_source", "player")
             .not("player_account_id", "is", null);
 
-          targetPlayerIds = [...new Set(
-            (subscriptions || []).map((s: any) => s.player_account_id).filter(Boolean),
-          )];
+          targetPlayerIds = [
+            ...new Set(
+              (subscriptions || []).map((s: any) => s.player_account_id).filter(Boolean),
+            ),
+          ];
           console.log(
             `[notify-new-tournament] Club ${clubIds.join(",")} has no player_clubs; fallback to ${targetPlayerIds.length} push subscribers`,
           );
+
+          // Fallback path: small batches to avoid URL limits
+          const filteredIds: string[] = [];
+          for (let i = 0; i < targetPlayerIds.length; i += 80) {
+            const batch = targetPlayerIds.slice(i, i + 80);
+            const { data: players } = await admin
+              .from("player_accounts")
+              .select("id, gender, player_category, level")
+              .in("id", batch);
+
+            for (const p of players || []) {
+              if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
+                const rawGender = String(p.gender || "").toLowerCase();
+                const playerGender =
+                  rawGender === "m" || rawGender === "male"
+                    ? "male"
+                    : rawGender === "f" || rawGender === "female"
+                    ? "female"
+                    : null;
+                if (playerGender && playerGender !== String(tournament.gender).toLowerCase()) {
+                  continue;
+                }
+              }
+              if (hasLevelConstraints) {
+                const lvl = p.level != null ? Number(p.level) : null;
+                if (
+                  !playerMatchesAnyCategory(
+                    { player_category: p.player_category, level: lvl },
+                    eligibilityCats,
+                  )
+                ) {
+                  continue;
+                }
+              }
+              filteredIds.push(p.id);
+            }
+          }
+          targetPlayerIds = filteredIds;
         }
       }
-
-      if (targetPlayerIds.length === 0) {
-        details.push({ id: tournament.id, skipped: "no_targets" });
-        continue;
-      }
-
-      // Gender + level filter in batches
-      const filteredIds: string[] = [];
-      for (let i = 0; i < targetPlayerIds.length; i += 500) {
-        const batch = targetPlayerIds.slice(i, i + 500);
-        const { data: players } = await admin
-          .from("player_accounts")
-          .select("id, gender, player_category, level")
-          .in("id", batch);
-
-        for (const p of players || []) {
-          if (tournament.gender && tournament.gender !== "all" && tournament.gender !== "mixed") {
-            const playerGender =
-              p.gender ||
-              (p.player_category?.startsWith("M") ? "male" : null) ||
-              (p.player_category?.startsWith("F") ? "female" : null);
-            if (playerGender && playerGender !== tournament.gender) continue;
-          }
-
-          // On forceResend always apply level filter when categories have constraints.
-          // On first notify also apply if constraints exist (avoid irrelevant levels).
-          if (hasLevelConstraints) {
-            const lvl = p.level != null ? Number(p.level) : null;
-            if (!playerLevelMatches(lvl, levelRanges)) continue;
-          }
-
-          filteredIds.push(p.id);
-        }
-      }
-      targetPlayerIds = filteredIds;
 
       if (targetPlayerIds.length === 0) {
         details.push({ id: tournament.id, skipped: "no_targets_after_filter" });
@@ -392,32 +442,41 @@ Deno.serve(async (req: Request) => {
 
       const results = await Promise.allSettled(
         targets.map(async (playerAccountId: string) => {
-          return await deliverWebPushNotifications(admin, {
+          // Prefer player-app subscriptions; fall back to any subscription for that account
+          let result = await deliverWebPushNotifications(admin, {
             vapidPublicKey,
             vapidPrivateKey,
             playerAccountId,
             payload,
             appSource: "player",
           });
+          if (result.totalSubscriptions === 0) {
+            result = await deliverWebPushNotifications(admin, {
+              vapidPublicKey,
+              vapidPrivateKey,
+              playerAccountId,
+              payload,
+            });
+          }
+          return result;
         }),
       );
 
       let sentCount = 0;
+      let withSubs = 0;
       for (const r of results) {
         if (r.status === "fulfilled") {
           sentCount += r.value.sentCount;
+          if (r.value.totalSubscriptions > 0) withSubs++;
         }
       }
 
-      // Mark first activation notify as sent (resend bypasses this check via forceResend)
       if (sentCount > 0 && !forceResend) {
-        await admin
-          .from("open_game_notifications_sent")
-          .insert({
-            game_id: tournament.id,
-            player_account_id: targets[0],
-            notification_type: "new_tournament",
-          });
+        await admin.from("open_game_notifications_sent").insert({
+          game_id: tournament.id,
+          player_account_id: targets[0],
+          notification_type: "new_tournament",
+        });
       }
 
       totalNotified += sentCount;
@@ -425,11 +484,15 @@ Deno.serve(async (req: Request) => {
         id: tournament.id,
         name: tournament.name,
         targets: targets.length,
+        with_push: withSubs,
+        eligible_with_push: withSubs,
         sent: sentCount,
         forceResend,
         levelFilter: hasLevelConstraints,
       });
-      console.log(`[notify-new-tournament] "${tournament.name}": ${sentCount} push to ${targets.length} targets`);
+      console.log(
+        `[notify-new-tournament] "${tournament.name}": ${sentCount} push to ${targets.length} targets (${withSubs} had subscriptions)`,
+      );
     }
 
     return new Response(
@@ -444,7 +507,10 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     console.error("[notify-new-tournament] Error:", error);
     return new Response(
-      JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
