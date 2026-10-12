@@ -44,6 +44,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
     mixed_knockout: (tournament as any).mixed_knockout || false,
     format: tournament.format || 'round_robin',
     round_robin_type: (tournament as any).round_robin_type || null,
+    ranking_tier: ((tournament as any).ranking_tier || 'regular') as 'master' | 'regular' | 'social',
     swiss_rounds: (tournament as any).swiss_rounds ?? 5,
   });
   const [loading, setLoading] = useState(false);
@@ -366,6 +367,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
         mixed_knockout: formData.mixed_knockout,
         format: formData.format,
         round_robin_type: isLadderFmt ? null : formData.round_robin_type,
+        ranking_tier: formData.ranking_tier || 'regular',
         swiss_rounds: formData.format === 'swiss_teams'
           ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
           : null,
@@ -1101,6 +1103,38 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                   />
                 </div>
               )}
+            </div>
+          </div>
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-1">
+              {(t.tournament as any).rankingTierTitle || 'Pontos do Ranking 12 Meses'}
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              {(t.tournament as any).rankingTierHelper || 'Escolhe a escala de pontos deste torneio no ranking deslizante.'}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {([
+                { value: 'master' as const, label: (t.tournament as any).rankingTierMaster || 'Master', hint: (t.tournament as any).rankingTierMasterHint || '1º 1000 · 2º 600 · 3º/4º 360' },
+                { value: 'regular' as const, label: (t.tournament as any).rankingTierOpen || 'Open', hint: (t.tournament as any).rankingTierOpenHint || '1º 500 · 2º 300 · 3º/4º 180' },
+                { value: 'social' as const, label: (t.tournament as any).rankingTierAmericano || 'Americano', hint: (t.tournament as any).rankingTierAmericanoHint || '1º 250 · 2º 150 · 3º/4º 90' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, ranking_tier: opt.value })}
+                  className={`text-left py-2.5 px-3 rounded-lg text-sm border transition-colors ${
+                    formData.ranking_tier === opt.value
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="font-medium block">{opt.label}</span>
+                  <span className={`text-[11px] mt-0.5 block ${formData.ranking_tier === opt.value ? 'text-blue-100' : 'text-gray-500'}`}>
+                    {opt.hint}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
 

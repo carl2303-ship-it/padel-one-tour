@@ -1,1 +1,1297 @@
-@agent-tools:579c5656-9b85-4c65-aec4-70eda195f765.txt
+import { useState, useEffect } from 'react';
+import { supabase, DailyScheduleEntry } from '../lib/supabase';
+import { useI18n } from '../lib/i18nContext';
+import { useAuth } from '../lib/authContext';
+import { X, Upload, Plus, Trash2, MapPin } from 'lucide-react';
+import TimeInput24h from './TimeInput24h';
+import { compressImage, formatFileSize } from '../lib/imageCompressor';
+import { geocodeAddress } from '../lib/geocoding';
+
+type CreateTournamentModalProps = {
+  onClose: () => void;
+  onSuccess: () => void;
+  isIndependentOrganizer?: boolean;
+};
+
+type LadderCategoryFormRow = { name: string; min_level: string; max_level: string; max_teams: string };
+
+export default function CreateTournamentModal({ onClose, onSuccess, isIndependentOrganizer }: CreateTournamentModalProps) {
+  const { t } = useI18n();
+  const { user } = useAuth();
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    image_url: '',
+    start_date: '',
+    end_date: '',
+    start_time: '09:00',
+    end_time: '12:00',
+    daily_start_time: '09:00',
+    daily_end_time: '21:00',
+    member_price: 0,
+    non_member_price: 0,
+    allow_club_payment: false,
+    has_dinner_option: false,
+    format: 'round_robin' as string,
+    round_robin_type: 'teams' as string | null,
+    ranking_tier: 'regular' as 'master' | 'regular' | 'social',
+    gender: '' as string,
+    challenge_limit: 5,
+    swiss_rounds: 5,
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>('');
+  const [uploading, setUploading] = useState(false);
+  const [dailySchedules, setDailySchedules] = useState<DailyScheduleEntry[]>([]);
+  const [expandedDayIndex, setExpandedDayIndex] = useState<number | null>(null);
+  const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
+  const [selectedClubId, setSelectedClubId] = useState<string>('');
+  /** Ladder: one or more host clubs (stored in tournaments.club_ids; club_id = first). */
+  const [selectedClubIds, setSelectedClubIds] = useState<string[]>([]);
+  const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
+  const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>([]);
+  const [manualCourtNames, setManualCourtNames] = useState<string[]>([]);
+  const [newCourtName, setNewCourtName] = useState('');
+  const [ladderCategoryRows, setLadderCategoryRows] = useState<LadderCategoryFormRow[]>([
+    { name: '', min_level: '', max_level: '', max_teams: '999' },
+  ]);
+  const [venueAddress, setVenueAddress] = useState('');
+  const [visibilityRadiusKm, setVisibilityRadiusKm] = useState(50);
+  const [tournamentVisibility, setTournamentVisibility] = useState<'public' | 'players_only' | 'invite_only'>('public');
+  const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  useEffect(() => {
+    fetchClubs();
+  }, []);
+
+  useEffect(() => {
+    if (formData.format === 'ladder') {
+      setLadderCategoryRows((rows) =>
+        rows.length === 0 ? [{ name: '', min_level: '', max_level: '', max_teams: '999' }] : rows
+      );
+    }
+  }, [formData.format]);
+
+  useEffect(() => {
+    if (selectedClubId) {
+      fetchClubCourts(selectedClubId);
+    } else {
+      setClubCourts([]);
+      setSelectedCourtNames([]);
+    }
+  }, [selectedClubId]);
+
+  const fetchClubs = async () => {
+    const { data } = await supabase
+      .from('clubs')
+      .select('id, name, owner_id')
+      .eq('is_active', true)
+      .order('name');
+
+    if (data) {
+      setClubs(data);
+    }
+  };
+
+  const fetchClubCourts = async (clubId: string) => {
+    const club = clubs.find(c => c.id === clubId);
+    if (!club) {
+      const { data: clubData } = await supabase
+        .from('clubs')
+        .select('owner_id')
+        .eq('id', clubId)
+        .maybeSingle();
+
+      if (clubData) {
+        const { data: courts } = await supabase
+          .from('club_courts')
+          .select('id, name, type, is_active')
+          .eq('user_id', clubData.owner_id)
+          .eq('is_active', true)
+          .order('sort_order');
+
+        if (courts) {
+          setClubCourts(courts);
+        }
+      }
+    } else {
+      const { data: courts } = await supabase
+        .from('club_courts')
+        .select('id, name, type, is_active')
+        .eq('user_id', club.owner_id)
+        .eq('is_active', true)
+        .order('sort_order');
+
+      if (courts) {
+        setClubCourts(courts);
+      }
+    }
+  };
+
+  const toggleCourtSelection = (courtName: string) => {
+    setSelectedCourtNames(prev => {
+      if (prev.includes(courtName)) {
+        return prev.filter(n => n !== courtName);
+      } else {
+        return [...prev, courtName];
+      }
+    });
+  };
+
+  const selectAllCourts = () => {
+    setSelectedCourtNames(clubCourts.map(c => c.name));
+  };
+
+  const clearCourtSelection = () => {
+    setSelectedCourtNames([]);
+  };
+
+  const toggleLadderClub = (clubId: string) => {
+    setSelectedClubIds((prev) =>
+      prev.includes(clubId) ? prev.filter((id) => id !== clubId) : [...prev, clubId]
+    );
+  };
+
+  const generateDailySchedules = (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return;
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const schedules: DailyScheduleEntry[] = [];
+
+    const existingMap = new Map(dailySchedules.map(s => [s.date, s]));
+
+    const current = new Date(start);
+    while (current <= end) {
+      const dateStr = current.toISOString().split('T')[0];
+      const existing = existingMap.get(dateStr);
+      schedules.push({
+        date: dateStr,
+        start_time: existing?.start_time || formData.daily_start_time,
+        end_time: existing?.end_time || formData.daily_end_time,
+        court_names: existing?.court_names,
+      });
+      current.setDate(current.getDate() + 1);
+    }
+
+    setDailySchedules(schedules);
+  };
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const maxSize = 2 * 1024 * 1024;
+
+    if (file.size > 10 * 1024 * 1024) {
+      setError(t.tournament.errorImageTooBig);
+      return;
+    }
+
+    try {
+      setError('');
+      const compressed = await compressImage(file);
+
+      if (compressed.size > maxSize) {
+        setError(`Imagem ainda muito grande apos compressao: ${formatFileSize(compressed.size)}. Tente uma imagem mais pequena.`);
+        return;
+      }
+
+      setImageFile(compressed);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(compressed);
+    } catch {
+      setError(t.tournament.errorProcessingImage);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    if (new Date(formData.end_date) < new Date(formData.start_date)) {
+      setError(t.tournament.errorEndDateBeforeStart);
+      setLoading(false);
+      return;
+    }
+
+    const isLadder = formData.format === 'ladder';
+
+    let venueLat: number | null = null;
+    let venueLng: number | null = null;
+    if (isIndependentOrganizer && venueAddress.trim()) {
+      setGeocodingStatus('loading');
+      const geo = await geocodeAddress(venueAddress.trim());
+      if (geo) {
+        venueLat = geo.lat;
+        venueLng = geo.lng;
+        setGeocodingStatus('success');
+      } else {
+        setGeocodingStatus('error');
+      }
+    }
+
+    if (isLadder) {
+      if (selectedClubIds.length === 0) {
+        setError(t.tournament.errorSelectLadderClubs);
+        setLoading(false);
+        return;
+      }
+      for (const row of ladderCategoryRows) {
+        if (!row.name.trim()) {
+          setError(t.tournament.errorLadderCategoryName);
+          setLoading(false);
+          return;
+        }
+        const mn = row.min_level.trim() === '' ? null : parseFloat(row.min_level.replace(',', '.'));
+        const mx = row.max_level.trim() === '' ? null : parseFloat(row.max_level.replace(',', '.'));
+        if (mn != null && mx != null && Number.isFinite(mn) && Number.isFinite(mx) && mn > mx) {
+          setError(t.tournament.errorLadderLevelRange);
+          setLoading(false);
+          return;
+        }
+      }
+    } else {
+      if (selectedClubId) {
+        if (selectedCourtNames.length === 0) {
+          setError(t.tournament.errorSelectCourts);
+          setLoading(false);
+          return;
+        }
+      } else {
+        if (manualCourtNames.length === 0) {
+          setError((t.tournament as any).errorNoCourts || 'Add at least one court');
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
+    let imageUrl = formData.image_url;
+
+    if (imageFile) {
+      setUploading(true);
+      const fileExt = imageFile.name.split('.').pop();
+      const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('tournament-images')
+        .upload(filePath, imageFile);
+
+      if (uploadError) {
+        setError(`Upload error: ${uploadError.message}`);
+        setLoading(false);
+        setUploading(false);
+        return;
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('tournament-images')
+        .getPublicUrl(filePath);
+
+      imageUrl = publicUrl;
+      setUploading(false);
+    }
+
+    const isLadderFmt = formData.format === 'ladder';
+    const primaryClubId = isLadderFmt ? selectedClubIds[0] : (selectedClubId || null);
+    const effectiveCourtNames = isLadderFmt ? [] : (selectedClubId ? selectedCourtNames : manualCourtNames);
+    const { data: tournamentData, error: submitError } = await supabase.from('tournaments').insert([
+      {
+        name: formData.name,
+        description: formData.description,
+        image_url: imageUrl,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
+        end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
+        daily_start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
+        daily_end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
+        format: formData.format,
+        round_robin_type: isLadderFmt ? null : formData.round_robin_type,
+        ranking_tier: formData.ranking_tier || 'regular',
+        swiss_rounds: formData.format === 'swiss_teams'
+          ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
+          : null,
+        max_teams: 999,
+        number_of_courts: isLadderFmt ? 1 : effectiveCourtNames.length,
+        match_duration_minutes: 30,
+        member_price: formData.member_price || null,
+        non_member_price: formData.non_member_price || null,
+        allow_club_payment: formData.allow_club_payment,
+        has_dinner_option: formData.has_dinner_option,
+        daily_schedules: isLadderFmt ? null : dailySchedules.length > 0 ? dailySchedules : null,
+        gender: formData.gender || null,
+        status: 'draft',
+        user_id: user?.id,
+        club_id: primaryClubId,
+        club_ids: isLadderFmt ? selectedClubIds : null,
+        court_names: effectiveCourtNames,
+        allow_public_registration: formData.format === 'club_league' ? false : true,
+        visibility: formData.format === 'club_league'
+          ? 'invite_only'
+          : (isIndependentOrganizer ? tournamentVisibility : 'public'),
+        venue_address: isIndependentOrganizer ? (venueAddress.trim() || null) : null,
+        venue_lat: venueLat,
+        venue_lng: venueLng,
+        visibility_radius_km: isIndependentOrganizer && tournamentVisibility === 'public' ? visibilityRadiusKm : 50,
+      },
+    ]).select();
+
+    if (submitError) {
+      setError(submitError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!tournamentData || tournamentData.length === 0) {
+      setError(t.tournament.errorCreate);
+      setLoading(false);
+      return;
+    }
+
+    const newTournamentId = tournamentData[0].id;
+
+    if (formData.format === 'ladder') {
+      const parseOptLevel = (s: string) => {
+        const v = s.trim().replace(',', '.');
+        if (!v) return null;
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const rowsToInsert = ladderCategoryRows.map((r) => ({
+        tournament_id: newTournamentId,
+        name: r.name.trim(),
+        format: 'ladder' as const,
+        number_of_groups: 0,
+        max_teams: Math.max(1, parseInt(r.max_teams, 10) || 999),
+        knockout_stage: null,
+        qualified_per_group: null,
+        min_level: parseOptLevel(r.min_level),
+        max_level: parseOptLevel(r.max_level),
+      }));
+      const { data: insertedCats, error: catError } = await supabase
+        .from('tournament_categories')
+        .insert(rowsToInsert)
+        .select('id');
+      if (catError) {
+        setError(catError.message);
+        setLoading(false);
+        return;
+      }
+      if (!insertedCats?.length) {
+        setError(t.tournament.errorCreate);
+        setLoading(false);
+        return;
+      }
+      const lim = Math.min(50, Math.max(1, Number(formData.challenge_limit) || 5));
+      const ladderInserts = insertedCats.map((c) => ({
+        tournament_id: newTournamentId,
+        category_id: c.id,
+        challenge_limit: lim,
+        challenge_window_days: 7,
+        positions: [],
+        pending_challenges: [],
+        ladder_status: 'setup' as const,
+      }));
+      const { error: ladderError } = await supabase.from('ladder_tournaments').insert(ladderInserts);
+      if (ladderError) {
+        setError(ladderError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (formData.format === 'club_league') {
+      const { error: catError } = await supabase.from('tournament_categories').insert({
+        tournament_id: newTournamentId,
+        name: 'Liga',
+        format: 'club_league',
+        number_of_groups: 0,
+        max_teams: 999,
+        knockout_stage: null,
+        qualified_per_group: null,
+        game_format: '2sets_stb',
+      });
+      if (catError) {
+        setError(catError.message);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Notification is sent only when tournament becomes active (Edit / publish), not on draft create.
+
+    onSuccess();
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-gray-900">{t.tournament.create}</h2>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {t.tournament.name} *
+            </label>
+            <input
+              type="text"
+              required
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder={t.tournament.namePlaceholder}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.description}</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Add tournament details, rules, or any additional information..."
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Género</label>
+            <select
+              value={formData.gender}
+              onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Aberto a todos</option>
+              <option value="male">Masculino</option>
+              <option value="female">Feminino</option>
+              <option value="mixed">Misto</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.format || 'Formato'}</label>
+            <p className="text-xs text-gray-500 mb-2">{t.tournament.formatHelper}</p>
+            <select
+              value={
+                formData.format === 'round_robin' && formData.round_robin_type === 'individual'
+                  ? 'round_robin_individual'
+                  : formData.format === 'round_robin' && formData.round_robin_type === 'teams'
+                    ? 'round_robin_teams'
+                    : formData.format
+              }
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'round_robin_individual') {
+                  setFormData({ ...formData, format: 'round_robin', round_robin_type: 'individual' });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
+                } else if (val === 'round_robin_teams') {
+                  setFormData({ ...formData, format: 'round_robin', round_robin_type: 'teams' });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
+                } else if (val === 'ladder') {
+                  setFormData({ ...formData, format: 'ladder', round_robin_type: null });
+                  setDailySchedules([]);
+                  setSelectedCourtNames([]);
+                  setSelectedClubIds((prev) => {
+                    if (prev.length > 0) return prev;
+                    return selectedClubId ? [selectedClubId] : [];
+                  });
+                } else {
+                  setFormData({ ...formData, format: val, round_robin_type: null });
+                  setSelectedClubIds([]);
+                  if (formData.start_date && formData.end_date) {
+                    generateDailySchedules(formData.start_date, formData.end_date);
+                  }
+                }
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <optgroup label={t.tournament.formatOptgroupIndividual}>
+                <option value="round_robin_individual">{t.tournament.formatOption_round_robin_individual}</option>
+                <option value="individual_groups_knockout">{t.tournament.formatOption_individual_groups_knockout}</option>
+                <option value="mixed_american">{t.tournament.formatOption_mixed_american}</option>
+              </optgroup>
+              <optgroup label={t.tournament.formatOptgroupTeams}>
+                <option value="round_robin_teams">{t.tournament.formatOption_round_robin_teams}</option>
+                <option value="groups_knockout">{t.tournament.formatOption_groups_knockout}</option>
+                <option value="swiss_teams">{t.tournament.formatOption_swiss_teams}</option>
+                <option value="single_elimination">{t.tournament.formatOption_single_elimination}</option>
+                <option value="crossed_playoffs_teams">{t.tournament.formatOption_crossed_playoffs_teams}</option>
+                <option value="super_teams">{t.tournament.formatOption_super_teams}</option>
+                <option value="club_league">{t.tournament.formatOption_club_league}</option>
+                <option value="ladder">{t.tournament.formatOption_ladder}</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-1">
+              {(t.tournament as any).rankingTierTitle || 'Pontos do Ranking 12 Meses'}
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              {(t.tournament as any).rankingTierHelper || 'Escolhe a escala de pontos deste torneio no ranking deslizante.'}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {([
+                { value: 'master' as const, label: (t.tournament as any).rankingTierMaster || 'Master', hint: (t.tournament as any).rankingTierMasterHint || '1º 1000 · 2º 600 · 3º/4º 360' },
+                { value: 'regular' as const, label: (t.tournament as any).rankingTierOpen || 'Open', hint: (t.tournament as any).rankingTierOpenHint || '1º 500 · 2º 300 · 3º/4º 180' },
+                { value: 'social' as const, label: (t.tournament as any).rankingTierAmericano || 'Americano', hint: (t.tournament as any).rankingTierAmericanoHint || '1º 250 · 2º 150 · 3º/4º 90' },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, ranking_tier: opt.value })}
+                  className={`text-left py-2.5 px-3 rounded-lg text-sm border transition-colors ${
+                    formData.ranking_tier === opt.value
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="font-medium block">{opt.label}</span>
+                  <span className={`text-[11px] mt-0.5 block ${formData.ranking_tier === opt.value ? 'text-blue-100' : 'text-gray-500'}`}>
+                    {opt.hint}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {formData.format === 'club_league' && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm px-3 py-2 rounded-lg">
+              Liga de Clubes: inscrição só pelo organizador; o capitão submete a lineup na app Padel1 (secreta até 30 min antes do jogo); jogos ao melhor de 2 sets + Super TB.
+            </div>
+          )}
+
+          {formData.format === 'swiss_teams' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t.tournament.swissRoundsLabel}
+              </label>
+              <p className="text-xs text-gray-500 mb-2">{t.tournament.swissRoundsHelp}</p>
+              <input
+                type="number"
+                min={3}
+                max={9}
+                value={formData.swiss_rounds}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    swiss_rounds: Math.min(9, Math.max(3, parseInt(e.target.value, 10) || 5)),
+                  })
+                }
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          )}
+
+          {formData.format === 'ladder' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t.tournament.ladderChallengeLimitLabel}</label>
+                <p className="text-xs text-gray-500 mb-2">{t.tournament.ladderChallengeLimitHelp}</p>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={formData.challenge_limit}
+                  onChange={(e) => setFormData({ ...formData, challenge_limit: Number(e.target.value) })}
+                  className="w-32 px-3 py-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+              <div className="border border-gray-200 rounded-lg p-4 space-y-3 bg-gray-50/80">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">{t.tournament.ladderCategoriesTitle}</h3>
+                  <p className="text-xs text-gray-500 mt-1">{t.tournament.ladderCategoriesHint}</p>
+                </div>
+                {ladderCategoryRows.map((row, idx) => (
+                  <div key={idx} className="flex flex-wrap gap-2 items-end border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                    <div className="flex-1 min-w-[140px]">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderCategoryNameLabel} *</label>
+                      <input
+                        type="text"
+                        required
+                        value={row.name}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], name: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder={t.tournament.ladderDefaultCategoryName}
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMinLevelPlaceholder}</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.min_level}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], min_level: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="—"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMaxLevelPlaceholder}</label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={row.max_level}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], max_level: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                        placeholder="—"
+                      />
+                    </div>
+                    <div className="w-24">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t.tournament.ladderMaxTeamsShort}</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={row.max_teams}
+                        onChange={(e) => {
+                          const next = [...ladderCategoryRows];
+                          next[idx] = { ...next[idx], max_teams: e.target.value };
+                          setLadderCategoryRows(next);
+                        }}
+                        className="w-full px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    {ladderCategoryRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setLadderCategoryRows((r) => r.filter((_, i) => i !== idx))}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                        aria-label={t.tournament.ladderRemoveCategoryRow}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLadderCategoryRows((r) => [...r, { name: '', min_level: '', max_level: '', max_teams: '999' }])
+                  }
+                  className="inline-flex items-center gap-2 text-sm text-blue-600 font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  {t.tournament.ladderAddCategoryRow}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.imageUrl}</label>
+
+            {imagePreview ? (
+              <div className="relative">
+                <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageFile(null);
+                    setImagePreview('');
+                  }}
+                  className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  <Upload className="w-10 h-10 text-gray-400 mb-3" />
+                  <p className="mb-2 text-sm text-gray-500">
+                    <span className="font-semibold">{t.tournament.uploadClick}</span> {t.tournament.uploadDrag}
+                  </p>
+                  <p className="text-xs text-gray-500">{t.tournament.uploadHint}</p>
+                </div>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                />
+              </label>
+            )}
+            <p className="text-xs text-gray-500 mt-1">{t.tournament.imageUrlHelper}</p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t.tournament.startDate} *
+              </label>
+              <input
+                type="date"
+                required
+                value={formData.start_date}
+                onChange={(e) => {
+                  setFormData({ ...formData, start_date: e.target.value });
+                  if (formData.format !== 'ladder' && e.target.value && formData.end_date) {
+                    generateDailySchedules(e.target.value, formData.end_date);
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.endDate} *</label>
+              <input
+                type="date"
+                required
+                value={formData.end_date}
+                onChange={(e) => {
+                  setFormData({ ...formData, end_date: e.target.value });
+                  if (formData.format !== 'ladder' && formData.start_date && e.target.value) {
+                    generateDailySchedules(formData.start_date, e.target.value);
+                  }
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {formData.format !== 'ladder' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t.tournament.dailyStartTime} *
+              </label>
+              <TimeInput24h
+                value={formData.daily_start_time}
+                onChange={(value) => setFormData({ ...formData, daily_start_time: value })}
+              />
+              <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyStartTimeHelper}</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {t.tournament.dailyEndTime} *
+              </label>
+              <TimeInput24h
+                value={formData.daily_end_time}
+                onChange={(value) => setFormData({ ...formData, daily_end_time: value })}
+              />
+              <p className="text-xs text-gray-500 mt-1">{t.tournament.dailyEndTimeHelper}</p>
+            </div>
+          </div>
+          )}
+
+          {formData.format !== 'ladder' && dailySchedules.length > 0 && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
+              <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {dailySchedules.map((schedule, index) => {
+                  const allCourtNames = selectedClubId ? selectedCourtNames : manualCourtNames;
+                  const dayCourtNames = schedule.court_names || allCourtNames;
+                  const isExpanded = expandedDayIndex === index;
+                  const hasCustomCourts = !!schedule.court_names && schedule.court_names.length > 0;
+                  return (
+                    <div key={index} className="bg-white rounded border border-gray-200">
+                      <div className="grid grid-cols-3 gap-2 items-center p-2">
+                        <div className="text-sm font-medium text-gray-700">
+                          {(() => {
+                            const d = new Date(schedule.date + 'T00:00:00');
+                            return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
+                          })()}
+                        </div>
+                        <TimeInput24h
+                          value={schedule.start_time}
+                          onChange={(value) => {
+                            const updated = [...dailySchedules];
+                            updated[index] = { ...updated[index], start_time: value };
+                            setDailySchedules(updated);
+                          }}
+                        />
+                        <TimeInput24h
+                          value={schedule.end_time}
+                          onChange={(value) => {
+                            const updated = [...dailySchedules];
+                            updated[index] = { ...updated[index], end_time: value };
+                            setDailySchedules(updated);
+                          }}
+                        />
+                      </div>
+                      {(clubCourts.length > 0 || manualCourtNames.length > 0) && (
+                        <div className="px-2 pb-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedDayIndex(isExpanded ? null : index)}
+                            className={`text-xs px-2 py-1 rounded transition-colors ${
+                              hasCustomCourts
+                                ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            {hasCustomCourts
+                              ? `Campos: ${dayCourtNames.length} personalizados`
+                              : `Campos: ${allCourtNames.length} (global)`
+                            }
+                            <span className="ml-1">{isExpanded ? '▲' : '▼'}</span>
+                          </button>
+                          {isExpanded && (
+                            <div className="mt-2 p-2 bg-gray-50 rounded border border-gray-100">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs font-medium text-gray-600">Campos para este dia</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...dailySchedules];
+                                    updated[index] = { ...updated[index], court_names: undefined };
+                                    setDailySchedules(updated);
+                                  }}
+                                  className="text-xs text-gray-500 hover:text-gray-700"
+                                >
+                                  Usar global
+                                </button>
+                              </div>
+                              <div className="space-y-1">
+                                {(selectedClubId ? clubCourts.map(c => ({ name: c.name, type: c.type })) : manualCourtNames.map(n => ({ name: n, type: '' }))).map((court) => (
+                                  <label
+                                    key={court.name}
+                                    className={`flex items-center gap-2 p-1.5 rounded cursor-pointer text-xs transition-colors ${
+                                      dayCourtNames.includes(court.name)
+                                        ? 'bg-blue-50 border border-blue-200'
+                                        : 'hover:bg-white border border-transparent'
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={dayCourtNames.includes(court.name)}
+                                      onChange={() => {
+                                        const updated = [...dailySchedules];
+                                        const currentCourts = updated[index].court_names || [...allCourtNames];
+                                        const newCourts = currentCourts.includes(court.name)
+                                          ? currentCourts.filter(n => n !== court.name)
+                                          : [...currentCourts, court.name];
+                                        updated[index] = { ...updated[index], court_names: newCourts };
+                                        setDailySchedules(updated);
+                                      }}
+                                      className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded"
+                                    />
+                                    <span className="text-gray-700">{court.name}</span>
+                                    {court.type && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                                      court.type === 'indoor'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : court.type === 'outdoor'
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {court.type}
+                                    </span>}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>
+            <p className="text-xs text-gray-500 mb-4">Defina preços diferenciados para membros e não-membros do clube</p>
+            
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para membros do clube</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Preço Não-Membros (€)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.non_member_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, non_member_price: parseFloat(e.target.value) || 0 })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">Preço para não-membros</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="allow_club_payment"
+                checked={formData.allow_club_payment}
+                onChange={(e) => setFormData({ ...formData, allow_club_payment: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="allow_club_payment" className="text-sm font-medium text-gray-700">
+                Permitir pagamento no clube
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem escolher pagar no local em vez de pagar online. Pode marcar o pagamento como pago na lista de inscritos deste torneio.
+            </p>
+
+            <div className="flex items-center gap-3 mt-3">
+              <input
+                type="checkbox"
+                id="has_dinner_option"
+                checked={formData.has_dinner_option}
+                onChange={(e) => setFormData({ ...formData, has_dinner_option: e.target.checked })}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="has_dinner_option" className="text-sm font-medium text-gray-700">
+                🍽️ Opção de jantar
+              </label>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-7">
+              Se ativo, os jogadores podem indicar na inscrição se querem jantar.
+            </p>
+          </div>
+
+          {isIndependentOrganizer && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-blue-600" />
+                Local e Visibilidade
+              </h3>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Quem vê este torneio?</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('public')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'public'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Na minha zona
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('players_only')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'players_only'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Só os meus jogadores
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTournamentVisibility('invite_only')}
+                    className={`py-2.5 px-3 rounded-lg text-sm font-medium border transition-colors ${
+                      tournamentVisibility === 'invite_only'
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Por convite
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5">
+                  {tournamentVisibility === 'public' && 'Jogadores na zona do local vêem este torneio automaticamente na app.'}
+                  {tournamentVisibility === 'players_only' && 'Apenas contactos da tua lista de jogadores vêem este torneio.'}
+                  {tournamentVisibility === 'invite_only' && 'Apenas jogadores convidados vêem este torneio.'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Morada / Local</label>
+                <input
+                  type="text"
+                  value={venueAddress}
+                  onChange={(e) => { setVenueAddress(e.target.value); setGeocodingStatus('idle'); }}
+                  placeholder="Ex: Pavilhão Municipal, Rua da Escola, Lisboa"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  A morada será convertida em coordenadas{tournamentVisibility === 'public' ? ' para a descoberta por zona' : ''}.
+                  {geocodingStatus === 'success' && <span className="text-green-600 ml-1">Localização encontrada.</span>}
+                  {geocodingStatus === 'error' && <span className="text-amber-600 ml-1">Morada não encontrada - o torneio será criado sem geolocalização.</span>}
+                </p>
+              </div>
+              {tournamentVisibility === 'public' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Raio de visibilidade</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min="5"
+                      max="200"
+                      step="5"
+                      value={visibilityRadiusKm}
+                      onChange={(e) => setVisibilityRadiusKm(parseInt(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-sm font-semibold text-gray-700 w-16 text-right">{visibilityRadiusKm} km</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Jogadores até {visibilityRadiusKm} km verão este torneio automaticamente na app Player.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">
+              {formData.format === 'ladder' ? `${t.tournament.ladderVenuesLabel} *` : `${t.tournament.clubAndCourts} *`}
+            </h3>
+
+            {formData.format === 'ladder' ? (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-600">{t.tournament.ladderVenuesHint}</p>
+                <div className="border border-gray-200 rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto bg-white">
+                  {clubs.map((club) => (
+                    <label
+                      key={club.id}
+                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer ${
+                        selectedClubIds.includes(club.id)
+                          ? 'bg-blue-50 border border-blue-200'
+                          : 'border border-transparent hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedClubIds.includes(club.id)}
+                        onChange={() => toggleLadderClub(club.id)}
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded"
+                      />
+                      <span className="text-sm font-medium text-gray-800">{club.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-green-700 font-medium">
+                  {selectedClubIds.length} {t.tournament.ladderClubsSelectedSuffix}
+                </p>
+              </div>
+            ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel?.replace(' *', '') || 'Club'}</label>
+                <select
+                  value={selectedClubId}
+                  onChange={(e) => {
+                    setSelectedClubId(e.target.value);
+                    setSelectedCourtNames([]);
+                  }}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                >
+                  <option value="">{(t.tournament as any).noClubOption || '-- No club (independent organizer) --'}</option>
+                  {clubs.map((club) => (
+                    <option key={club.id} value={club.id}>{club.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedClubId && clubCourts.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">{t.tournament.courtsForTournament}</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllCourts}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        {t.tournament.selectAll}
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <button
+                        type="button"
+                        onClick={clearCourtSelection}
+                        className="text-xs text-gray-600 hover:text-gray-800"
+                      >
+                        {t.tournament.clearSelection}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {clubCourts.map((court) => (
+                      <label
+                        key={court.id}
+                        className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all ${
+                          selectedCourtNames.includes(court.name)
+                            ? 'bg-blue-100 border-2 border-blue-400'
+                            : 'bg-white border border-gray-200 hover:border-blue-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedCourtNames.includes(court.name)}
+                          onChange={() => toggleCourtSelection(court.name)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700 font-medium">{court.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-green-600 mt-2 font-medium">
+                    {selectedCourtNames.length} {t.tournament.courtsSelectedCount}
+                  </p>
+                </div>
+              )}
+
+              {selectedClubId && clubCourts.length === 0 && (
+                <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">
+                  {t.tournament.noCourtsInClub}
+                </p>
+              )}
+
+              {!selectedClubId && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {(t.tournament as any).manualCourts || 'Tournament Courts'} *
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    {(t.tournament as any).manualCourtsHint || 'Add the courts where the tournament will take place.'}
+                  </p>
+                  {manualCourtNames.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {manualCourtNames.map((name, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => {
+                              const updated = [...manualCourtNames];
+                              updated[idx] = e.target.value;
+                              setManualCourtNames(updated);
+                            }}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setManualCourtNames(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCourtName}
+                      onChange={(e) => setNewCourtName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newCourtName.trim()) {
+                          e.preventDefault();
+                          setManualCourtNames(prev => [...prev, newCourtName.trim()]);
+                          setNewCourtName('');
+                        }
+                      }}
+                      placeholder={(t.tournament as any).courtNamePlaceholder || 'Court name (e.g. Court 1)'}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newCourtName.trim()) {
+                          setManualCourtNames(prev => [...prev, newCourtName.trim()]);
+                          setNewCourtName('');
+                        }
+                      }}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium flex items-center gap-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {(t.tournament as any).addCourt || 'Add'}
+                    </button>
+                  </div>
+                  {manualCourtNames.length > 0 && (
+                    <p className="text-xs text-green-600 mt-2 font-medium">
+                      {manualCourtNames.length} {t.tournament.courtsSelectedCount}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+            >
+              {t.button.cancel}
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? t.message.saving : t.tournament.create}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
