@@ -14,26 +14,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: cursor/ranking-tier-tournament-settings-2750
-      - name: Fix corrupted payloads
-        run: python3 scripts/ranking-tier-payloads/fix_payloads.py
-      - name: Decode and commit UI files
+      - name: Apply ranking-tier UI and translations
         run: |
           set -euo pipefail
+          python3 scripts/ranking-tier-payloads/fix_payloads.py
           python3 <<'PY'
           import base64, zlib, json, hashlib
           from pathlib import Path
           root = Path('scripts/ranking-tier-payloads')
           manifest = json.loads((root / 'manifest.json').read_text())
           for item in manifest:
+              b64_path = root / item['b64_file']
               if item.get('parts'):
+                  if not all((root / p).exists() for p in item['parts']):
+                      print('skip', item['path'])
+                      continue
                   b64 = ''.join((root / p).read_text().strip() for p in item['parts'])
               else:
-                  b64 = (root / item['b64_file']).read_text().strip()
+                  if not b64_path.exists():
+                      print('skip', item['path'])
+                      continue
+                  b64 = b64_path.read_text().strip()
               data = zlib.decompress(base64.b64decode(b64))
               assert hashlib.md5(data).hexdigest() == item['md5'], (item['path'], hashlib.md5(data).hexdigest())
               Path(item['path']).write_bytes(data)
               print('wrote', item['path'], len(data))
           PY
+          python3 scripts/ranking-tier-payloads/patch_translations.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/components/CreateTournamentModal.tsx src/components/EditTournamentModal.tsx src/lib/translations.ts
@@ -42,5 +49,5 @@ jobs:
             echo "No changes"
             exit 0
           fi
-          git commit -m "feat: card Master / Open / Americano nas definições do torneio (UI)"
+          git commit -m "feat: card Master / Open / Americano nas definicoes do torneio (UI)"
           git push
