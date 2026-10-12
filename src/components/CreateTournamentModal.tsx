@@ -1,1 +1,1 @@
-@/workspace/.push_CreateTournamentModal.tsx
+PLACEHOLDER_REPLACE_WITH_FILE_CONTENT
