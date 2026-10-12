@@ -10,17 +10,5 @@
     "b64_file": "src__components__EditTournamentModal.tsx.zlib.b64",
     "md5": "9354f18dcfaa1b475991b7cc9f271ad5",
     "len": 65148
-  },
-  {
-    "path": "src/lib/translations.ts",
-    "b64_file": "src__lib__translations.ts.zlib.b64",
-    "md5": "440cb21d3a0b50af96db83dd90ce4269",
-    "len": 186689,
-    "parts": [
-      "src__lib__translations.ts.zlib.b64.part1",
-      "src__lib__translations.ts.zlib.b64.part2",
-      "src__lib__translations.ts.zlib.b64.part3",
-      "src__lib__translations.ts.zlib.b64.part4"
-    ]
   }
 ]
