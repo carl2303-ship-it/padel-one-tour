@@ -463,25 +463,35 @@ export function parseEuDate(input: string | null | undefined): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/**
+ * Read date/time as stored wall-clock (avoids timestamptz → local shifts).
+ * Accepts "YYYY-MM-DDTHH:mm:ss", "YYYY-MM-DD HH:mm:ss+00", etc.
+ */
+export function wallClockFromScheduled(
+  iso: string | null | undefined
+): { dateIso: string; timeHm: string } {
+  if (!iso) return { dateIso: '', timeHm: '' };
+  const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})/.exec(String(iso).trim());
+  if (m) return { dateIso: m[1], timeHm: `${m[2]}:${m[3]}` };
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return { dateIso: '', timeHm: '' };
+  return {
+    dateIso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+    timeHm: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+  };
+}
+
 /** Format Date/ISO timestamp as dd/MM/yyyy HH:mm (24h) */
 export function formatEuDateTime(iso: string | null | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+  const { dateIso, timeHm } = wallClockFromScheduled(iso);
+  if (!dateIso) return '';
+  return `${formatEuDate(dateIso)} ${timeHm}`;
 }
 
 /** Extract HH:mm (24h) from ISO timestamp */
 export function formatEuTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return wallClockFromScheduled(iso).timeHm;
 }
 
 /** Parse HH:mm or H:mm (24h). Rejects AM/PM strings. */

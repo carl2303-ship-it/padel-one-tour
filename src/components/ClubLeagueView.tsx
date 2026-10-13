@@ -18,12 +18,13 @@ import ClubLeagueScheduleModal from './ClubLeagueScheduleModal';
 import {
   formatEuDate,
   formatEuDateTime,
-  formatEuTime,
   homeWeekdayLabel,
   parseEuDate,
   parseEuTime,
   scheduledTimeForHomeGame,
+  wallClockFromScheduled,
 } from '../lib/clubLeagueScheduler';
+import MiniMonthDatePicker from './MiniMonthDatePicker';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
 
@@ -78,6 +79,77 @@ function LineupTeamStatusPills({
     <div className="flex flex-wrap gap-1.5 mt-1.5">
       {pill(homeName, homeSubmitted)}
       {pill(awayName, awaySubmitted)}
+    </div>
+  );
+}
+
+/** Organizer editor: free date (mini calendar) + time + explicit save. */
+function ConfrontationScheduleEditor({
+  confrontationId,
+  scheduledTime,
+  fallbackDateIso,
+  busy,
+  onSave,
+}: {
+  confrontationId: string;
+  scheduledTime: string | null | undefined;
+  fallbackDateIso?: string | null;
+  busy: boolean;
+  onSave: (confrontationId: string, dateEu: string, timeHm: string) => Promise<void>;
+}) {
+  const wall = wallClockFromScheduled(scheduledTime);
+  const initialDateIso = wall.dateIso || fallbackDateIso || '';
+  const initialTime = wall.timeHm || '18:00';
+  const [dateEu, setDateEu] = useState(formatEuDate(initialDateIso));
+  const [timeHm, setTimeHm] = useState(initialTime);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const next = wallClockFromScheduled(scheduledTime);
+    setDateEu(formatEuDate(next.dateIso || fallbackDateIso || ''));
+    setTimeHm(next.timeHm || '18:00');
+  }, [scheduledTime, fallbackDateIso, confrontationId]);
+
+  const dirty =
+    dateEu !== formatEuDate(initialDateIso) || timeHm !== initialTime;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave(confrontationId, dateEu, timeHm);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-gray-50">
+      <div className="min-w-[11rem] flex-1 sm:flex-none sm:w-56">
+        <MiniMonthDatePicker
+          label="Dia do jogo"
+          value={dateEu}
+          onChange={eu => setDateEu(eu)}
+        />
+      </div>
+      <div>
+        <label className="block text-[10px] text-gray-500 mb-0.5">Hora 24h</label>
+        <input
+          type="time"
+          value={timeHm}
+          disabled={busy || saving}
+          onChange={e => setTimeHm(e.target.value.slice(0, 5))}
+          className="border rounded-lg px-2 py-1.5 text-sm font-mono w-[7.5rem]"
+        />
+      </div>
+      <button
+        type="button"
+        disabled={busy || saving || !dirty || !dateEu}
+        onClick={() => void save()}
+        className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded-lg disabled:opacity-40 inline-flex items-center gap-1"
+      >
+        {(busy || saving) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+        Guardar
+      </button>
     </div>
   );
 }
@@ -662,6 +734,15 @@ export default function ClubLeagueView({
                             )}
                           </div>
                         </div>
+                        {isOrganizer && (
+                          <ConfrontationScheduleEditor
+                            confrontationId={c.id}
+                            scheduledTime={c.scheduled_time}
+                            fallbackDateIso={md?.matchday_date}
+                            busy={busy}
+                            onSave={updateConfrontationSchedule}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -677,7 +758,6 @@ export default function ClubLeagueView({
               const tb = b.scheduled_time ? new Date(b.scheduled_time).getTime() : 0;
               return ta - tb;
             });
-            const dayOptions = [md.matchday_date, md.matchday_date_2].filter(Boolean) as string[];
             return (
               <div key={md.id} className="bg-white rounded-xl shadow-lg p-4">
                 <div className="flex flex-col gap-3 mb-3">
@@ -697,44 +777,31 @@ export default function ClubLeagueView({
                   </div>
                   {isOrganizer && (
                     <div className="flex flex-wrap items-end gap-2 text-sm">
-                      <div>
-                        <label className="block text-[10px] text-gray-500 mb-0.5">Dia 1</label>
-                        <input
-                          type="text"
-                          placeholder="dd/MM/aaaa"
-                          defaultValue={formatEuDate(md.matchday_date)}
-                          key={`d1-${md.id}-${md.matchday_date}`}
-                          disabled={busy}
-                          onBlur={e => {
-                            const next = e.target.value.trim();
-                            const prev = formatEuDate(md.matchday_date);
-                            if (next && next !== prev) {
-                              void updateMatchdayDates(md, next, formatEuDate(md.matchday_date_2));
+                      <div className="min-w-[11rem] w-56">
+                        <MiniMonthDatePicker
+                          label="Dia 1 (referência jornada)"
+                          value={formatEuDate(md.matchday_date)}
+                          onChange={(eu) => {
+                            if (eu && eu !== formatEuDate(md.matchday_date)) {
+                              void updateMatchdayDates(md, eu, formatEuDate(md.matchday_date_2));
                             }
                           }}
-                          className="border rounded-lg px-2 py-1 w-[8.5rem]"
                         />
                       </div>
-                      <div>
-                        <label className="block text-[10px] text-gray-500 mb-0.5">Dia 2</label>
-                        <input
-                          type="text"
-                          placeholder="dd/MM/aaaa"
-                          defaultValue={formatEuDate(md.matchday_date_2)}
-                          key={`d2-${md.id}-${md.matchday_date_2}`}
-                          disabled={busy}
-                          onBlur={e => {
-                            const next = e.target.value.trim();
-                            const prev = formatEuDate(md.matchday_date_2);
-                            if (next !== prev) {
+                      <div className="min-w-[11rem] w-56">
+                        <MiniMonthDatePicker
+                          label="Dia 2"
+                          optional
+                          value={formatEuDate(md.matchday_date_2)}
+                          onChange={(eu) => {
+                            if (eu !== formatEuDate(md.matchday_date_2)) {
                               void updateMatchdayDates(
                                 md,
-                                formatEuDate(md.matchday_date) || next,
-                                next
+                                formatEuDate(md.matchday_date) || eu,
+                                eu
                               );
                             }
                           }}
-                          className="border rounded-lg px-2 py-1 w-[8.5rem]"
                         />
                       </div>
                     </div>
@@ -744,15 +811,6 @@ export default function ClubLeagueView({
                   {list.map(c => {
                     const home = c.home_team_id ? teamById.get(c.home_team_id) : null;
                     const away = c.away_team_id ? teamById.get(c.away_team_id) : null;
-                    const scheduled = c.scheduled_time ? new Date(c.scheduled_time) : null;
-                    const dateIso =
-                      scheduled && !Number.isNaN(scheduled.getTime())
-                        ? `${scheduled.getFullYear()}-${String(scheduled.getMonth() + 1).padStart(2, '0')}-${String(scheduled.getDate()).padStart(2, '0')}`
-                        : md.matchday_date || '';
-                    const timeValue =
-                      scheduled && !Number.isNaN(scheduled.getTime())
-                        ? formatEuTime(c.scheduled_time)
-                        : '18:00';
                     const homeSubmitted = c.home_team_id
                       ? lineupSubmitted.has(`${c.id}:${c.home_team_id}`)
                       : false;
@@ -816,75 +874,13 @@ export default function ClubLeagueView({
                           </div>
                         </div>
                         {isOrganizer && (
-                          <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-gray-50">
-                            <div>
-                              <label className="block text-[10px] text-gray-500 mb-0.5">
-                                Dia do jogo
-                              </label>
-                              {dayOptions.length > 0 ? (
-                                <select
-                                  key={`sel-${c.id}-${c.scheduled_time}`}
-                                  defaultValue={dateIso}
-                                  disabled={busy}
-                                  onChange={e => {
-                                    void updateConfrontationSchedule(c.id, formatEuDate(e.target.value), timeValue);
-                                  }}
-                                  className="border rounded-lg px-2 py-1 text-sm"
-                                >
-                                  {dayOptions.map(d => (
-                                    <option key={d} value={d}>
-                                      {formatEuDate(d)}
-                                    </option>
-                                  ))}
-                                  {dateIso && !dayOptions.includes(dateIso) && (
-                                    <option value={dateIso}>{formatEuDate(dateIso)}</option>
-                                  )}
-                                </select>
-                              ) : (
-                                <input
-                                  type="text"
-                                  placeholder="dd/MM/aaaa"
-                                  defaultValue={formatEuDate(dateIso)}
-                                  key={`dt-${c.id}-${c.scheduled_time}`}
-                                  disabled={busy}
-                                  onBlur={e => {
-                                    const next = e.target.value.trim();
-                                    if (next && next !== formatEuDate(dateIso)) {
-                                      void updateConfrontationSchedule(c.id, next, timeValue);
-                                    }
-                                  }}
-                                  className="border rounded-lg px-2 py-1 text-sm w-[8.5rem]"
-                                />
-                              )}
-                            </div>
-                            <div>
-                              <label className="block text-[10px] text-gray-500 mb-0.5">
-                                Hora 24h (HH:mm)
-                              </label>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                placeholder="18:00"
-                                defaultValue={timeValue}
-                                key={`tm-${c.id}-${c.scheduled_time}`}
-                                disabled={busy}
-                                onBlur={e => {
-                                  const next = parseEuTime(e.target.value);
-                                  if (next && next !== timeValue) {
-                                    void updateConfrontationSchedule(
-                                      c.id,
-                                      formatEuDate(dateIso) || formatEuDate(md.matchday_date),
-                                      next
-                                    );
-                                  } else if (e.target.value.trim() && !next) {
-                                    setError('Hora inválida (usa HH:mm em 24h, ex: 18:30).');
-                                    e.target.value = timeValue;
-                                  }
-                                }}
-                                className="border rounded-lg px-2 py-1 text-sm font-mono w-[5.5rem]"
-                              />
-                            </div>
-                          </div>
+                          <ConfrontationScheduleEditor
+                            confrontationId={c.id}
+                            scheduledTime={c.scheduled_time}
+                            fallbackDateIso={md.matchday_date}
+                            busy={busy}
+                            onSave={updateConfrontationSchedule}
+                          />
                         )}
                       </div>
                     );

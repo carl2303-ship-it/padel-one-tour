@@ -19,6 +19,7 @@ import {
   parseEuTime,
   scheduledTimeForHomeGame,
 } from '../lib/clubLeagueScheduler';
+import MiniMonthDatePicker from './MiniMonthDatePicker';
 
 type MatchdayInput = {
   number: number;
@@ -391,7 +392,7 @@ export default function ClubLeagueScheduleModal({
               {hasExistingCalendar ? 'Editar datas do calendário' : 'Definir calendário'}
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              {teams.length} clubes · {matchdayCount} jornadas (ida + volta) · datas dd/MM/aaaa
+              {teams.length} clubes · {matchdayCount} jornadas (ida + volta) · escolhe no calendário
               {hasExistingCalendar ? ' · a carregar datas já gravadas' : ''}
             </p>
           </div>
@@ -458,35 +459,24 @@ export default function ClubLeagueScheduleModal({
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">
-                      Semana de referência (dd/MM/aaaa)
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="23/10/2026"
-                      value={row.day1}
-                      onChange={e => updateRow(idx, { day1: e.target.value })}
-                      className="w-full border rounded-lg px-2 py-1.5 text-sm"
-                    />
-                    <p className="text-[10px] text-gray-400 mt-0.5">
-                      Qualquer dia dessa semana — os jogos caem no dia em casa de cada clube.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-gray-500 mb-0.5">
-                      Dia 2 (opcional, só referência)
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="24/10/2026"
-                      value={row.day2}
-                      onChange={e => updateRow(idx, { day2: e.target.value })}
-                      className="w-full border rounded-lg px-2 py-1.5 text-sm"
-                    />
-                  </div>
+                  <MiniMonthDatePicker
+                    label="Semana de referência"
+                    hint="Qualquer dia dessa semana — os jogos caem no dia em casa de cada clube."
+                    value={row.day1}
+                    onChange={(eu, iso) =>
+                      updateRow(idx, {
+                        day1: eu,
+                        day2: iso ? formatEuDate(addDaysIso(iso, 1)) : row.day2,
+                      })
+                    }
+                  />
+                  <MiniMonthDatePicker
+                    label="Dia 2"
+                    optional
+                    hint="Só referência (opcional)."
+                    value={row.day2}
+                    onChange={(eu) => updateRow(idx, { day2: eu })}
+                  />
                 </div>
               </div>
             ))}
