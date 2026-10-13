@@ -6,6 +6,11 @@ import { X, Upload, Plus, Trash2, MapPin } from 'lucide-react';
 import TimeInput24h from './TimeInput24h';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { geocodeAddress } from '../lib/geocoding';
+import OrganizerVenuePicker, { clubIdsFromOrganizerVenues } from './OrganizerVenuePicker';
+
+type HostOption =
+  | { kind: 'club'; id: string; name: string; ownerId: string }
+  | { kind: 'organizer'; id: string; name: string; userId: string };
 
 type CreateTournamentModalProps = {
   onClose: () => void;
@@ -45,14 +50,20 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
   const [uploading, setUploading] = useState(false);
   const [dailySchedules, setDailySchedules] = useState<DailyScheduleEntry[]>([]);
   const [expandedDayIndex, setExpandedDayIndex] = useState<number | null>(null);
-  const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string }>>([]);
+  const [clubs, setClubs] = useState<Array<{ id: string; name: string; owner_id: string | null; city?: string | null }>>([]);
+  const [hostOptions, setHostOptions] = useState<HostOption[]>([]);
+  /** `club:<uuid>` | `organizer:<uuid>` | '' */
+  const [selectedHostKey, setSelectedHostKey] = useState<string>('');
   const [selectedClubId, setSelectedClubId] = useState<string>('');
-  /** Ladder: one or more host clubs (stored in tournaments.club_ids; club_id = first). */
+  /** Ladder / organizer multi-venue: club UUIDs (stored in tournaments.club_ids; club_id = first). */
   const [selectedClubIds, setSelectedClubIds] = useState<string[]>([]);
+  /** Organizer venues selected in OrganizerVenuePicker */
+  const [selectedVenueIds, setSelectedVenueIds] = useState<string[]>([]);
   const [clubCourts, setClubCourts] = useState<Array<{ id: string; name: string; type: string; is_active: boolean }>>([]);
   const [selectedCourtNames, setSelectedCourtNames] = useState<string[]>([]);
   const [manualCourtNames, setManualCourtNames] = useState<string[]>([]);
   const [newCourtName, setNewCourtName] = useState('');
+  const [myOrganizerUserId, setMyOrganizerUserId] = useState<string | null>(null);
   const [ladderCategoryRows, setLadderCategoryRows] = useState<LadderCategoryFormRow[]>([
     { name: '', min_level: '', max_level: '', max_teams: '999' },
   ]);
@@ -62,8 +73,8 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
   const [geocodingStatus, setGeocodingStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   useEffect(() => {
-    fetchClubs();
-  }, []);
+    fetchHosts();
+  }, [user?.id, isIndependentOrganizer]);
 
   useEffect(() => {
     if (formData.format === 'ladder') {
@@ -78,19 +89,72 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
       fetchClubCourts(selectedClubId);
     } else {
       setClubCourts([]);
-      setSelectedCourtNames([]);
+      if (!selectedHostKey.startsWith('organizer:')) {
+        setSelectedCourtNames([]);
+      }
     }
-  }, [selectedClubId]);
+  }, [selectedClubId, selectedHostKey]);
 
-  const fetchClubs = async () => {
-    const { data } = await supabase
-      .from('clubs')
-      .select('id, name, owner_id')
-      .eq('is_active', true)
-      .order('name');
+  const selectedHost = hostOptions.find(h =>
+    h.kind === 'club'
+      ? selectedHostKey === `club:${h.id}`
+      : selectedHostKey === `organizer:${h.id}`
+  );
 
-    if (data) {
-      setClubs(data);
+  // Organizer multi-venue UI: selected organizer, or independent organizer without a club host
+  const isOrganizerHost =
+    selectedHost?.kind === 'organizer' ||
+    (!!isIndependentOrganizer && !selectedHostKey.startsWith('club:'));
+
+  const organizerHostUserId =
+    selectedHost?.kind === 'organizer'
+      ? selectedHost.userId
+      : isIndependentOrganizer || myOrganizerUserId
+        ? user?.id || myOrganizerUserId
+        : null;
+
+  const fetchHosts = async () => {
+    const [{ data: clubData }, { data: orgData }] = await Promise.all([
+      supabase.from('clubs').select('id, name, owner_id, city').eq('is_active', true).order('name'),
+      supabase
+        .from('organizers')
+        .select('id, name, club_name, user_id, is_active')
+        .eq('is_active', true)
+        .order('name'),
+    ]);
+
+    const clubList = clubData || [];
+    setClubs(clubList);
+
+    const options: HostOption[] = [
+      ...clubList.map(c => ({
+        kind: 'club' as const,
+        id: c.id,
+        name: c.name,
+        ownerId: c.owner_id,
+      })),
+      ...(orgData || [])
+        .filter(o => o.user_id)
+        .map(o => ({
+          kind: 'organizer' as const,
+          id: o.id,
+          name: o.name || o.club_name || 'Organizador',
+          userId: o.user_id as string,
+        })),
+    ].sort((a, b) => a.name.localeCompare(b.name, 'pt'));
+
+    setHostOptions(options);
+
+    if (user?.id) {
+      const mine = (orgData || []).find(o => o.user_id === user.id);
+      if (mine) {
+        setMyOrganizerUserId(user.id);
+        if (isIndependentOrganizer && !selectedHostKey) {
+          setSelectedHostKey(`organizer:${mine.id}`);
+        }
+      } else if (isIndependentOrganizer) {
+        setMyOrganizerUserId(user.id);
+      }
     }
   };
 
@@ -214,13 +278,23 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     setError('');
     setLoading(true);
 
-    if (new Date(formData.end_date) < new Date(formData.start_date)) {
-      setError(t.tournament.errorEndDateBeforeStart);
-      setLoading(false);
-      return;
-    }
-
     const isLadder = formData.format === 'ladder';
+    const isClubLeague = formData.format === 'club_league';
+    const needsDates = !isClubLeague;
+    const needsTimes = !isClubLeague && !isLadder;
+
+    if (needsDates) {
+      if (!formData.start_date || !formData.end_date) {
+        setError('Indica a data de início e fim do torneio.');
+        setLoading(false);
+        return;
+      }
+      if (new Date(formData.end_date) < new Date(formData.start_date)) {
+        setError(t.tournament.errorEndDateBeforeStart);
+        setLoading(false);
+        return;
+      }
+    }
 
     let venueLat: number | null = null;
     let venueLng: number | null = null;
@@ -255,6 +329,24 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
           setLoading(false);
           return;
         }
+      }
+    } else if (isClubLeague) {
+      // Datas/horários e campos de grelha não aplicam; só clubes anfitriões
+      if (isOrganizerHost && selectedVenueIds.length === 0 && !selectedClubId) {
+        setError('Selecione ou crie pelo menos um clube para a liga.');
+        setLoading(false);
+        return;
+      }
+    } else if (isOrganizerHost) {
+      if (selectedVenueIds.length === 0) {
+        setError('Selecione pelo menos um clube onde o torneio decorre.');
+        setLoading(false);
+        return;
+      }
+      if (selectedCourtNames.length === 0) {
+        setError(t.tournament.errorSelectCourts);
+        setLoading(false);
+        return;
       }
     } else {
       if (selectedClubId) {
@@ -300,37 +392,70 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     }
 
     const isLadderFmt = formData.format === 'ladder';
-    const primaryClubId = isLadderFmt ? selectedClubIds[0] : (selectedClubId || null);
-    const effectiveCourtNames = isLadderFmt ? [] : (selectedClubId ? selectedCourtNames : manualCourtNames);
+    const isClubLeagueFmt = formData.format === 'club_league';
+    // DB requires dates; club league calendar is managed separately
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const startDateVal = isClubLeagueFmt ? todayIso : formData.start_date;
+    const endDateVal = isClubLeagueFmt ? todayIso : formData.end_date;
+    const startTimeVal = needsTimes ? formData.daily_start_time : '09:00';
+    const endTimeVal = needsTimes ? formData.daily_end_time : '21:00';
+
+    let resolvedClubIds: string[] | null = null;
+    let primaryClubId: string | null = null;
+    let effectiveCourtNames: string[] = [];
+
+    if (isLadderFmt) {
+      resolvedClubIds = selectedClubIds;
+      primaryClubId = selectedClubIds[0] || null;
+      effectiveCourtNames = [];
+    } else if (isClubLeagueFmt) {
+      if (isOrganizerHost) {
+        resolvedClubIds = await clubIdsFromOrganizerVenues(selectedVenueIds);
+        primaryClubId = resolvedClubIds[0] || null;
+      } else {
+        primaryClubId = selectedClubId || null;
+        resolvedClubIds = selectedClubId ? [selectedClubId] : null;
+      }
+      effectiveCourtNames = [];
+    } else if (isOrganizerHost) {
+      resolvedClubIds = await clubIdsFromOrganizerVenues(selectedVenueIds);
+      primaryClubId = resolvedClubIds[0] || null;
+      effectiveCourtNames = selectedCourtNames;
+    } else {
+      primaryClubId = selectedClubId || null;
+      resolvedClubIds = selectedClubId ? [selectedClubId] : null;
+      effectiveCourtNames = selectedClubId ? selectedCourtNames : manualCourtNames;
+    }
+
     const { data: tournamentData, error: submitError } = await supabase.from('tournaments').insert([
       {
         name: formData.name,
         description: formData.description,
         image_url: imageUrl,
-        start_date: formData.start_date,
-        end_date: formData.end_date,
-        start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
-        end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
-        daily_start_time: isLadderFmt ? '09:00' : formData.daily_start_time,
-        daily_end_time: isLadderFmt ? '21:00' : formData.daily_end_time,
+        start_date: startDateVal,
+        end_date: endDateVal,
+        start_time: startTimeVal,
+        end_time: endTimeVal,
+        daily_start_time: startTimeVal,
+        daily_end_time: endTimeVal,
         format: formData.format,
-        round_robin_type: isLadderFmt ? null : formData.round_robin_type,
+        round_robin_type: isLadderFmt || isClubLeagueFmt ? null : formData.round_robin_type,
         swiss_rounds: formData.format === 'swiss_teams'
           ? Math.min(9, Math.max(3, formData.swiss_rounds || 5))
           : null,
         max_teams: 999,
-        number_of_courts: isLadderFmt ? 1 : effectiveCourtNames.length,
+        number_of_courts: isLadderFmt || isClubLeagueFmt ? 1 : effectiveCourtNames.length,
         match_duration_minutes: 30,
         member_price: formData.member_price || null,
         non_member_price: formData.non_member_price || null,
         allow_club_payment: formData.allow_club_payment,
         has_dinner_option: formData.has_dinner_option,
-        daily_schedules: isLadderFmt ? null : dailySchedules.length > 0 ? dailySchedules : null,
+        daily_schedules: needsTimes && dailySchedules.length > 0 ? dailySchedules : null,
         gender: formData.gender || null,
         status: 'draft',
         user_id: user?.id,
         club_id: primaryClubId,
-        club_ids: isLadderFmt ? selectedClubIds : null,
+        club_ids: resolvedClubIds && resolvedClubIds.length > 0 ? resolvedClubIds : null,
         court_names: effectiveCourtNames,
         allow_public_registration: formData.format === 'club_league' ? false : true,
         visibility: formData.format === 'club_league'
@@ -431,6 +556,9 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
     onClose();
   };
 
+  const needsDates = formData.format !== 'club_league';
+  const needsTimes = formData.format !== 'club_league' && formData.format !== 'ladder';
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
       <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -523,6 +651,10 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                     if (prev.length > 0) return prev;
                     return selectedClubId ? [selectedClubId] : [];
                   });
+                } else if (val === 'club_league') {
+                  setFormData({ ...formData, format: 'club_league', round_robin_type: null });
+                  setDailySchedules([]);
+                  setSelectedClubIds([]);
                 } else {
                   setFormData({ ...formData, format: val, round_robin_type: null });
                   setSelectedClubIds([]);
@@ -685,43 +817,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
             </div>
           )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.imageUrl}</label>
-
-            {imagePreview ? (
-              <div className="relative">
-                <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImageFile(null);
-                    setImagePreview('');
-                  }}
-                  className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <Upload className="w-10 h-10 text-gray-400 mb-3" />
-                  <p className="mb-2 text-sm text-gray-500">
-                    <span className="font-semibold">{t.tournament.uploadClick}</span> {t.tournament.uploadDrag}
-                  </p>
-                  <p className="text-xs text-gray-500">{t.tournament.uploadHint}</p>
-                </div>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept="image/*"
-                  onChange={handleImageChange}
-                />
-              </label>
-            )}
-            <p className="text-xs text-gray-500 mt-1">{t.tournament.imageUrlHelper}</p>
-          </div>
-
+          {needsDates && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -729,11 +825,11 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               </label>
               <input
                 type="date"
-                required
+                required={needsDates}
                 value={formData.start_date}
                 onChange={(e) => {
                   setFormData({ ...formData, start_date: e.target.value });
-                  if (formData.format !== 'ladder' && e.target.value && formData.end_date) {
+                  if (needsTimes && e.target.value && formData.end_date) {
                     generateDailySchedules(e.target.value, formData.end_date);
                   }
                 }}
@@ -745,11 +841,11 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.endDate} *</label>
               <input
                 type="date"
-                required
+                required={needsDates}
                 value={formData.end_date}
                 onChange={(e) => {
                   setFormData({ ...formData, end_date: e.target.value });
-                  if (formData.format !== 'ladder' && formData.start_date && e.target.value) {
+                  if (needsTimes && formData.start_date && e.target.value) {
                     generateDailySchedules(formData.start_date, e.target.value);
                   }
                 }}
@@ -757,8 +853,21 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               />
             </div>
           </div>
+          )}
 
-          {formData.format !== 'ladder' && (
+          {formData.format === 'club_league' && (
+            <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+              Na Liga de Clubes as datas e horários definem-se no calendário da liga (por jornada / jogo em casa), não aqui.
+            </p>
+          )}
+
+          {formData.format === 'ladder' && (
+            <p className="text-xs text-gray-600">
+              Escada: só precisa do período (início/fim). Não há horário diário de campos.
+            </p>
+          )}
+
+          {needsTimes && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -784,7 +893,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
           </div>
           )}
 
-          {formData.format !== 'ladder' && dailySchedules.length > 0 && (
+          {needsTimes && dailySchedules.length > 0 && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">{t.tournament.customizeSchedule}</h3>
               <p className="text-xs text-gray-600 mb-3">{t.tournament.customizeScheduleHelper}</p>
@@ -900,6 +1009,43 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
               </div>
             </div>
           )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.imageUrl}</label>
+
+            {imagePreview ? (
+              <div className="relative">
+                <img src={imagePreview} alt="Preview" className="w-full h-48 object-cover rounded-lg" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageFile(null);
+                    setImagePreview('');
+                  }}
+                  className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full hover:bg-red-600 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  <Upload className="w-10 h-10 text-gray-400 mb-3" />
+                  <p className="mb-2 text-sm text-gray-500">
+                    <span className="font-semibold">{t.tournament.uploadClick}</span> {t.tournament.uploadDrag}
+                  </p>
+                  <p className="text-xs text-gray-500">{t.tournament.uploadHint}</p>
+                </div>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                />
+              </label>
+            )}
+            <p className="text-xs text-gray-500 mt-1">{t.tournament.imageUrlHelper}</p>
+          </div>
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">Preço de Inscrição</h3>
@@ -1064,7 +1210,9 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
 
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
             <h3 className="text-base font-semibold text-gray-900 mb-3">
-              {formData.format === 'ladder' ? `${t.tournament.ladderVenuesLabel} *` : `${t.tournament.clubAndCourts} *`}
+              {formData.format === 'ladder'
+                ? `${t.tournament.ladderVenuesLabel} *`
+                : 'Clube ou Organizador *'}
             </h3>
 
             {formData.format === 'ladder' ? (
@@ -1086,34 +1234,63 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                         onChange={() => toggleLadderClub(club.id)}
                         className="w-4 h-4 text-blue-600 border-gray-300 rounded"
                       />
-                      <span className="text-sm font-medium text-gray-800">{club.name}</span>
+                      <span className="text-sm font-medium text-gray-800">
+                        {club.name}{club.city ? ` · ${club.city}` : ''}
+                      </span>
                     </label>
                   ))}
                 </div>
                 <p className="text-xs text-green-700 font-medium">
                   {selectedClubIds.length} {t.tournament.ladderClubsSelectedSuffix}
+                  {clubs.length > 0 ? ` · ${clubs.length} no Padel1` : ''}
                 </p>
               </div>
             ) : (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">{t.tournament.selectClubLabel?.replace(' *', '') || 'Club'}</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Selecionar Clube ou Organizador
+                </label>
                 <select
-                  value={selectedClubId}
+                  value={selectedHostKey}
                   onChange={(e) => {
-                    setSelectedClubId(e.target.value);
+                    const key = e.target.value;
+                    setSelectedHostKey(key);
                     setSelectedCourtNames([]);
+                    setSelectedVenueIds([]);
+                    setManualCourtNames([]);
+                    if (key.startsWith('club:')) {
+                      setSelectedClubId(key.slice(5));
+                    } else {
+                      setSelectedClubId('');
+                    }
                   }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
                 >
-                  <option value="">{(t.tournament as any).noClubOption || '-- No club (independent organizer) --'}</option>
-                  {clubs.map((club) => (
-                    <option key={club.id} value={club.id}>{club.name}</option>
+                  <option value="">-- Escolher --</option>
+                  {hostOptions.map((opt) => (
+                    <option
+                      key={`${opt.kind}:${opt.id}`}
+                      value={`${opt.kind}:${opt.id}`}
+                    >
+                      {opt.kind === 'organizer' ? `Organizador · ${opt.name}` : `Clube · ${opt.name}`}
+                    </option>
                   ))}
                 </select>
               </div>
 
-              {selectedClubId && clubCourts.length > 0 && (
+              {isOrganizerHost && organizerHostUserId && (
+                <OrganizerVenuePicker
+                  userId={organizerHostUserId}
+                  selectedVenueIds={selectedVenueIds}
+                  onChangeVenues={setSelectedVenueIds}
+                  selectedCourtNames={selectedCourtNames}
+                  onChangeCourts={setSelectedCourtNames}
+                  hideCourts={formData.format === 'club_league'}
+                />
+              )}
+
+              {!isOrganizerHost && selectedClubId && clubCourts.length > 0 && formData.format !== 'club_league' && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm font-medium text-gray-700">{t.tournament.courtsForTournament}</label>
@@ -1161,19 +1338,25 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                 </div>
               )}
 
-              {selectedClubId && clubCourts.length === 0 && (
+              {!isOrganizerHost && selectedClubId && clubCourts.length === 0 && formData.format !== 'club_league' && (
                 <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">
                   {t.tournament.noCourtsInClub}
                 </p>
               )}
 
-              {!selectedClubId && (
+              {!isOrganizerHost && selectedClubId && formData.format === 'club_league' && (
+                <p className="text-xs text-emerald-800 bg-emerald-50 p-3 rounded-lg">
+                  Liga de Clubes: os jogos e horários definem-se depois no calendário da liga.
+                </p>
+              )}
+
+              {!isOrganizerHost && !selectedClubId && !selectedHostKey && formData.format !== 'club_league' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {(t.tournament as any).manualCourts || 'Tournament Courts'} *
+                    {(t.tournament as any).manualCourts || 'Campos do torneio'} *
                   </label>
                   <p className="text-xs text-gray-500 mb-3">
-                    {(t.tournament as any).manualCourtsHint || 'Add the courts where the tournament will take place.'}
+                    Sem clube/organizador: adicione os campos manualmente.
                   </p>
                   {manualCourtNames.length > 0 && (
                     <div className="space-y-2 mb-3">
@@ -1212,7 +1395,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                           setNewCourtName('');
                         }
                       }}
-                      placeholder={(t.tournament as any).courtNamePlaceholder || 'Court name (e.g. Court 1)'}
+                      placeholder={(t.tournament as any).courtNamePlaceholder || 'Nome do campo (ex: Campo 1)'}
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                     <button

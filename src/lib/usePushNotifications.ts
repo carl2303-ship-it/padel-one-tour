@@ -16,6 +16,36 @@ interface UsePushNotificationsOptions {
   playerAccountId?: string;
 }
 
+function pushSubscribeErrorMessage(error: unknown): string {
+  const name = error && typeof error === 'object' && 'name' in error ? String((error as { name: string }).name) : '';
+  const raw =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === 'object' && 'message' in error
+        ? String((error as { message: string }).message)
+        : String(error || '');
+  const msg = raw.toLowerCase();
+
+  if (
+    name === 'AbortError' ||
+    msg.includes('push service not available') ||
+    msg.includes('registration failed')
+  ) {
+    return (
+      'O serviço de push do browser não está disponível neste dispositivo. ' +
+      'No Windows: Definições → Sistema → Notificações → ative as notificações. ' +
+      'Use Chrome/Edge (não modo convidado), desative VPN/bloqueadores e tente novamente.'
+    );
+  }
+  if (msg.includes('permission') || msg.includes('denied')) {
+    return 'Permissão negada. Ative as notificações nas definições do browser para este site.';
+  }
+  if (msg.includes('service worker')) {
+    return 'Service Worker indisponível. Recarregue a página (ou limpe a cache do site) e tente outra vez.';
+  }
+  return raw || 'Erro ao ativar notificações';
+}
+
 export function usePushNotifications(options?: UsePushNotificationsOptions) {
   const { user } = useAuth();
   const playerAccountId = options?.playerAccountId;
@@ -23,6 +53,7 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
     const checkSupport = async () => {
@@ -88,16 +119,26 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
     }
   };
 
-  const subscribe = useCallback(async () => {
-    if ((!user && !playerAccountId) || !isSupported) return false;
+  const subscribe = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    if ((!user && !playerAccountId) || !isSupported) {
+      return { ok: false, error: 'Notificações push não estão disponíveis neste browser.' };
+    }
 
     setLoading(true);
+    setLastError(null);
     try {
+      if (!window.isSecureContext) {
+        throw new Error('As notificações push só funcionam em HTTPS (ou localhost).');
+      }
+
       const permissionResult = await Notification.requestPermission();
       setPermission(permissionResult);
 
       if (permissionResult !== 'granted') {
-        return false;
+        const err =
+          'Permissão negada. Ative as notificações nas definições do browser para este site.';
+        setLastError(err);
+        return { ok: false, error: err };
       }
 
       const registration = await navigator.serviceWorker.ready;
@@ -105,9 +146,14 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
       let subscription = await registration.pushManager.getSubscription();
 
       if (!subscription) {
+        const keyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          // Some browsers require ArrayBuffer, not Uint8Array view
+          applicationServerKey: keyBytes.buffer.slice(
+            keyBytes.byteOffset,
+            keyBytes.byteOffset + keyBytes.byteLength
+          ) as ArrayBuffer,
         });
       }
 
@@ -141,10 +187,12 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
       if (error) throw error;
 
       setIsSubscribed(true);
-      return true;
+      return { ok: true };
     } catch (error) {
       console.error('Error subscribing to push:', error);
-      return false;
+      const err = pushSubscribeErrorMessage(error);
+      setLastError(err);
+      return { ok: false, error: err };
     } finally {
       setLoading(false);
     }
@@ -190,6 +238,7 @@ export function usePushNotifications(options?: UsePushNotificationsOptions) {
     isSubscribed,
     isSupported,
     loading,
+    lastError,
     subscribe,
     unsubscribe,
   };

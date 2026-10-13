@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Loader2, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Calendar, Loader2, Save, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { ClubLeagueTeam, Tournament } from '../lib/supabase';
+import type {
+  ClubLeagueConfrontation,
+  ClubLeagueMatchday,
+  ClubLeagueTeam,
+  Tournament,
+} from '../lib/supabase';
 import {
   addDaysIso,
   assignMatchdayDates,
@@ -27,7 +32,8 @@ type Props = {
   tournament: Tournament;
   teams: ClubLeagueTeam[];
   categoryId: string | null;
-  hasExistingCalendar: boolean;
+  existingMatchdays: ClubLeagueMatchday[];
+  existingConfrontations: ClubLeagueConfrontation[];
   onClose: () => void;
   onSuccess: () => void;
 };
@@ -37,40 +43,73 @@ function defaultTime(tournament: Tournament): string {
   return raw.length >= 5 ? raw.slice(0, 5) : '18:00';
 }
 
+function buildInitialRows(params: {
+  matchdayCount: number;
+  roundsPerLeg: number;
+  baseTime: string;
+  startDate: string;
+  existingMatchdays: ClubLeagueMatchday[];
+}): MatchdayInput[] {
+  const { matchdayCount, roundsPerLeg, baseTime, startDate, existingMatchdays } = params;
+  const byNumber = new Map(existingMatchdays.map(md => [md.matchday_number, md]));
+
+  if (existingMatchdays.length > 0) {
+    return Array.from({ length: matchdayCount }, (_, i) => {
+      const number = i + 1;
+      const md = byNumber.get(number);
+      const day1Iso = md?.matchday_date || addDaysIso(startDate, (number - 1) * 7);
+      const day2Iso = md?.matchday_date_2 || addDaysIso(day1Iso, 1);
+      return {
+        number,
+        day1: formatEuDate(day1Iso),
+        day2: formatEuDate(day2Iso),
+        defaultTime: baseTime,
+        leg: (md?.leg as 'home' | 'away') || (i < roundsPerLeg ? 'home' : 'away'),
+      };
+    });
+  }
+
+  const dates = assignMatchdayDates(matchdayCount, startDate, 7);
+  return Array.from({ length: matchdayCount }, (_, i) => {
+    const day1Iso = dates[i] || startDate;
+    return {
+      number: i + 1,
+      day1: formatEuDate(day1Iso),
+      day2: formatEuDate(addDaysIso(day1Iso, 1)),
+      defaultTime: baseTime,
+      leg: i < roundsPerLeg ? 'home' : 'away',
+    };
+  });
+}
+
 export default function ClubLeagueScheduleModal({
   tournament,
   teams,
   categoryId,
-  hasExistingCalendar,
+  existingMatchdays,
+  existingConfrontations,
   onClose,
   onSuccess,
 }: Props) {
   const matchdayCount = expectedMatchdayCount(teams.length);
   const roundsPerLeg = matchdayCount / 2;
   const baseTime = defaultTime(tournament);
+  const startDate = tournament.start_date || new Date().toISOString().slice(0, 10);
+  const hasExistingCalendar =
+    existingConfrontations.length > 0 || existingMatchdays.length > 0;
 
-  const initialRows = useMemo((): MatchdayInput[] => {
-    const start = tournament.start_date || new Date().toISOString().slice(0, 10);
-    const dates = assignMatchdayDates(matchdayCount, start, 7);
-    return Array.from({ length: matchdayCount }, (_, i) => {
-      const day1Iso = dates[i] || start;
-      return {
-        number: i + 1,
-        day1: formatEuDate(day1Iso),
-        day2: formatEuDate(addDaysIso(day1Iso, 1)),
-        defaultTime: baseTime,
-        leg: i < roundsPerLeg ? 'home' : 'away',
-      };
-    });
-  }, [matchdayCount, roundsPerLeg, tournament.start_date, baseTime]);
-
-  const [rows, setRows] = useState<MatchdayInput[]>(initialRows);
+  // Init once from existing calendar (not tournament.start_date every render)
+  const [rows, setRows] = useState<MatchdayInput[]>(() =>
+    buildInitialRows({
+      matchdayCount,
+      roundsPerLeg,
+      baseTime,
+      startDate,
+      existingMatchdays,
+    })
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  useEffect(() => {
-    setRows(initialRows);
-  }, [initialRows]);
 
   const updateRow = (index: number, patch: Partial<MatchdayInput>) => {
     setRows(prev => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
@@ -110,6 +149,117 @@ export default function ClubLeagueScheduleModal({
     [teams]
   );
 
+  const parseRows = () => {
+    const parsed: {
+      number: number;
+      day1Iso: string;
+      day2Iso: string | null;
+      time: string;
+      leg: 'home' | 'away';
+    }[] = [];
+
+    for (const r of rows) {
+      const day1Iso = parseEuDate(r.day1);
+      if (!day1Iso) {
+        setError(`Data de referência inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
+        return null;
+      }
+      let day2Iso: string | null = null;
+      if (r.day2.trim()) {
+        day2Iso = parseEuDate(r.day2);
+        if (!day2Iso) {
+          setError(`Data do dia 2 inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
+          return null;
+        }
+      }
+      const fallbackTime = parseEuTime(r.defaultTime) || baseTime;
+      parsed.push({
+        number: r.number,
+        day1Iso,
+        day2Iso,
+        time: fallbackTime,
+        leg: r.leg,
+      });
+    }
+    return parsed;
+  };
+
+  /** Update only matchday weeks + each game's scheduled_time (keeps pairings). */
+  const saveDatesOnly = async () => {
+    if (!hasExistingCalendar) {
+      setError('Ainda não há calendário. Usa “Gerar confrontos”.');
+      return;
+    }
+    if (teamsMissingHomeSlot.length > 0) {
+      setError(
+        `Define dia e hora em casa em todos os clubes. Em falta: ${teamsMissingHomeSlot
+          .map(t => t.name)
+          .join(', ')}.`
+      );
+      return;
+    }
+
+    const parsed = parseRows();
+    if (!parsed) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      const teamById = new Map(teams.map(t => [t.id, t]));
+      const mdByNumber = new Map(existingMatchdays.map(md => [md.matchday_number, md]));
+
+      for (const row of parsed) {
+        const md = mdByNumber.get(row.number);
+        if (!md) continue;
+
+        const mdGames = existingConfrontations.filter(c => c.matchday_id === md.id);
+        const slots = mdGames.map(c => {
+          const home = c.home_team_id ? teamById.get(c.home_team_id) : null;
+          return scheduledTimeForHomeGame({
+            weekRefIso: row.day1Iso,
+            defaultTime: row.time,
+            homeWeekday: home?.home_weekday,
+            homeTime: home?.home_time,
+          });
+        });
+
+        const dates = [...new Set(slots.map(s => s.dateIso))].sort();
+        const matchdayDate = dates[0] || row.day1Iso;
+        const matchdayDate2 =
+          dates.length > 1
+            ? dates[dates.length - 1]
+            : row.day2Iso && row.day2Iso !== matchdayDate
+              ? row.day2Iso
+              : null;
+
+        const { error: mdErr } = await supabase
+          .from('club_league_matchdays')
+          .update({
+            matchday_date: matchdayDate,
+            matchday_date_2: matchdayDate2 && matchdayDate2 !== matchdayDate ? matchdayDate2 : null,
+          })
+          .eq('id', md.id);
+        if (mdErr) throw mdErr;
+
+        for (let i = 0; i < mdGames.length; i++) {
+          const c = mdGames[i];
+          const slot = slots[i];
+          const { error: confErr } = await supabase
+            .from('club_league_confrontations')
+            .update({ scheduled_time: slot.scheduledTime })
+            .eq('id', c.id);
+          if (confErr) throw confErr;
+        }
+      }
+
+      onSuccess();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Erro ao guardar datas');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const generate = async () => {
     if (teams.length < 2) {
       setError('São necessários pelo menos 2 clubes.');
@@ -125,41 +275,15 @@ export default function ClubLeagueScheduleModal({
       return;
     }
 
-    const parsed: {
-      number: number;
-      day1Iso: string;
-      day2Iso: string | null;
-      time: string;
-      leg: 'home' | 'away';
-    }[] = [];
-
-    for (const r of rows) {
-      const day1Iso = parseEuDate(r.day1);
-      if (!day1Iso) {
-        setError(`Data de referência inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
-        return;
-      }
-      let day2Iso: string | null = null;
-      if (r.day2.trim()) {
-        day2Iso = parseEuDate(r.day2);
-        if (!day2Iso) {
-          setError(`Data do dia 2 inválida na Jornada ${r.number} (usa dd/MM/aaaa).`);
-          return;
-        }
-      }
-      // Fallback time only if a club somehow lacks home_time
-      const fallbackTime = parseEuTime(r.defaultTime) || baseTime;
-      parsed.push({
-        number: r.number,
-        day1Iso,
-        day2Iso,
-        time: fallbackTime,
-        leg: r.leg,
-      });
-    }
+    const parsed = parseRows();
+    if (!parsed) return;
 
     if (hasExistingCalendar) {
-      if (!confirm('Já existe calendário. Regenerar apaga jornadas e confrontos. Continuar?')) {
+      if (
+        !confirm(
+          'Já existe calendário. Regenerar apaga jornadas, confrontos e lineups. Continuar?'
+        )
+      ) {
         return;
       }
     }
@@ -172,20 +296,20 @@ export default function ClubLeagueScheduleModal({
         .delete()
         .eq('tournament_id', tournament.id);
       delConf = categoryId ? delConf.eq('category_id', categoryId) : delConf.is('category_id', null);
-      await delConf;
+      const { error: delConfErr } = await delConf;
+      if (delConfErr) throw delConfErr;
 
       let delMd = supabase
         .from('club_league_matchdays')
         .delete()
         .eq('tournament_id', tournament.id);
       delMd = categoryId ? delMd.eq('category_id', categoryId) : delMd.is('category_id', null);
-      await delMd;
+      const { error: delMdErr } = await delMd;
+      if (delMdErr) throw delMdErr;
 
       const orderedTeams = [...teams].sort(
         (a, b) => (a.registration_order || 0) - (b.registration_order || 0)
       );
-      // Round-robin + no máximo 1 jogo em casa por clube (agrupa I/II) por jornada;
-      // a 2.ª volta inverte casa/fora.
       const schedule = generateClubLeagueSchedule(
         orderedTeams.map(t => ({
           id: t.id,
@@ -197,7 +321,6 @@ export default function ClubLeagueScheduleModal({
       const mdByNumber = new Map<number, string>();
       const metaByNumber = new Map(parsed.map(r => [r.number, r]));
 
-      // Pré-calcular datas reais dos jogos (dia/hora do clube da casa na semana da jornada)
       const gameSlots = schedule.map(s => {
         const home = teamById.get(s.homeTeamId);
         const meta = metaByNumber.get(s.matchdayNumber)!;
@@ -265,10 +388,11 @@ export default function ClubLeagueScheduleModal({
           <div>
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Calendar className="w-5 h-5 text-emerald-600" />
-              Definir calendário
+              {hasExistingCalendar ? 'Editar datas do calendário' : 'Definir calendário'}
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              {teams.length} clubes · {matchdayCount} jornadas (ida + volta) · datas dd/MM/aaaa · hora 24h
+              {teams.length} clubes · {matchdayCount} jornadas (ida + volta) · datas dd/MM/aaaa
+              {hasExistingCalendar ? ' · a carregar datas já gravadas' : ''}
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
@@ -279,9 +403,17 @@ export default function ClubLeagueScheduleModal({
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
           <p className="text-sm text-gray-600">
             Cada jornada = uma semana de referência. Cada jogo usa o <strong>dia e hora em casa</strong> do
-            anfitrião; na volta inverte-se. Regra fixa: no máximo{' '}
-            <strong>1 equipa em casa por clube</strong> (ex.: Blu I e Blu II não jogam os dois em casa
-            na mesma jornada).
+            anfitrião. {hasExistingCalendar ? (
+              <>
+                Para <strong>só mudar datas</strong>, edita abaixo e usa “Guardar datas” (mantém os
+                confrontos). Regenerar apaga tudo.
+              </>
+            ) : (
+              <>
+                Na volta inverte-se casa/fora. No máximo{' '}
+                <strong>1 equipa em casa por clube</strong> por jornada.
+              </>
+            )}
           </p>
 
           <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-xs text-emerald-900 space-y-1">
@@ -361,7 +493,7 @@ export default function ClubLeagueScheduleModal({
           </div>
         </div>
 
-        <div className="p-4 border-t flex gap-2 justify-end shrink-0">
+        <div className="p-4 border-t flex flex-wrap gap-2 justify-end shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -369,14 +501,29 @@ export default function ClubLeagueScheduleModal({
           >
             Cancelar
           </button>
+          {hasExistingCalendar && (
+            <button
+              type="button"
+              disabled={busy || teams.length < 2}
+              onClick={saveDatesOnly}
+              className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              Guardar datas
+            </button>
+          )}
           <button
             type="button"
             disabled={busy || teams.length < 2}
             onClick={generate}
-            className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+            className={`px-4 py-2 text-sm rounded-lg disabled:opacity-50 inline-flex items-center gap-2 ${
+              hasExistingCalendar
+                ? 'border border-amber-300 text-amber-900 bg-amber-50 hover:bg-amber-100'
+                : 'bg-emerald-600 text-white'
+            }`}
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
-            Gerar confrontos casa/fora
+            {hasExistingCalendar ? 'Regenerar confrontos' : 'Gerar confrontos casa/fora'}
           </button>
         </div>
       </div>

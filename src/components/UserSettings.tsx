@@ -28,6 +28,7 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
     isSubscribed: isPushSubscribed,
     isSupported: isPushSupported,
     loading: pushLoading,
+    lastError: pushLastError,
     subscribe: subscribePush,
     unsubscribe: unsubscribePush,
   } = usePushNotifications();
@@ -414,13 +415,14 @@ export default function UserSettings({ onClose }: UserSettingsProps) {
         setPushMessage({ type: 'error', text: 'Erro ao desativar notificacoes' });
       }
     } else {
-      const success = await subscribePush();
-      if (success) {
+      const result = await subscribePush();
+      if (result.ok) {
         setPushMessage({ type: 'success', text: 'Notificacoes ativadas! Recebera alertas de novas inscricoes.' });
-      } else if (pushPermission === 'denied') {
-        setPushMessage({ type: 'error', text: 'Permissao negada. Ative as notificacoes nas definicoes do browser.' });
       } else {
-        setPushMessage({ type: 'error', text: 'Erro ao ativar notificacoes' });
+        setPushMessage({
+          type: 'error',
+          text: result.error || pushLastError || 'Erro ao ativar notificacoes',
+        });
       }
     }
   };

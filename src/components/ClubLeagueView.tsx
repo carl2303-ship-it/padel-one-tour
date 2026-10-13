@@ -22,6 +22,7 @@ import {
   homeWeekdayLabel,
   parseEuDate,
   parseEuTime,
+  scheduledTimeForHomeGame,
 } from '../lib/clubLeagueScheduler';
 
 type TeamWithPlayers = ClubLeagueTeam & { club_league_players: ClubLeaguePlayer[] };
@@ -226,11 +227,49 @@ export default function ClubLeagueView({
     setBusy(true);
     setError('');
     try {
+      const mdGames = confrontations.filter(c => c.matchday_id === matchday.id);
+      const defaultTime =
+        (tournament.daily_start_time || tournament.start_time || '18:00').slice(0, 5);
+      const slots = mdGames.map(c => {
+        const home = c.home_team_id ? teamById.get(c.home_team_id) : null;
+        return {
+          id: c.id,
+          ...scheduledTimeForHomeGame({
+            weekRefIso: day1,
+            defaultTime,
+            homeWeekday: home?.home_weekday,
+            homeTime: home?.home_time,
+          }),
+        };
+      });
+
+      const gameDates = [...new Set(slots.map(s => s.dateIso))].sort();
+      const matchdayDate = gameDates[0] || day1;
+      const matchdayDate2 =
+        gameDates.length > 1
+          ? gameDates[gameDates.length - 1]
+          : day2 && day2 !== matchdayDate
+            ? day2
+            : null;
+
       const { error: mdErr } = await supabase
         .from('club_league_matchdays')
-        .update({ matchday_date: day1, matchday_date_2: day2 })
+        .update({
+          matchday_date: matchdayDate,
+          matchday_date_2:
+            matchdayDate2 && matchdayDate2 !== matchdayDate ? matchdayDate2 : null,
+        })
         .eq('id', matchday.id);
       if (mdErr) throw mdErr;
+
+      for (const slot of slots) {
+        const { error: confErr } = await supabase
+          .from('club_league_confrontations')
+          .update({ scheduled_time: slot.scheduledTime })
+          .eq('id', slot.id);
+        if (confErr) throw confErr;
+      }
+
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Erro ao atualizar jornada');
@@ -913,7 +952,8 @@ export default function ClubLeagueView({
           tournament={tournament}
           teams={teams}
           categoryId={selectedCategory}
-          hasExistingCalendar={confrontations.length > 0 || matchdays.length > 0}
+          existingMatchdays={matchdays}
+          existingConfrontations={confrontations}
           onClose={() => setShowScheduleModal(false)}
           onSuccess={() => {
             setShowScheduleModal(false);
