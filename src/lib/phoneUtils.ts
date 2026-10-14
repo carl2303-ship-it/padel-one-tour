@@ -157,6 +157,13 @@ function nationalKeyFromE164(e164: string): string {
   return digits;
 }
 
+/** True when the user typed an explicit international prefix (+ or 00). */
+export function hasExplicitCountryCode(phone: string | null | undefined): boolean {
+  if (!phone) return false;
+  const cleaned = cleanInput(phone);
+  return cleaned.startsWith('+') || cleaned.startsWith('00');
+}
+
 export function composeInternationalPhone(dialCode: string, localNumber: string): string {
   const raw = (localNumber || '').trim();
   if (!raw) return '';
