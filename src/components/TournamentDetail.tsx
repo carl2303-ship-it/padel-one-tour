@@ -35,6 +35,7 @@ import { scheduleMultipleCategories, validateGeneratedSchedule } from '../lib/mu
 import { updateLeagueStandings, calculateIndividualFinalPositions } from '../lib/leagueStandings';
 import { exportTournamentPDF } from '../lib/pdfExport';
 import { deleteTeamAndPlayers } from '../lib/deleteTeamRegistration';
+import { deleteTournamentImage } from '../lib/tournamentImageStorage';
 import {
   buildOpponentMap,
   buildSwissRoundMatches,
@@ -6832,13 +6833,25 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         }
       }
 
-      // 2. Update tournament status to completed FIRST
+      // 2. Update tournament status to completed FIRST (and drop image_url)
+      const previousImageUrl =
+        (currentTournament as { image_url?: string | null })?.image_url ||
+        (tournament as { image_url?: string | null })?.image_url ||
+        null;
+
       const { error } = await supabase
         .from('tournaments')
-        .update({ status: 'completed' })
+        .update({ status: 'completed', image_url: null })
         .eq('id', tournament.id);
 
       if (error) throw error;
+
+      // Remove poster/photo from Storage so completed tournaments don't keep occupying space
+      try {
+        await deleteTournamentImage(previousImageUrl);
+      } catch (imgErr) {
+        console.error('[FINALIZE] Error deleting tournament image:', imgErr);
+      }
 
       // 3. Now update league standings (after status is 'completed')
       await updateLeagueStandings(tournament.id);
@@ -6871,7 +6884,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
       // 6. Refresh data
       await fetchTournamentData();
-      setCurrentTournament({ ...currentTournament, status: 'completed' });
+      setCurrentTournament({ ...currentTournament, status: 'completed', image_url: undefined });
       
       alert(`Torneio finalizado com sucesso!${ratingInfo}${rewardInfo}`);
     } catch (error) {
