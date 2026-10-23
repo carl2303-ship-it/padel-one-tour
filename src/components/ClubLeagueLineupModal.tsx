@@ -84,12 +84,13 @@ export default function ClubLeagueLineupModal({
     d2: duoSum(players, duo2),
     d3: duoSum(players, duo3),
   };
+  // D1 >= D2 >= D3; empates permitidos (o capitão escolhe a ordem)
   const fppOk =
     duo1.every(Boolean) &&
     duo2.every(Boolean) &&
     duo3.every(Boolean) &&
-    sums.d1 > sums.d2 &&
-    sums.d2 > sums.d3;
+    sums.d1 >= sums.d2 &&
+    sums.d2 >= sums.d3;
 
   const PlayerSelect = ({
     value,
@@ -127,7 +128,7 @@ export default function ClubLeagueLineupModal({
       return;
     }
     if (!fppOk) {
-      setError('A soma FPP tem de respeitar Dupla 1 > Dupla 2 > Dupla 3.');
+      setError('A soma FPP tem de respeitar Dupla 1 ≥ Dupla 2 ≥ Dupla 3 (empates OK).');
       return;
     }
 
@@ -148,7 +149,7 @@ export default function ClubLeagueLineupModal({
       onSuccess();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('fpp_order_invalid')) setError('Ordem FPP inválida (D1 > D2 > D3).');
+      if (msg.includes('fpp_order_invalid')) setError('Ordem FPP inválida (precisa D1 ≥ D2 ≥ D3).');
       else if (msg.includes('lineup_locked')) setError('Lineup bloqueada (faltam menos de 30 min).');
       else if (msg.includes('not_authorized')) setError('Sem permissão para submeter lineup.');
       else setError(msg);
@@ -221,7 +222,8 @@ export default function ClubLeagueLineupModal({
               ))}
               {!fppOk && duo1.every(Boolean) && duo2.every(Boolean) && duo3.every(Boolean) && (
                 <p className="text-sm text-amber-700">
-                  Ajuste as duplas: precisa D1 ({sums.d1}) &gt; D2 ({sums.d2}) &gt; D3 ({sums.d3}).
+                  Ajuste as duplas: precisa D1 ({sums.d1}) ≥ D2 ({sums.d2}) ≥ D3 ({sums.d3}).
+                  Empates são permitidos — o capitão escolhe a ordem.
                 </p>
               )}
             </>
