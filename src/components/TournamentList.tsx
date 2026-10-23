@@ -190,13 +190,45 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
     const newName = prompt(`Nome do novo torneio:`, `${tournament.name} (Cópia)`);
     if (!newName) return;
 
-    // Buscar categorias do torneio original
-    const { data: categories } = await supabase
+    // Buscar categorias do torneio original (preços, campos, níveis M4/M5, etc.)
+    const { data: categories, error: categoriesError } = await supabase
       .from('tournament_categories')
-      .select('name, format, number_of_groups, max_teams, min_level, max_level, knockout_stage, qualified_per_group')
+      .select(
+        [
+          'name',
+          'format',
+          'number_of_groups',
+          'max_teams',
+          'min_level',
+          'max_level',
+          'knockout_stage',
+          'qualified_per_group',
+          'qualified_direct_per_group',
+          'qualified_wildcards',
+          'registration_fee',
+          'member_price',
+          'non_member_price',
+          'court_names',
+          'accepted_levels',
+          'game_format',
+          'category_schedule',
+          'match_duration_minutes',
+          'rounds',
+          'swiss_rounds',
+          'swiss_last_round_mode',
+        ].join(', ')
+      )
       .eq('tournament_id', tournament.id);
 
-    // Criar novo torneio (apenas configurações, sem jogadores)
+    if (categoriesError) {
+      console.error('Error loading categories to copy:', categoriesError);
+      alert('Erro ao ler categorias do torneio original');
+      return;
+    }
+
+    const tAny = tournament as Tournament & Record<string, unknown>;
+
+    // Criar novo torneio (configurações + preços + campos; sem jogadores/imagem)
     const { data: newTournament, error } = await supabase
       .from('tournaments')
       .insert({
@@ -208,6 +240,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         max_teams: tournament.max_teams,
         format: tournament.format,
         number_of_courts: tournament.number_of_courts,
+        court_names: tournament.court_names || null,
         start_time: tournament.start_time,
         end_time: tournament.end_time,
         match_duration_minutes: tournament.match_duration_minutes,
@@ -222,12 +255,20 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         daily_schedules: tournament.daily_schedules,
         qualified_teams_per_group: tournament.qualified_teams_per_group,
         knockout_stage: tournament.knockout_stage,
-        allow_public_registration: (tournament as any).visibility === 'invite_only' ? false : true,
-        gender: (tournament as any).gender || null,
-        club_id: (tournament as any).club_id || null,
-        club_ids: (tournament as any).club_ids || null,
-        image_url: (tournament as any).image_url || null,
-        visibility: (tournament as any).visibility || 'public',
+        registration_fee: tournament.registration_fee ?? null,
+        member_price: tournament.member_price ?? null,
+        non_member_price: tournament.non_member_price ?? null,
+        allow_club_payment: tournament.allow_club_payment ?? null,
+        allow_public_registration: tAny.visibility === 'invite_only' ? false : true,
+        gender: tAny.gender || null,
+        club_id: tAny.club_id || null,
+        club_ids: tAny.club_ids || null,
+        image_url: null,
+        visibility: (tAny.visibility as string) || 'public',
+        has_dinner_option: tournament.has_dinner_option ?? null,
+        poster_includes: tournament.poster_includes ?? null,
+        seed_mode: tournament.seed_mode ?? null,
+        swiss_rounds: tournament.swiss_rounds ?? null,
       })
       .select()
       .single();
@@ -238,7 +279,7 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
       return;
     }
 
-    // Copiar categorias (sem jogadores)
+    // Copiar categorias (nome M4/M5, preços, campos, níveis aceites — sem jogadores)
     if (categories && categories.length > 0 && newTournament) {
       const categoriesToInsert = categories.map(cat => ({
         tournament_id: newTournament.id,
@@ -250,17 +291,60 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
         max_level: cat.max_level,
         knockout_stage: cat.knockout_stage,
         qualified_per_group: cat.qualified_per_group,
+        qualified_direct_per_group: cat.qualified_direct_per_group ?? null,
+        qualified_wildcards: cat.qualified_wildcards ?? null,
+        registration_fee: cat.registration_fee ?? null,
+        member_price: cat.member_price ?? null,
+        non_member_price: cat.non_member_price ?? null,
+        court_names: cat.court_names ?? null,
+        accepted_levels: cat.accepted_levels ?? null,
+        game_format: cat.game_format ?? null,
+        category_schedule: cat.category_schedule ?? null,
+        match_duration_minutes: cat.match_duration_minutes ?? null,
+        rounds: cat.rounds ?? null,
+        swiss_rounds: cat.swiss_rounds ?? null,
+        swiss_last_round_mode: cat.swiss_last_round_mode ?? null,
       }));
 
-      await supabase
+      const { error: catInsertError } = await supabase
         .from('tournament_categories')
         .insert(categoriesToInsert);
+
+      if (catInsertError) {
+        console.error('Error copying categories:', catInsertError);
+        alert(
+          `Torneio criado, mas falhou a cópia das categorias: ${catInsertError.message}`
+        );
+        fetchTournaments();
+        return;
+      }
     }
 
     // NÃO copiar jogadores, equipas ou jogos - torneio fica limpo e pronto a usar
-    
+
     if (newTournament) {
-      alert(`Torneio "${newName}" criado com sucesso!\n\nConfigurações copiadas:\n- Formato: ${tournament.format}\n- Categorias: ${categories?.length || 0}\n- Campos: ${tournament.number_of_courts}\n\nAgora pode adicionar os jogadores.\n\nNota: a alerta push só é enviada quando o torneio for posto como Ativo.`);
+      const courtLabel =
+        (tournament.court_names && tournament.court_names.length > 0
+          ? tournament.court_names.join(', ')
+          : null) ||
+        `${tournament.number_of_courts || 0} campo(s)`;
+      const priceLabel = [
+        tournament.member_price != null ? `membros ${tournament.member_price}€` : null,
+        tournament.non_member_price != null
+          ? `não-membros ${tournament.non_member_price}€`
+          : null,
+        tournament.registration_fee != null &&
+        tournament.member_price == null &&
+        tournament.non_member_price == null
+          ? `${tournament.registration_fee}€`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+
+      alert(
+        `Torneio "${newName}" criado com sucesso!\n\nConfigurações copiadas:\n- Formato: ${tournament.format}\n- Categorias: ${categories?.length || 0}\n- Campos: ${courtLabel}\n- Preço: ${priceLabel || '—'}\n\nAgora pode adicionar os jogadores.\n\nNota: a alerta push só é enviada quando o torneio for posto como Ativo.`
+      );
       fetchTournaments();
     }
   };
