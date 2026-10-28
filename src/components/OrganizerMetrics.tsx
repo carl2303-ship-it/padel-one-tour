@@ -13,10 +13,15 @@ import {
   loadOrganizerTournamentMetrics,
 } from '../lib/organizerMetrics';
 import {
+  exportOrganizerMetricsPDF,
+  type MetricsPdfScope,
+} from '../lib/organizerMetricsPdf';
+import {
   BarChart3,
   ChevronDown,
   ChevronUp,
   CreditCard,
+  FileDown,
   Trophy,
   Users,
 } from 'lucide-react';
@@ -51,6 +56,8 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   });
   const [playerSpending, setPlayerSpending] = useState<PlayerSpending[]>([]);
   const [periodTournamentRevenue, setPeriodTournamentRevenue] = useState(0);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [pdfScope, setPdfScope] = useState<MetricsPdfScope>('both');
 
   const range = useMemo((): DateRange | null => {
     if (dateFilter === 'custom') {
@@ -145,6 +152,28 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
   const formatDate = (d: string) =>
     new Date(d).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' });
 
+  const handleExportPdf = async () => {
+    if (!range || !hasLoaded) return;
+    setExportingPdf(true);
+    try {
+      await exportOrganizerMetricsPDF({
+        range,
+        dateFilter,
+        scope: pdfScope,
+        summary,
+        membershipMetrics,
+        tournamentMetrics,
+        playerSpending,
+        organizerName: user?.email || null,
+      });
+    } catch (err) {
+      console.error('[OrganizerMetrics] PDF export:', err);
+      alert('Erro ao gerar o PDF das métricas.');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   if (!hasLoaded && refreshing) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -206,6 +235,27 @@ export default function OrganizerMetrics({ onOpenTournament }: OrganizerMetricsP
               </button>
             </div>
           )}
+          <select
+            value={pdfScope}
+            onChange={e => setPdfScope(e.target.value as MetricsPdfScope)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+            title="Conteúdo do PDF"
+            aria-label="Conteúdo do PDF"
+          >
+            <option value="both">PDF: torneios + memberships</option>
+            <option value="tournaments">PDF: só torneios</option>
+            <option value="memberships">PDF: só memberships</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => void handleExportPdf()}
+            disabled={!range || !hasLoaded || refreshing || exportingPdf}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Exportar PDF do período seleccionado"
+          >
+            <FileDown className="w-4 h-4" />
+            {exportingPdf ? 'A gerar PDF…' : 'Exportar PDF'}
+          </button>
         </div>
       </div>
 
