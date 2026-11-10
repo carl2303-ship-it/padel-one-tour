@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase, Player, TournamentCategory } from '../lib/supabase';
 import {
   fetchAllOrganizerPlayers,
+  formatPlayerPickerLabel,
   getOrganizerTournamentIds,
   isSameOrganizerPlayer,
   searchOrganizerPlayers,
@@ -519,7 +520,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
                   <option value="">Select a player</option>
                   {filteredPlayers.map((player) => (
                     <option key={player.id} value={player.id}>
-                      {player.name}
+                      {formatPlayerPickerLabel(player)}
                     </option>
                   ))}
                 </select>
@@ -582,7 +583,7 @@ export default function AddTeamModal({ tournamentId, onClose, onSuccess, lockedC
                   <option value="">Select a player</option>
                   {filteredPlayers.map((player) => (
                     <option key={player.id} value={player.id}>
-                      {player.name}
+                      {formatPlayerPickerLabel(player)}
                     </option>
                   ))}
                 </select>

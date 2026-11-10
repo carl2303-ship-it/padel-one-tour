@@ -10,6 +10,8 @@ type PlayerRow = {
   phone_number: string | null;
   tournament_id?: string | null;
   player_account_id?: string | null;
+  /** From player_accounts.level (rating), when resolved. */
+  level?: number | null;
 };
 
 type PlayerIdentity = {
@@ -113,6 +115,84 @@ export async function getOrganizerTournamentIds(organizerId: string): Promise<st
   return data?.map(t => t.id) ?? [];
 }
 
+/** Format player_accounts.level for picker labels (e.g. "Nv 3" / "Nv 3.5"). */
+export function formatPlayerLevel(level: number | null | undefined): string | null {
+  if (level == null || Number.isNaN(Number(level))) return null;
+  const n = Number(level);
+  return n % 1 === 0 ? `Nv ${n}` : `Nv ${n.toFixed(1)}`;
+}
+
+/** Label for assign-player selects: name · Nv X · (phone when needed). */
+export function formatPlayerPickerLabel(
+  player: {
+    name: string;
+    phone_number?: string | null;
+    level?: number | null;
+  },
+  options?: { includePhone?: boolean },
+): string {
+  const parts = [player.name.trim()];
+  const levelLabel = formatPlayerLevel(player.level);
+  if (levelLabel) parts.push(levelLabel);
+  if (options?.includePhone && player.phone_number) {
+    parts.push(`(${player.phone_number})`);
+  }
+  return parts.join(' · ');
+}
+
+async function loadAccountLevelMaps(): Promise<{
+  byAccountId: Map<string, number>;
+  byPhone: Map<string, number>;
+}> {
+  const byAccountId = new Map<string, number>();
+  const byPhone = new Map<string, number>();
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('player_accounts')
+      .select('id, phone_number, level')
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    if (!data?.length) break;
+
+    for (const row of data) {
+      if (row.level == null) continue;
+      const level = Number(row.level);
+      byAccountId.set(row.id, level);
+      const phoneKey = phoneIdentityKey(row.phone_number);
+      if (phoneKey) byPhone.set(phoneKey, level);
+    }
+
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return { byAccountId, byPhone };
+}
+
+async function enrichPlayersWithLevel<T extends PlayerRow>(
+  players: T[],
+): Promise<(T & { level: number | null })[]> {
+  if (!players.length) return [];
+
+  const { byAccountId, byPhone } = await loadAccountLevelMaps();
+
+  return players.map((player) => {
+    let level: number | null = null;
+    if (player.player_account_id && byAccountId.has(player.player_account_id)) {
+      level = byAccountId.get(player.player_account_id)!;
+    } else {
+      const phoneKey = phoneIdentityKey(player.phone_number);
+      if (phoneKey && byPhone.has(phoneKey)) {
+        level = byPhone.get(phoneKey)!;
+      }
+    }
+    return { ...player, level };
+  });
+}
+
 /** Fetch all players across organizer tournaments (paginated past PostgREST 1000-row default). */
 export async function fetchAllOrganizerPlayers(
   tournamentIds: string[],
@@ -139,7 +219,7 @@ export async function fetchAllOrganizerPlayers(
     from += PAGE_SIZE;
   }
 
-  return dedupePlayers(all, preferredTournamentId);
+  return enrichPlayersWithLevel(dedupePlayers(all, preferredTournamentId));
 }
 
 /** Server-side name search (finds players beyond the first 1000 alphabetically). */
@@ -160,5 +240,5 @@ export async function searchOrganizerPlayers(
     .limit(200);
 
   if (error) throw error;
-  return dedupePlayers(data ?? [], preferredTournamentId);
+  return enrichPlayersWithLevel(dedupePlayers(data ?? [], preferredTournamentId));
 }

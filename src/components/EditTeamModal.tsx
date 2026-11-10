@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase, Team, TournamentCategory } from '../lib/supabase';
 import {
   fetchAllOrganizerPlayers,
+  formatPlayerPickerLabel,
   getOrganizerTournamentIds,
   isSameOrganizerPlayer,
   searchOrganizerPlayers,
@@ -19,6 +20,7 @@ type Player = {
   phone_number: string | null;
   tournament_id?: string | null;
   player_account_id?: string | null;
+  level?: number | null;
 };
 
 type EditTeamModalProps = {
@@ -135,10 +137,9 @@ export default function EditTeamModal({ team, tournamentId, onClose, onSuccess }
     const sameNameCount = displayPlayers.filter(
       (p) => p.name.trim().toLocaleLowerCase('pt') === nameKey
     ).length;
-    if (sameNameCount > 1 && player.phone_number) {
-      return `${player.name} (${player.phone_number})`;
-    }
-    return player.name;
+    return formatPlayerPickerLabel(player, {
+      includePhone: sameNameCount > 1 && !!player.phone_number,
+    });
   };
 
   // Garantir que o jogador existe no torneio atual (copiar se necessário)

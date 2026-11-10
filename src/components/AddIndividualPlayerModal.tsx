@@ -3,7 +3,7 @@ import { supabase, TournamentCategory } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
 import { X } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
-import { isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
+import { formatPlayerPickerLabel, isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
 import { normalizePhone } from '../lib/phoneUtils';
 import { recalculateSeedsByLevel } from '../lib/levelSeeding';
 
@@ -50,6 +50,7 @@ type ExistingPlayer = {
   name: string;
   phone_number: string | null;
   email?: string | null;
+  level?: number | null;
 };
 
 type PlayerInsert = {
@@ -160,13 +161,18 @@ export default function AddIndividualPlayerModal({
         .eq('organizer_id', user.id),
       supabase
         .from('player_accounts')
-        .select('name, email, phone_number'),
+        .select('name, email, phone_number, level'),
     ]);
 
-    const accountsByPhone = new Map<string, { name: string; email: string | null; phone_number: string }>();
+    const accountsByPhone = new Map<string, { name: string; email: string | null; phone_number: string; level: number | null }>();
     for (const acc of accountsResult.data || []) {
       const key = normalizePhone(acc.phone_number);
-      if (key) accountsByPhone.set(key, acc);
+      if (key) {
+        accountsByPhone.set(key, {
+          ...acc,
+          level: acc.level == null ? null : Number(acc.level),
+        });
+      }
     }
 
     const playerMap = new Map<string, ExistingPlayer>();
@@ -180,6 +186,7 @@ export default function AddIndividualPlayerModal({
       const displayName = (account?.name || name).trim();
       const displayPhone = phoneKey || phone || null;
       const displayEmail = email || account?.email || null;
+      const displayLevel = account?.level ?? null;
 
       if (!phoneKey) {
         const duplicateWithPhone = Array.from(playerMap.values()).find(
@@ -188,6 +195,7 @@ export default function AddIndividualPlayerModal({
         if (duplicateWithPhone) {
           if (account?.name) duplicateWithPhone.name = account.name;
           if (!duplicateWithPhone.email && displayEmail) duplicateWithPhone.email = displayEmail;
+          if (duplicateWithPhone.level == null && displayLevel != null) duplicateWithPhone.level = displayLevel;
           return;
         }
       }
@@ -199,6 +207,7 @@ export default function AddIndividualPlayerModal({
         if (account?.name) existing.name = account.name;
         if (!existing.email && displayEmail) existing.email = displayEmail;
         if (!existing.phone_number && displayPhone) existing.phone_number = displayPhone;
+        if (existing.level == null && displayLevel != null) existing.level = displayLevel;
         return;
       }
 
@@ -214,6 +223,7 @@ export default function AddIndividualPlayerModal({
         name: displayName,
         phone_number: displayPhone,
         email: displayEmail,
+        level: displayLevel,
       });
     };
 
@@ -499,7 +509,7 @@ export default function AddIndividualPlayerModal({
                 <option value="">Choose a player...</option>
                 {existingPlayers.map((player) => (
                   <option key={player.id} value={player.id}>
-                    {player.name} {player.phone_number && `(${player.phone_number})`}
+                    {formatPlayerPickerLabel(player, { includePhone: !!player.phone_number })}
                   </option>
                 ))}
               </select>
