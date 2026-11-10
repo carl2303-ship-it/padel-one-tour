@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase, TournamentCategory } from '../lib/supabase';
 import { useAuth } from '../lib/authContext';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import { formatPlayerPickerLabel, isSameOrganizerPlayer } from '../lib/organizerPlayerSearch';
 import { normalizePhone } from '../lib/phoneUtils';
@@ -98,6 +98,7 @@ export default function AddIndividualPlayerModal({
   const [wantsDinner, setWantsDinner] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -106,6 +107,20 @@ export default function AddIndividualPlayerModal({
     fetchCategories();
     fetchTournament();
   }, [user]);
+
+  const filteredPlayers = useMemo(() => {
+    const term = searchTerm.trim().toLocaleLowerCase('pt');
+    const matches = !term
+      ? existingPlayers
+      : existingPlayers.filter((player) =>
+          player.name.toLocaleLowerCase('pt').includes(term)
+        );
+    const selected = existingPlayers.find((player) => player.id === selectedPlayerId);
+    if (!selected || matches.some((player) => player.id === selected.id)) {
+      return matches;
+    }
+    return [selected, ...matches];
+  }, [existingPlayers, searchTerm, selectedPlayerId]);
 
   const fetchCategories = async () => {
     // Buscar todas as categorias do torneio
@@ -483,7 +498,10 @@ export default function AddIndividualPlayerModal({
               </button>
               <button
                 type="button"
-                onClick={() => setMode('new')}
+                onClick={() => {
+                  setMode('new');
+                  setSearchTerm('');
+                }}
                 className={`flex-1 px-4 py-2 rounded-lg font-medium transition-colors ${
                   mode === 'new'
                     ? 'bg-blue-600 text-white'
@@ -496,10 +514,26 @@ export default function AddIndividualPlayerModal({
           )}
 
           {mode === 'select' ? (
-            <div>
+            <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Select Player *
               </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Pesquisar por nome..."
+                  autoComplete="off"
+                />
+              </div>
+              {searchTerm.trim() && (
+                <p className="text-xs text-gray-500">
+                  {filteredPlayers.length} jogador{filteredPlayers.length === 1 ? '' : 'es'}
+                </p>
+              )}
               <select
                 value={selectedPlayerId}
                 onChange={(e) => setSelectedPlayerId(e.target.value)}
@@ -507,7 +541,7 @@ export default function AddIndividualPlayerModal({
                 required
               >
                 <option value="">Choose a player...</option>
-                {existingPlayers.map((player) => (
+                {filteredPlayers.map((player) => (
                   <option key={player.id} value={player.id}>
                     {formatPlayerPickerLabel(player, { includePhone: !!player.phone_number })}
                   </option>
