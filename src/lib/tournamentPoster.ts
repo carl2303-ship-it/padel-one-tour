@@ -7,6 +7,14 @@ import {
 export const POSTER_WIDTH = 1080;
 export const POSTER_HEIGHT = 1350;
 
+/** Footer brand marks shown on every tournament poster. */
+const FOOTER_BRAND_ORGANIZED_BY = '/assets/organized-by-sportsevents.jpg';
+const FOOTER_BRAND_POWERED_BY = '/assets/powered-by-padel1.png';
+/** Target draw height for each footer brand logo (width scales with aspect). */
+const FOOTER_BRAND_LOGO_H = 110;
+const FOOTER_BRAND_GAP = 32;
+const FOOTER_BRAND_BOTTOM_PAD = 18;
+
 /** Distinct Padel1 category colors (M1–M6 / F1–F6). */
 export const PADEL1_LEVEL_COLORS: Record<string, string> = {
   M1: '#B71C1C',
@@ -442,8 +450,17 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
 
   const logo = await tryLoadImage(input.logoUrl, true);
   const qr = input.registrationUrl ? await loadQrImage(input.registrationUrl) : null;
+  const [organizedByLogo, poweredByLogo] = await Promise.all([
+    tryLoadImage(FOOTER_BRAND_ORGANIZED_BY),
+    tryLoadImage(FOOTER_BRAND_POWERED_BY),
+  ]);
   const pad = 44;
-  const footerH = input.registrationUrl ? 188 : 48;
+  const brandRowH =
+    organizedByLogo || poweredByLogo
+      ? FOOTER_BRAND_LOGO_H + FOOTER_BRAND_BOTTOM_PAD
+      : 28;
+  const qrBlockH = input.registrationUrl ? 140 : 0;
+  const footerH = qrBlockH + brandRowH + (input.registrationUrl ? 12 : 0);
   let y = 28;
 
   // —— Logo only (no club name text) ——
@@ -581,9 +598,10 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
   }
   ctx.textAlign = 'left';
 
-  // —— QR footer ——
+  // —— QR + brand footer ——
+  const brandY = POSTER_HEIGHT - brandRowH;
   if (input.registrationUrl) {
-    const blockY = POSTER_HEIGHT - 176;
+    const blockY = brandY - qrBlockH;
     const qrSize = 120;
     roundRect(ctx, pad, blockY, POSTER_WIDTH - pad * 2, 128, 24);
     ctx.fillStyle = 'rgba(0,0,0,0.40)';
@@ -608,11 +626,28 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     ctx.textAlign = 'left';
   }
 
-  ctx.fillStyle = theme.accentSoft;
-  ctx.font = '700 20px Inter, system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('PADEL ONE  ·  Padel1', POSTER_WIDTH / 2, POSTER_HEIGHT - 18);
-  ctx.textAlign = 'left';
+  // SportsEvents “ORGANIZED BY” + padel1 “Powered by”, side by side
+  const brandLogos = [organizedByLogo, poweredByLogo].filter(
+    (img): img is HTMLImageElement => Boolean(img)
+  );
+  if (brandLogos.length > 0) {
+    const sizes = brandLogos.map((img) => {
+      const scale = FOOTER_BRAND_LOGO_H / img.height;
+      return { img, w: img.width * scale, h: FOOTER_BRAND_LOGO_H };
+    });
+    const totalW =
+      sizes.reduce((sum, s) => sum + s.w, 0) + FOOTER_BRAND_GAP * (sizes.length - 1);
+    let x = (POSTER_WIDTH - totalW) / 2;
+    const drawY = brandY + Math.max(0, (brandRowH - FOOTER_BRAND_BOTTOM_PAD - FOOTER_BRAND_LOGO_H) / 2);
+    for (const s of sizes) {
+      roundRect(ctx, x, drawY, s.w, s.h, 12);
+      ctx.save();
+      ctx.clip();
+      ctx.drawImage(s.img, x, drawY, s.w, s.h);
+      ctx.restore();
+      x += s.w + FOOTER_BRAND_GAP;
+    }
+  }
 
   return canvasToDataUrl(canvas);
 }
