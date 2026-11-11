@@ -1,9 +1,28 @@
 import { boostpadelSupabase, Organization } from './boostpadelSupabase';
 import { supabase } from './supabase';
 
-const BOOST_URL = import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL
-  || 'https://gmpyjnufuvsoewbtirsg.supabase.co';
-const BOOST_ANON = import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY || '';
+const SE_SUPABASE_URL = 'https://tprbpeacicadsbmvxcqk.supabase.co';
+const LEGACY_BOOST_HOST = 'gmpyjnufuvsoewbtirsg.supabase.co';
+const SE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwcmJwZWFjaWNhZHNibXZ4Y3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzkzODQsImV4cCI6MjEwMjAxNTM4NH0.HS263wYpOafjWdEFiA7NiSc2HxjgcEGG-bLP4FGvP78';
+
+/** Edge SaaS — canónico SE; `VITE_BOOSTPADEL_*` override (host Boost legado → SE). */
+function resolveSaasEdgeUrl(): string {
+  const raw = import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL || SE_SUPABASE_URL;
+  if (raw.includes(LEGACY_BOOST_HOST)) return SE_SUPABASE_URL;
+  return raw.replace(/\/$/, '');
+}
+
+const SAAS_EDGE_URL = resolveSaasEdgeUrl();
+
+const SAAS_EDGE_ANON = (() => {
+  const raw = import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY || SE_ANON_KEY;
+  // JWT Boost legado tem ref gmpyjn… (base64 `ImdtcHlq…`) — forçar anon SE.
+  if (raw.includes('ImdtcHlqbnVmdXZzb2V3YnRpcnNn') || raw.includes('gmpyjnufuvsoewbtirsg')) {
+    return SE_ANON_KEY;
+  }
+  return raw;
+})();
 
 export type SaasSubscriptionInfo = Organization & {
   cancel_at_period_end?: boolean;
@@ -25,12 +44,12 @@ export async function cancelSubscriptionAtPeriodEnd(): Promise<{ message: string
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error('Sessão expirada. Faça login novamente.');
 
-  const resp = await fetch(`${BOOST_URL}/functions/v1/manage-saas-subscription`, {
+  const resp = await fetch(`${SAAS_EDGE_URL}/functions/v1/manage-saas-subscription`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.access_token}`,
-      apikey: BOOST_ANON,
+      apikey: SAAS_EDGE_ANON,
     },
     body: JSON.stringify({ action: 'cancel_at_period_end' }),
   });
@@ -44,12 +63,12 @@ export async function reactivateSubscription(): Promise<{ message: string }> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error('Sessão expirada. Faça login novamente.');
 
-  const resp = await fetch(`${BOOST_URL}/functions/v1/manage-saas-subscription`, {
+  const resp = await fetch(`${SAAS_EDGE_URL}/functions/v1/manage-saas-subscription`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.access_token}`,
-      apikey: BOOST_ANON,
+      apikey: SAAS_EDGE_ANON,
     },
     body: JSON.stringify({ action: 'reactivate' }),
   });

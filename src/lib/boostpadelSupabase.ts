@@ -1,14 +1,38 @@
 import { createClient } from '@supabase/supabase-js';
 
-const boostpadelUrl =
-  import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL ||
-  'https://gmpyjnufuvsoewbtirsg.supabase.co';
+/** SportsEvents — dados SaaS/loja no schema `boost`. */
+const SE_SUPABASE_URL = 'https://tprbpeacicadsbmvxcqk.supabase.co';
+const LEGACY_BOOST_HOST = 'gmpyjnufuvsoewbtirsg.supabase.co';
 
-const boostpadelAnonKey =
-  import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdtcHlqbnVmdXZzb2V3YnRpcnNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA0NjQ0NTYsImV4cCI6MjA3NjA0MDQ1Nn0.Uoe0xGYkQteD0nnHxeM5euGvBdeMbD64VbhBFQcGkX8';
+const SE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwcmJwZWFjaWNhZHNibXZ4Y3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzkzODQsImV4cCI6MjEwMjAxNTM4NH0.HS263wYpOafjWdEFiA7NiSc2HxjgcEGG-bLP4FGvP78';
 
-export const boostpadelSupabase = createClient(boostpadelUrl, boostpadelAnonKey);
+/**
+ * URL do projecto onde vivem `organizations` (e resto SaaS).
+ * Canónico: SportsEvents. Env legado `VITE_BOOSTPADEL_*` ainda funciona,
+ * mas o host Boost é forçado para SE (dados já migrados para `boost.*`).
+ */
+function resolveSaasDataUrl(): string {
+  const raw = import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL || SE_SUPABASE_URL;
+  if (raw.includes(LEGACY_BOOST_HOST)) return SE_SUPABASE_URL;
+  return raw.replace(/\/$/, '');
+}
+
+const boostpadelUrl = resolveSaasDataUrl();
+
+const boostpadelAnonKey = (() => {
+  const raw = import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY || SE_ANON_KEY;
+  // JWT Boost legado (ref gmpyjn…) → anon SE.
+  if (raw.includes('ImdtcHlqbnVmdXZzb2V3YnRpcnNn') || raw.includes('gmpyjnufuvsoewbtirsg')) {
+    return SE_ANON_KEY;
+  }
+  return raw;
+})();
+
+/** Cliente anon → PostgREST schema `boost` no SE (`boost.organizations`, …). */
+export const boostpadelSupabase = createClient(boostpadelUrl, boostpadelAnonKey, {
+  db: { schema: 'boost' },
+});
 
 export type Organization = {
   id: string;

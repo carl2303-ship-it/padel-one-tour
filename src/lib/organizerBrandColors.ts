@@ -91,16 +91,28 @@ export async function saveOrganizerBrandColors(
   try {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.access_token) {
-      const boostUrl = import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL
-        || 'https://gmpyjnufuvsoewbtirsg.supabase.co';
-      const boostAnon = import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY || '';
+      // Edge sync — default SportsEvents; VITE_BOOSTPADEL_* override (Boost host → SE)
+      const SE_URL = 'https://tprbpeacicadsbmvxcqk.supabase.co';
+      const SE_ANON =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRwcmJwZWFjaWNhZHNibXZ4Y3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MzkzODQsImV4cCI6MjEwMjAxNTM4NH0.HS263wYpOafjWdEFiA7NiSc2HxjgcEGG-bLP4FGvP78';
+      const rawUrl = import.meta.env.VITE_BOOSTPADEL_SUPABASE_URL || SE_URL;
+      const edgeUrl = rawUrl.includes('gmpyjnufuvsoewbtirsg.supabase.co')
+        ? SE_URL
+        : rawUrl.replace(/\/$/, '');
+      let edgeAnon = import.meta.env.VITE_BOOSTPADEL_SUPABASE_ANON_KEY || SE_ANON;
+      if (
+        edgeAnon.includes('ImdtcHlqbnVmdXZzb2V3YnRpcnNn')
+        || edgeAnon.includes('gmpyjnufuvsoewbtirsg')
+      ) {
+        edgeAnon = SE_ANON;
+      }
 
-      const resp = await fetch(`${boostUrl}/functions/v1/sync-org-branding`, {
+      const resp = await fetch(`${edgeUrl}/functions/v1/sync-org-branding`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
-          apikey: boostAnon,
+          apikey: edgeAnon,
         },
         body: JSON.stringify({ primary_color: primary, accent_color: accent }),
       });
