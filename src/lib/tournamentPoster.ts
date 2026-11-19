@@ -11,9 +11,12 @@ export const POSTER_HEIGHT = 1350;
 const FOOTER_BRAND_ORGANIZED_BY = '/assets/organized-by-sportsevents.jpg';
 const FOOTER_BRAND_POWERED_BY = '/assets/powered-by-padel1.png';
 /** Target draw height for each footer brand logo (width scales with aspect). */
-const FOOTER_BRAND_LOGO_H = 110;
-const FOOTER_BRAND_GAP = 32;
-const FOOTER_BRAND_BOTTOM_PAD = 18;
+const FOOTER_BRAND_LOGO_H = 68;
+const FOOTER_BRAND_GAP = 28;
+const FOOTER_BRAND_BOTTOM_PAD = 24;
+/** Vertical gap between date card ↔ QR/CTA ↔ brand logos. */
+const FOOTER_SECTION_GAP = 32;
+const QR_ROW_H = 128;
 
 /** Distinct Padel1 category colors (M1–M6 / F1–F6). */
 export const PADEL1_LEVEL_COLORS: Record<string, string> = {
@@ -455,109 +458,149 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     tryLoadImage(FOOTER_BRAND_POWERED_BY),
   ]);
   const pad = 44;
-  const brandRowH =
-    organizedByLogo || poweredByLogo
-      ? FOOTER_BRAND_LOGO_H + FOOTER_BRAND_BOTTOM_PAD
-      : 28;
-  const qrBlockH = input.registrationUrl ? 140 : 0;
-  const footerH = qrBlockH + brandRowH + (input.registrationUrl ? 12 : 0);
-  let y = 28;
+  const hasBrands = Boolean(organizedByLogo || poweredByLogo);
+  const brandRowH = hasBrands ? FOOTER_BRAND_LOGO_H + FOOTER_BRAND_BOTTOM_PAD : 20;
+  const hasQr = Boolean(input.registrationUrl);
+  const brandY = POSTER_HEIGHT - brandRowH;
+  const qrY = hasQr ? brandY - FOOTER_SECTION_GAP - QR_ROW_H : brandY;
+  const singleDay = !input.endDate || input.endDate === input.startDate;
+  const timeLabel = formatTimeLabel(input.startTime, input.endTime);
+  const dateCardH = singleDay ? (timeLabel ? 248 : 180) : 220;
+  // Date card is anchored above QR/brands — never pushed into footer by tall content above.
+  const dateY =
+    (hasQr ? qrY : brandY) - FOOTER_SECTION_GAP - dateCardH;
+  const contentBottom = dateY - FOOTER_SECTION_GAP;
+  let y = 24;
 
-  // —— Logo only (no club name text) ——
-  const logoSize = 360;
+  // —— Logo (scales down when vertical budget is tight) ——
+  const titleReserve = 120;
+  const catsMinReserve = 150;
+  const logoBudget = Math.max(
+    160,
+    contentBottom - y - titleReserve - catsMinReserve - 48
+  );
+  const logoSize = Math.min(300, logoBudget);
   if (logo) {
     const scale = Math.min(logoSize / logo.width, logoSize / logo.height);
     const dw = logo.width * scale;
     const dh = logo.height * scale;
     ctx.drawImage(logo, (POSTER_WIDTH - dw) / 2, y + (logoSize - dh) / 2, dw, dh);
-  } else {
-    roundRect(ctx, (POSTER_WIDTH - logoSize) / 2, y, logoSize, logoSize, 36);
+    y += logoSize + 36;
+  } else if (input.logoUrl) {
+    // Logo URL provided but failed to load — keep a modest placeholder so layout stays balanced.
+    const ph = Math.min(220, logoSize);
+    roundRect(ctx, (POSTER_WIDTH - ph) / 2, y, ph, ph, 28);
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fill();
+    y += ph + 36;
+  } else {
+    y += 12;
   }
-  y += logoSize + 56;
 
-  // —— Title ——
+  // —— Title (shrink font if needed so it never eats into the date card) ——
+  const titleMaxW = POSTER_WIDTH - pad * 2;
+  const titleText = input.tournamentName.trim() || 'Torneio';
+  let titleSize = 72;
+  let titleLineH = 80;
+  let titleLines = 2;
+  for (; titleSize >= 48; titleSize -= 4) {
+    titleLineH = Math.round(titleSize * 1.1);
+    ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
+    const words = titleText.split(/\s+/);
+    let lines = 1;
+    let cur = '';
+    for (const word of words) {
+      const test = cur ? `${cur} ${word}` : word;
+      if (ctx.measureText(test).width > titleMaxW && cur) {
+        lines += 1;
+        cur = word;
+      } else {
+        cur = test;
+      }
+    }
+    titleLines = Math.min(2, lines);
+    const needed = titleLines * titleLineH + 28;
+    if (y + needed + catsMinReserve <= contentBottom) break;
+  }
   ctx.fillStyle = '#ffffff';
-  ctx.font = '900 76px Inter, system-ui, sans-serif';
+  ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
   const titleH = wrapText(
     ctx,
-    input.tournamentName.trim() || 'Torneio',
+    titleText,
     pad,
     y,
-    POSTER_WIDTH - pad * 2,
-    84,
-    2,
+    titleMaxW,
+    titleLineH,
+    titleLines,
     'center'
   );
   ctx.textAlign = 'left';
-  y += titleH + 32;
+  y += titleH + 24;
 
-  // —— Categories + levels (extra large for phone screens) ——
+  // —— Categories + levels (fit remaining space above the fixed date card) ——
   const cats = input.categories.length > 0 ? input.categories : [{ name: 'Open' }];
-  const singleDay = !input.endDate || input.endDate === input.startDate;
-  const dateCardH = singleDay ? (formatTimeLabel(input.startTime, input.endTime) ? 280 : 200) : 240;
-  const availForCats = POSTER_HEIGHT - footerH - y - dateCardH - 24;
-  const maxCats = Math.max(1, Math.min(cats.length, availForCats >= 360 ? 2 : 1));
+  const availForCats = Math.max(0, contentBottom - y);
+  const maxCats = Math.max(1, Math.min(cats.length, availForCats >= 300 ? 2 : 1));
   const visibleCats = cats.slice(0, maxCats);
-  const perCat = Math.min(190, Math.max(150, Math.floor(availForCats / visibleCats.length) - 12));
+  const showMoreNote = cats.length > visibleCats.length;
+  const noteReserve = showMoreNote ? 36 : 0;
+  const perCat = Math.min(
+    176,
+    Math.max(128, Math.floor((availForCats - noteReserve) / visibleCats.length) - 12)
+  );
 
   for (const cat of visibleCats) {
+    if (y + perCat > contentBottom) break;
     const boxH = perCat;
-    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, boxH, 28);
+    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, boxH, 24);
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 56px Inter, system-ui, sans-serif';
+    ctx.font = '900 48px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
-    wrapText(ctx, cat.name, pad + 16, y + 62, POSTER_WIDTH - pad * 2 - 32, 62, 1, 'center');
+    wrapText(ctx, cat.name, pad + 16, y + 52, POSTER_WIDTH - pad * 2 - 32, 54, 1, 'center');
     ctx.textAlign = 'left';
 
     const levels = levelsForCategory(cat);
     if (levels.length === 0) {
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.font = '800 40px Inter, system-ui, sans-serif';
+      ctx.font = '800 34px Inter, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Todos os níveis', POSTER_WIDTH / 2, y + boxH - 44);
+      ctx.fillText('Todos os níveis', POSTER_WIDTH / 2, y + boxH - 36);
       ctx.textAlign = 'left';
     } else {
-      ctx.font = '900 48px Inter, system-ui, sans-serif';
-      const chipH = 72;
-      const gap = 14;
-      const chipWidths = levels.map((code) => ctx.measureText(code).width + 48);
+      ctx.font = '900 42px Inter, system-ui, sans-serif';
+      const chipH = 64;
+      const gap = 12;
+      const chipWidths = levels.map((code) => ctx.measureText(code).width + 40);
       const totalW = chipWidths.reduce((a, b) => a + b, 0) + gap * (levels.length - 1);
       let chipX = (POSTER_WIDTH - totalW) / 2;
-      const chipY = y + boxH - chipH - 28;
+      const chipY = y + boxH - chipH - 22;
       levels.forEach((code, i) => {
         const tw = chipWidths[i];
-        roundRect(ctx, chipX, chipY, tw, chipH, 20);
+        roundRect(ctx, chipX, chipY, tw, chipH, 18);
         ctx.fillStyle = colorForLevel(code);
         ctx.fill();
         ctx.fillStyle = '#ffffff';
-        ctx.font = '900 48px Inter, system-ui, sans-serif';
-        ctx.fillText(code, chipX + 24, chipY + 52);
+        ctx.font = '900 42px Inter, system-ui, sans-serif';
+        ctx.fillText(code, chipX + 20, chipY + 46);
         chipX += tw + gap;
       });
     }
     y += boxH + 16;
   }
 
-  if (cats.length > visibleCats.length) {
+  if (showMoreNote && y + 32 <= contentBottom) {
     ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.font = '800 34px Inter, system-ui, sans-serif';
+    ctx.font = '800 30px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`+${cats.length - visibleCats.length} categorias`, POSTER_WIDTH / 2, y + 10);
     ctx.textAlign = 'left';
-    y += 40;
   }
 
-  // —— Day / date / time (dominant block) ——
-  const timeLabel = formatTimeLabel(input.startTime, input.endTime);
-  const minDateY = POSTER_HEIGHT - footerH - dateCardH - 12;
-  if (y < minDateY) y = minDateY;
-
-  roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, dateCardH, 32);
+  // —— Day / date / time (fixed zone above QR/footer) ——
+  roundRect(ctx, pad, dateY, POSTER_WIDTH - pad * 2, dateCardH, 28);
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fill();
   ctx.strokeStyle = theme.accent;
@@ -569,60 +612,58 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     const weekday = formatWeekday(input.startDate);
     const dateOnly = formatDateOnly(input.startDate);
     ctx.fillStyle = theme.accentSoft;
-    ctx.font = '800 36px Inter, system-ui, sans-serif';
-    ctx.fillText(weekday || 'DIA', POSTER_WIDTH / 2, y + 52);
+    ctx.font = '800 34px Inter, system-ui, sans-serif';
+    ctx.fillText(weekday || 'DIA', POSTER_WIDTH / 2, dateY + 48);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 64px Inter, system-ui, sans-serif';
-    ctx.fillText(dateOnly || '—', POSTER_WIDTH / 2, y + 122);
+    ctx.font = '900 58px Inter, system-ui, sans-serif';
+    ctx.fillText(dateOnly || '—', POSTER_WIDTH / 2, dateY + 112);
     if (timeLabel) {
       ctx.fillStyle = theme.accentSoft;
-      ctx.font = '800 32px Inter, system-ui, sans-serif';
-      ctx.fillText('HORA', POSTER_WIDTH / 2, y + 178);
+      ctx.font = '800 30px Inter, system-ui, sans-serif';
+      ctx.fillText('HORA', POSTER_WIDTH / 2, dateY + 164);
       ctx.fillStyle = '#ffffff';
-      ctx.font = '900 72px Inter, system-ui, sans-serif';
-      ctx.fillText(timeLabel, POSTER_WIDTH / 2, y + 248);
+      ctx.font = '900 64px Inter, system-ui, sans-serif';
+      ctx.fillText(timeLabel, POSTER_WIDTH / 2, dateY + 228);
     }
   } else {
     const dateLabel = formatDateLabel(input.startDate, input.endDate);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 42px Inter, system-ui, sans-serif';
-    wrapText(ctx, dateLabel || '—', pad + 20, y + 70, POSTER_WIDTH - pad * 2 - 40, 52, 3, 'center');
+    ctx.font = '900 38px Inter, system-ui, sans-serif';
+    wrapText(ctx, dateLabel || '—', pad + 20, dateY + 64, POSTER_WIDTH - pad * 2 - 40, 48, 3, 'center');
     if (timeLabel) {
       ctx.fillStyle = theme.accentSoft;
-      ctx.font = '800 30px Inter, system-ui, sans-serif';
-      ctx.fillText('HORA', POSTER_WIDTH / 2, y + 180);
+      ctx.font = '800 28px Inter, system-ui, sans-serif';
+      ctx.fillText('HORA', POSTER_WIDTH / 2, dateY + 170);
       ctx.fillStyle = '#ffffff';
-      ctx.font = '900 60px Inter, system-ui, sans-serif';
-      ctx.fillText(timeLabel, POSTER_WIDTH / 2, y + 230);
+      ctx.font = '900 54px Inter, system-ui, sans-serif';
+      ctx.fillText(timeLabel, POSTER_WIDTH / 2, dateY + 216);
     }
   }
   ctx.textAlign = 'left';
 
-  // —— QR + brand footer ——
-  const brandY = POSTER_HEIGHT - brandRowH;
-  if (input.registrationUrl) {
-    const blockY = brandY - qrBlockH;
-    const qrSize = 120;
-    roundRect(ctx, pad, blockY, POSTER_WIDTH - pad * 2, 128, 24);
+  // —— QR + CTA (fixed above brand logos) ——
+  if (hasQr) {
+    const qrSize = 112;
+    roundRect(ctx, pad, qrY, POSTER_WIDTH - pad * 2, QR_ROW_H, 24);
     ctx.fillStyle = 'rgba(0,0,0,0.40)';
     ctx.fill();
 
     if (qr) {
       ctx.fillStyle = '#ffffff';
-      roundRect(ctx, pad + 16, blockY + 8, qrSize, qrSize, 14);
+      roundRect(ctx, pad + 12, qrY + 8, qrSize, qrSize, 14);
       ctx.fill();
-      ctx.drawImage(qr, pad + 20, blockY + 12, qrSize - 8, qrSize - 8);
+      ctx.drawImage(qr, pad + 16, qrY + 12, qrSize - 8, qrSize - 8);
     }
 
-    const pillX = pad + (qr ? qrSize + 32 : 24);
-    const pillW = POSTER_WIDTH - pad - pillX - 24;
-    roundRect(ctx, pillX, blockY + 30, pillW, 68, 34);
+    const pillX = pad + (qr ? qrSize + 28 : 20);
+    const pillW = POSTER_WIDTH - pad - pillX - 20;
+    roundRect(ctx, pillX, qrY + 30, pillW, 68, 34);
     ctx.fillStyle = theme.accent;
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.font = '900 32px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('INSCREVE-TE', pillX + pillW / 2, blockY + 76);
+    ctx.fillText('INSCREVE-TE', pillX + pillW / 2, qrY + 76);
     ctx.textAlign = 'left';
   }
 
@@ -638,9 +679,9 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     const totalW =
       sizes.reduce((sum, s) => sum + s.w, 0) + FOOTER_BRAND_GAP * (sizes.length - 1);
     let x = (POSTER_WIDTH - totalW) / 2;
-    const drawY = brandY + Math.max(0, (brandRowH - FOOTER_BRAND_BOTTOM_PAD - FOOTER_BRAND_LOGO_H) / 2);
+    const drawY = brandY;
     for (const s of sizes) {
-      roundRect(ctx, x, drawY, s.w, s.h, 12);
+      roundRect(ctx, x, drawY, s.w, s.h, 10);
       ctx.save();
       ctx.clip();
       ctx.drawImage(s.img, x, drawY, s.w, s.h);
