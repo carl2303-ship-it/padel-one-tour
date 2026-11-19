@@ -403,6 +403,49 @@ function colorForLevel(code: string): string {
   return PADEL1_LEVEL_COLORS[code.toUpperCase()] || '#546E7A';
 }
 
+/** Pack chip indices into wrapping rows that fit maxWidth. */
+function chipRowsForWidths(
+  widths: number[],
+  maxWidth: number,
+  gap: number
+): { rows: number[][]; rowWidths: number[] } {
+  const rows: number[][] = [];
+  const rowWidths: number[] = [];
+  let row: number[] = [];
+  let rowW = 0;
+  widths.forEach((w, i) => {
+    const next = row.length === 0 ? w : rowW + gap + w;
+    if (row.length > 0 && next > maxWidth) {
+      rows.push(row);
+      rowWidths.push(rowW);
+      row = [i];
+      rowW = w;
+    } else {
+      row.push(i);
+      rowW = next;
+    }
+  });
+  if (row.length) {
+    rows.push(row);
+    rowWidths.push(rowW);
+  }
+  return { rows, rowWidths };
+}
+
+/** Compact vertical budget per category so all can fit above the date card. */
+function categoryLayoutMetrics(count: number) {
+  const n = Math.max(1, count);
+  const gap = n <= 2 ? 14 : n <= 4 ? 10 : 6;
+  const minPerCat = n <= 2 ? 110 : n <= 4 ? 72 : n <= 6 ? 56 : 46;
+  const maxPerCat = n <= 2 ? 176 : n <= 3 ? 140 : n <= 5 ? 100 : 78;
+  return {
+    gap,
+    minPerCat,
+    maxPerCat,
+    minReserve: n * minPerCat + Math.max(0, n - 1) * gap,
+  };
+}
+
 function drawBackground(ctx: CanvasRenderingContext2D, theme: PackTheme) {
   const g = ctx.createLinearGradient(0, 0, POSTER_WIDTH * 0.15, POSTER_HEIGHT);
   g.addColorStop(0, theme.top);
@@ -472,12 +515,16 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
   const contentBottom = dateY - FOOTER_SECTION_GAP;
   let y = 24;
 
-  // —— Logo (scales down when vertical budget is tight) ——
-  const titleReserve = 120;
-  const catsMinReserve = 150;
+  // —— Categories: reserve space for ALL of them (never truncate to first + "+N") ——
+  const cats = input.categories.length > 0 ? input.categories : [{ name: 'Open' }];
+  const catMetrics = categoryLayoutMetrics(cats.length);
+
+  // —— Logo (scales down when vertical budget is tight / many categories) ——
+  const titleReserve = cats.length >= 4 ? 88 : 120;
+  const logoMin = cats.length >= 5 ? 90 : cats.length >= 3 ? 120 : 160;
   const logoBudget = Math.max(
-    160,
-    contentBottom - y - titleReserve - catsMinReserve - 48
+    logoMin,
+    contentBottom - y - titleReserve - catMetrics.minReserve - 48
   );
   const logoSize = Math.min(300, logoBudget);
   if (logo) {
@@ -485,14 +532,14 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     const dw = logo.width * scale;
     const dh = logo.height * scale;
     ctx.drawImage(logo, (POSTER_WIDTH - dw) / 2, y + (logoSize - dh) / 2, dw, dh);
-    y += logoSize + 36;
+    y += logoSize + (cats.length >= 4 ? 20 : 36);
   } else if (input.logoUrl) {
     // Logo URL provided but failed to load — keep a modest placeholder so layout stays balanced.
     const ph = Math.min(220, logoSize);
     roundRect(ctx, (POSTER_WIDTH - ph) / 2, y, ph, ph, 28);
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fill();
-    y += ph + 36;
+    y += ph + (cats.length >= 4 ? 20 : 36);
   } else {
     y += 12;
   }
@@ -500,10 +547,11 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
   // —— Title (shrink font if needed so it never eats into the date card) ——
   const titleMaxW = POSTER_WIDTH - pad * 2;
   const titleText = input.tournamentName.trim() || 'Torneio';
-  let titleSize = 72;
+  const titleMinSize = cats.length >= 4 ? 36 : 48;
+  let titleSize = cats.length >= 4 ? 60 : 72;
   let titleLineH = 80;
   let titleLines = 2;
-  for (; titleSize >= 48; titleSize -= 4) {
+  for (; titleSize >= titleMinSize; titleSize -= 4) {
     titleLineH = Math.round(titleSize * 1.1);
     ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
     const words = titleText.split(/\s+/);
@@ -519,8 +567,8 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
       }
     }
     titleLines = Math.min(2, lines);
-    const needed = titleLines * titleLineH + 28;
-    if (y + needed + catsMinReserve <= contentBottom) break;
+    const needed = titleLines * titleLineH + 20;
+    if (y + needed + catMetrics.minReserve <= contentBottom) break;
   }
   ctx.fillStyle = '#ffffff';
   ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
@@ -535,68 +583,126 @@ export async function generateTournamentPoster(input: TournamentPosterInput): Pr
     'center'
   );
   ctx.textAlign = 'left';
-  y += titleH + 24;
+  y += titleH + (cats.length >= 4 ? 14 : 24);
 
-  // —— Categories + levels (fit remaining space above the fixed date card) ——
-  const cats = input.categories.length > 0 ? input.categories : [{ name: 'Open' }];
+  // —— Categories + levels (ALL categories; scale + wrap to stay above date/QR/footer) ——
   const availForCats = Math.max(0, contentBottom - y);
-  const maxCats = Math.max(1, Math.min(cats.length, availForCats >= 300 ? 2 : 1));
-  const visibleCats = cats.slice(0, maxCats);
-  const showMoreNote = cats.length > visibleCats.length;
-  const noteReserve = showMoreNote ? 36 : 0;
+  const totalCatGaps = catMetrics.gap * Math.max(0, cats.length - 1);
   const perCat = Math.min(
-    176,
-    Math.max(128, Math.floor((availForCats - noteReserve) / visibleCats.length) - 12)
+    catMetrics.maxPerCat,
+    Math.max(
+      catMetrics.minPerCat,
+      Math.floor((availForCats - totalCatGaps) / Math.max(1, cats.length))
+    )
   );
 
-  for (const cat of visibleCats) {
-    if (y + perCat > contentBottom) break;
-    const boxH = perCat;
-    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, boxH, 24);
+  // Typography scales with allocated box height
+  const nameSize =
+    perCat >= 150 ? 48 : perCat >= 110 ? 36 : perCat >= 80 ? 28 : perCat >= 56 ? 24 : 20;
+  const nameLineH = Math.round(nameSize * 1.15);
+  const chipSize =
+    perCat >= 150 ? 42 : perCat >= 110 ? 32 : perCat >= 80 ? 24 : perCat >= 56 ? 20 : 16;
+  const chipH = Math.round(chipSize * 1.52);
+  const chipPadX = Math.max(12, Math.round(chipSize * 0.55));
+  const chipGap = Math.max(6, Math.round(chipSize * 0.28));
+  const chipRowGap = Math.max(4, Math.round(chipH * 0.12));
+  const boxRadius = perCat >= 100 ? 24 : perCat >= 70 ? 18 : 14;
+  const innerPadX = 16;
+  const maxChipW = POSTER_WIDTH - pad * 2 - innerPadX * 2;
+
+  for (let ci = 0; ci < cats.length; ci++) {
+    const cat = cats[ci];
+    const remainingCats = cats.length - ci;
+    const remainingGaps = catMetrics.gap * Math.max(0, remainingCats - 1);
+    const room = Math.max(0, contentBottom - y - remainingGaps);
+    const boxH = Math.max(
+      36,
+      Math.min(perCat, Math.floor(room / remainingCats))
+    );
+    roundRect(ctx, pad, y, POSTER_WIDTH - pad * 2, boxH, boxRadius);
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
     ctx.fill();
 
+    const levels = levelsForCategory(cat);
+    const nameTop = y + Math.max(nameSize + 4, Math.round(boxH * (levels.length ? 0.32 : 0.42)));
+
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 48px Inter, system-ui, sans-serif';
+    ctx.font = `900 ${nameSize}px Inter, system-ui, sans-serif`;
     ctx.textAlign = 'center';
-    wrapText(ctx, cat.name, pad + 16, y + 52, POSTER_WIDTH - pad * 2 - 32, 54, 1, 'center');
+    wrapText(
+      ctx,
+      cat.name,
+      pad + innerPadX,
+      nameTop,
+      POSTER_WIDTH - pad * 2 - innerPadX * 2,
+      nameLineH,
+      1,
+      'center'
+    );
     ctx.textAlign = 'left';
 
-    const levels = levelsForCategory(cat);
     if (levels.length === 0) {
+      const fallbackSize = Math.max(16, Math.round(nameSize * 0.7));
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.font = '800 34px Inter, system-ui, sans-serif';
+      ctx.font = `800 ${fallbackSize}px Inter, system-ui, sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText('Todos os níveis', POSTER_WIDTH / 2, y + boxH - 36);
+      ctx.fillText(
+        'Todos os níveis',
+        POSTER_WIDTH / 2,
+        y + boxH - Math.max(14, Math.round(boxH * 0.22))
+      );
       ctx.textAlign = 'left';
     } else {
-      ctx.font = '900 42px Inter, system-ui, sans-serif';
-      const chipH = 64;
-      const gap = 12;
-      const chipWidths = levels.map((code) => ctx.measureText(code).width + 40);
-      const totalW = chipWidths.reduce((a, b) => a + b, 0) + gap * (levels.length - 1);
-      let chipX = (POSTER_WIDTH - totalW) / 2;
-      const chipY = y + boxH - chipH - 22;
-      levels.forEach((code, i) => {
-        const tw = chipWidths[i];
-        roundRect(ctx, chipX, chipY, tw, chipH, 18);
-        ctx.fillStyle = colorForLevel(code);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '900 42px Inter, system-ui, sans-serif';
-        ctx.fillText(code, chipX + 20, chipY + 46);
-        chipX += tw + gap;
+      // Shrink chips until wrapped rows fit in the lower part of the box
+      let drawChipSize = chipSize;
+      let drawChipH = chipH;
+      let drawPadX = chipPadX;
+      let drawGap = chipGap;
+      let drawRowGap = chipRowGap;
+      let rows: number[][] = [];
+      let rowWidths: number[] = [];
+      let chipWidths: number[] = [];
+
+      for (let attempt = 0; attempt < 8; attempt++) {
+        ctx.font = `900 ${drawChipSize}px Inter, system-ui, sans-serif`;
+        chipWidths = levels.map((code) => ctx.measureText(code).width + drawPadX * 2);
+        ({ rows, rowWidths } = chipRowsForWidths(chipWidths, maxChipW, drawGap));
+        const blockH = rows.length * drawChipH + Math.max(0, rows.length - 1) * drawRowGap;
+        const topAfterName = nameTop + Math.round(nameLineH * 0.35);
+        const bottomPad = Math.max(8, Math.round(boxH * 0.1));
+        if (topAfterName + blockH + bottomPad <= y + boxH || drawChipSize <= 14) break;
+        drawChipSize = Math.max(14, drawChipSize - 3);
+        drawChipH = Math.round(drawChipSize * 1.52);
+        drawPadX = Math.max(8, Math.round(drawChipSize * 0.55));
+        drawGap = Math.max(4, Math.round(drawChipSize * 0.28));
+        drawRowGap = Math.max(3, Math.round(drawChipH * 0.12));
+      }
+
+      const blockH = rows.length * drawChipH + Math.max(0, rows.length - 1) * drawRowGap;
+      const bottomPad = Math.max(8, Math.round(boxH * 0.1));
+      let chipY = y + boxH - bottomPad - blockH;
+
+      rows.forEach((row, ri) => {
+        let chipX = (POSTER_WIDTH - rowWidths[ri]) / 2;
+        row.forEach((idx) => {
+          const code = levels[idx];
+          const tw = chipWidths[idx];
+          roundRect(ctx, chipX, chipY, tw, drawChipH, Math.min(18, Math.round(drawChipH * 0.28)));
+          ctx.fillStyle = colorForLevel(code);
+          ctx.fill();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `900 ${drawChipSize}px Inter, system-ui, sans-serif`;
+          ctx.fillText(
+            code,
+            chipX + drawPadX,
+            chipY + Math.round(drawChipH * 0.72)
+          );
+          chipX += tw + drawGap;
+        });
+        chipY += drawChipH + drawRowGap;
       });
     }
-    y += boxH + 16;
-  }
-
-  if (showMoreNote && y + 32 <= contentBottom) {
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.font = '800 30px Inter, system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`+${cats.length - visibleCats.length} categorias`, POSTER_WIDTH / 2, y + 10);
-    ctx.textAlign = 'left';
+    y += boxH + catMetrics.gap;
   }
 
   // —— Day / date / time (fixed zone above QR/footer) ——
