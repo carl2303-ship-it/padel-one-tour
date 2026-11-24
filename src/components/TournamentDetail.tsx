@@ -655,22 +655,19 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       if (error) throw error;
 
       const normalizedPhone = normalizePaymentPhone(player.phone_number || (player as any).phone);
-      let playerAccountId: string | null = null;
-      if (normalizedPhone) {
+      // Prefer players.player_account_id. Never create a stub on payment —
+      // phone-key mismatches (E164 vs national) used to spawn duplicate accounts.
+      let playerAccountId: string | null = player.player_account_id || null;
+      if (!playerAccountId && normalizedPhone) {
+        const raw = (player.phone_number || (player as any).phone || '').replace(/[\s\-().]/g, '');
+        const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
         const { data: existingAccount } = await supabase
           .from('player_accounts')
           .select('id')
-          .eq('phone_number', normalizedPhone)
+          .in('phone_number', candidates)
+          .limit(1)
           .maybeSingle();
         playerAccountId = existingAccount?.id || null;
-        if (!existingAccount) {
-          const { data: newAccount } = await supabase
-            .from('player_accounts')
-            .insert({ phone_number: normalizedPhone, name: player.name })
-            .select('id')
-            .single();
-          playerAccountId = newAccount?.id || null;
-        }
       }
 
       const ownerId = (currentTournament as any).user_id || user.id;
