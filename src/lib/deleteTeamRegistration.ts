@@ -3,6 +3,9 @@ import { supabase } from './supabase';
 /**
  * Remove uma equipa de torneio e os jogadores associados, para a lista de
  * inscrições e as métricas (contagem de jogadores) ficarem alinhadas.
+ *
+ * HUB-96: apaga jogadores de forma verificada (não deixa órfãos que a Manager
+ * ainda mostra quando a Tour só lista equipas).
  */
 export async function deleteTeamAndPlayers(teamId: string): Promise<void> {
   const { data: team, error: teamFetchError } = await supabase
@@ -41,15 +44,53 @@ export async function deleteTeamAndPlayers(teamId: string): Promise<void> {
     playerRows = data || [];
   }
 
-  const { error: teamDeleteError } = await supabase.from('teams').delete().eq('id', teamId);
-  if (teamDeleteError) throw teamDeleteError;
-
+  // Delete players first (teams.player*_id ON DELETE CASCADE removes the team).
+  // Verifies with RETURNING so silent RLS failures cannot leave Manager out of sync.
   if (playerIds.length > 0) {
-    const { error: playersDeleteError } = await supabase.from('players').delete().in('id', playerIds);
+    const { data: deletedPlayers, error: playersDeleteError } = await supabase
+      .from('players')
+      .delete()
+      .in('id', playerIds)
+      .select('id');
     if (playersDeleteError) throw playersDeleteError;
+    if (!deletedPlayers || deletedPlayers.length === 0) {
+      throw new Error(
+        'Não foi possível eliminar os jogadores desta equipa (permissão RLS ou já removidos).',
+      );
+    }
+  } else {
+    const { error: teamDeleteError } = await supabase.from('teams').delete().eq('id', teamId).select('id');
+    if (teamDeleteError) throw teamDeleteError;
   }
 
-  // Limpar ledger de métricas dos jogadores removidos neste torneio
+  // Defensive: if team somehow remains, remove it
+  await supabase.from('teams').delete().eq('id', teamId);
+
+  // HUB-96: purge any leftover orphans for this tournament (team formats only).
+  if (team.tournament_id) {
+    const { data: remainingTeams } = await supabase
+      .from('teams')
+      .select('player1_id, player2_id')
+      .eq('tournament_id', team.tournament_id);
+    const linked = new Set<string>();
+    for (const t of remainingTeams || []) {
+      if (t.player1_id) linked.add(t.player1_id);
+      if (t.player2_id) linked.add(t.player2_id);
+    }
+    const { data: allPlayers } = await supabase
+      .from('players')
+      .select('id')
+      .eq('tournament_id', team.tournament_id);
+    const orphanIds = (allPlayers || [])
+      .map(p => p.id)
+      .filter(id => !linked.has(id));
+    // Only purge when the tournament still has teams (team-format), to avoid
+    // wiping legitimate individual-format rosters (0 teams).
+    if ((remainingTeams || []).length > 0 && orphanIds.length > 0) {
+      await supabase.from('players').delete().in('id', orphanIds);
+    }
+  }
+
   if (team.tournament_id && playerRows.length > 0) {
     const { data: tournament } = await supabase
       .from('tournaments')

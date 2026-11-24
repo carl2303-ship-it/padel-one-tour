@@ -634,11 +634,6 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
     );
   };
 
-  const normalizePaymentPhone = (phone: string | null | undefined): string | null => {
-    const key = normalizePhoneKey(phone);
-    return key || null;
-  };
-
   const handleTogglePlayerPayment = async (player: Player) => {
     if (!user || !player.id) return;
     const memberInfo = getMemberInfoForPlayer(player);
@@ -654,28 +649,16 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         .eq('id', player.id);
       if (error) throw error;
 
-      const normalizedPhone = normalizePaymentPhone(player.phone_number || (player as any).phone);
-      // Prefer players.player_account_id. Never create a stub on payment —
-      // phone-key mismatches (E164 vs national) used to spawn duplicate accounts.
-      let playerAccountId: string | null = player.player_account_id || null;
-      if (!playerAccountId && normalizedPhone) {
-        const raw = (player.phone_number || (player as any).phone || '').replace(/[\s\-().]/g, '');
-        const candidates = Array.from(new Set([normalizedPhone, raw].filter(Boolean)));
-        const { data: existingAccount } = await supabase
-          .from('player_accounts')
-          .select('id')
-          .in('phone_number', candidates)
-          .limit(1)
-          .maybeSingle();
-        playerAccountId = existingAccount?.id || null;
-      }
+      // HUB-95: never create/rewrite player_accounts or phones on payment.
+      const playerAccountId = player.player_account_id || null;
+      const phoneForTx = player.phone_number || (player as any).phone || 'unknown';
 
       const ownerId = (currentTournament as any).user_id || user.id;
       if (newStatus === 'paid') {
         const rpcParams: Record<string, unknown> = {
           p_club_owner_id: ownerId,
           p_player_name: (player.name || '').trim(),
-          p_player_phone: normalizedPhone || 'unknown',
+          p_player_phone: phoneForTx,
           p_transaction_type: 'tournament',
           p_amount: priceInfo.amount,
           p_reference_id: currentTournament.id,
@@ -691,7 +674,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
           p_reference_id: currentTournament.id,
           p_reference_type: 'tournament',
           p_player_name: (player.name || '').trim(),
-          p_player_phone: normalizedPhone,
+          p_player_phone: phoneForTx === 'unknown' ? null : phoneForTx,
         });
         if (deleteTxError) throw deleteTxError;
       }
@@ -4786,11 +4769,14 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
 
       // 4) Remover o jogador (com a migração CASCADE, equipas/matches restantes serão eliminados automaticamente)
 
-      const { error } = await supabase
+      // HUB-96: require RETURNING so silent RLS (0 rows) cannot hide a failed delete.
+      // Manager reads the same `players` table — orphans must not remain.
+      const { data: deletedRows, error } = await supabase
         .from('players')
         .delete()
         .eq('id', playerId)
-        .eq('tournament_id', currentTournament.id);
+        .eq('tournament_id', currentTournament.id)
+        .select('id, name, phone_number');
 
       if (error) {
         console.error('[DELETE-PLAYER] ❌ Erro ao remover jogador:', JSON.stringify(error, null, 2));
@@ -4806,6 +4792,26 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
         
         alert(errorMessage);
         throw error;
+      }
+
+      if (!deletedRows || deletedRows.length === 0) {
+        alert('Não foi possível eliminar este jogador (sem permissão ou já removido). Actualiza a página e tenta de novo.');
+        await fetchTournamentData();
+        return;
+      }
+
+      // Limpar ledger de pagamento do Manager para este torneio
+      const ownerId = (currentTournament as any).user_id || user?.id;
+      const deleted = deletedRows[0];
+      if (ownerId && deleted?.name) {
+        const { error: txErr } = await supabase.rpc('delete_player_transaction', {
+          p_club_owner_id: ownerId,
+          p_reference_id: currentTournament.id,
+          p_reference_type: 'tournament',
+          p_player_name: deleted.name.trim(),
+          p_player_phone: deleted.phone_number,
+        });
+        if (txErr) console.warn('[DELETE-PLAYER] transaction cleanup:', txErr);
       }
 
       await fetchTournamentData();
