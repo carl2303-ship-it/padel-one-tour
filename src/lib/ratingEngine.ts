@@ -40,6 +40,8 @@ export interface MatchScore {
 export interface RatingResult {
   skipped?: boolean
   message?: string
+  /** Soft-failure that should surface to the organizer (not silent). */
+  error?: boolean
   team1?: {
     p1: PlayerRating & { delta: number; won: boolean | null }
     p2: PlayerRating & { delta: number; won: boolean | null }
@@ -48,6 +50,27 @@ export interface RatingResult {
     p3: PlayerRating & { delta: number; won: boolean | null }
     p4: PlayerRating & { delta: number; won: boolean | null }
   }
+}
+
+/** Champion / finalist ELO podium bonuses (same as Player app). */
+export const PODIUM_BONUS_CHAMPION = 0.10
+export const PODIUM_BONUS_FINALIST = 0.05
+
+export interface PodiumBonusResult {
+  applied: boolean
+  message?: string
+  champions: Array<{ id: string; name: string; levelBefore: number; levelAfter: number; bonus: number }>
+  finalists: Array<{ id: string; name: string; levelBefore: number; levelAfter: number; bonus: number }>
+}
+
+export interface TournamentRatingReport {
+  processed: number
+  skipped: number
+  errors: number
+  total: number
+  remainingUnrated: number
+  details: string[]
+  podium: PodiumBonusResult
 }
 
 // ============================================
@@ -264,7 +287,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   const gamesTotal2 = s1[1] + s2[1] + s3[1]
 
   if (sets1 === 0 && sets2 === 0) {
-    return null
+    return { error: true, skipped: true, message: 'Sem sets válidos (scores a 0)' }
   }
 
   const score: MatchScore = { sets1, sets2, gamesTotal1, gamesTotal2 }
@@ -286,7 +309,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
 
     if (!teams || teams.length < 2) {
       console.error('[RatingEngine] Could not find teams for match:', matchId)
-      return null
+      return { error: true, skipped: true, message: 'Equipas do jogo não encontradas' }
     }
 
     const t1 = teams.find((t: any) => t.id === match.team1_id)
@@ -295,7 +318,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   }
 
   if (playerIds.length < 4) {
-    return null
+    return { error: true, skipped: true, message: `Jogadores incompletos (${playerIds.length}/4)` }
   }
 
   const { data: playersData } = await supabase
@@ -304,7 +327,7 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
     .in('id', playerIds)
 
   if (!playersData || playersData.length < 4) {
-    return null
+    return { error: true, skipped: true, message: `Players em falta na BD (${playersData?.length || 0}/4)` }
   }
 
   const accountsMap = new Map<string, any>()
@@ -379,11 +402,11 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   const accountIds = Array.from(accountsMap.values()).map((a: any) => a.id)
   if (new Set(accountIds).size < accountIds.length) {
     console.error('[RatingEngine] Duplicate player_account mapping in match — skipping to avoid corrupt history:', matchId)
-    return null
+    return { error: true, skipped: true, message: 'Mapeamento duplicado de player_account — rating bloqueado' }
   }
 
   if (accountsMap.size < 4) {
-    return null
+    return { error: true, skipped: true, message: `Contas em falta (${accountsMap.size}/4)` }
   }
 
   const buildRating = (playerId: string): PlayerRating | null => {
@@ -416,12 +439,20 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   const p4 = buildRating(playerIds[3])
 
   if (!p1 || !p2 || !p3 || !p4) {
-    return null
+    return { error: true, skipped: true, message: 'Não foi possível construir ratings dos 4 jogadores' }
   }
 
   const result = calculateNewRatings({ p1, p2 }, { p3, p4 }, score)
 
   if (result.skipped) {
+    // Mark disparity (and similar soft skips) so we don't leave "unrated" forever
+    // or retry the same no-op on every finalize — same behaviour as Player app.
+    try {
+      await supabase.rpc('mark_match_rating_processed', { p_match_id: matchId })
+    } catch {
+      /* ignore */
+    }
+    await supabase.from('matches').update({ rating_processed: true }).eq('id', matchId)
     return result
   }
 
@@ -541,21 +572,23 @@ export async function reprocessMatchRating(matchId: string, cache?: PlayerCache)
 export async function reprocessTournamentRatings(
   tournamentId: string,
   onProgress?: (current: number, total: number, info: string) => void,
-): Promise<{ processed: number; skipped: number; blocked: number; errors: number; total: number }> {
+): Promise<{ processed: number; skipped: number; blocked: number; errors: number; total: number; details: string[] }> {
   const { data: matches, error } = await supabase
     .from('matches')
-    .select('id, scheduled_time')
+    .select('id, scheduled_time, match_number')
     .eq('tournament_id', tournamentId)
     .eq('status', 'completed')
     .order('scheduled_time', { ascending: true })
+    .order('match_number', { ascending: true })
+    .order('id', { ascending: true })
 
   if (error) {
     console.error('[RatingEngine] Error fetching tournament matches:', error)
-    return { processed: 0, skipped: 0, blocked: 0, errors: 1, total: 0 }
+    return { processed: 0, skipped: 0, blocked: 0, errors: 1, total: 0, details: [error.message] }
   }
 
   if (!matches || matches.length === 0) {
-    return { processed: 0, skipped: 0, blocked: 0, errors: 0, total: 0 }
+    return { processed: 0, skipped: 0, blocked: 0, errors: 0, total: 0, details: [] }
   }
 
   const cache: PlayerCache = new Map()
@@ -563,6 +596,7 @@ export async function reprocessTournamentRatings(
   let skipped = 0
   let blocked = 0
   let errors = 0
+  const details: string[] = []
 
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i]
@@ -570,18 +604,25 @@ export async function reprocessTournamentRatings(
       const result = await reprocessMatchRating(m.id, cache)
       if (!result) {
         errors++
+        details.push(`❌ ${m.id}: reprocess falhou (null)`)
       } else if (result.skipped) {
         if (result.message?.startsWith('Reprocessamento bloqueado')) {
           blocked++
+          details.push(`🚫 ${m.id}: ${result.message}`)
         } else {
           skipped++
+          if (result.message) details.push(`⏭️ ${m.id}: ${result.message}`)
         }
+      } else if (result.error) {
+        errors++
+        details.push(`❌ ${m.id}: ${result.message || 'erro'}`)
       } else {
         processed++
       }
     } catch (err) {
       console.error('[RatingEngine] Error reprocessing match:', m.id, err)
       errors++
+      details.push(`❌ ${m.id}: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     if ((i + 1) % 5 === 0 || i === matches.length - 1) {
@@ -589,20 +630,36 @@ export async function reprocessTournamentRatings(
     }
   }
 
-  return { processed, skipped, blocked, errors, total: matches.length }
+  return { processed, skipped, blocked, errors, total: matches.length, details }
 }
 
+async function countUnratedCompleted(tournamentId: string): Promise<number> {
+  const { count } = await supabase
+    .from('matches')
+    .select('id', { count: 'exact', head: true })
+    .eq('tournament_id', tournamentId)
+    .eq('status', 'completed')
+    .or('rating_processed.is.null,rating_processed.eq.false')
+  return count ?? 0
+}
+
+/**
+ * Process all unrated completed matches in stable chronological order.
+ * Collects visible failure details (no silent nulls).
+ */
 export async function processAllUnratedMatches(
   since?: string,
   onProgress?: (current: number, total: number, info: string) => void,
   tournamentId?: string
-): Promise<{ processed: number; skipped: number; errors: number; total: number }> {
+): Promise<{ processed: number; skipped: number; errors: number; total: number; details: string[]; remainingUnrated: number }> {
   let query = supabase
     .from('matches')
-    .select('id, scheduled_time, tournament_id')
+    .select('id, scheduled_time, match_number, tournament_id')
     .eq('status', 'completed')
     .or('rating_processed.is.null,rating_processed.eq.false')
     .order('scheduled_time', { ascending: true })
+    .order('match_number', { ascending: true })
+    .order('id', { ascending: true })
 
   if (tournamentId) {
     query = query.eq('tournament_id', tournamentId)
@@ -616,48 +673,336 @@ export async function processAllUnratedMatches(
 
   if (error) {
     console.error('[RatingEngine] Error fetching matches:', error)
-    return { processed: 0, skipped: 0, errors: 1, total: 0 }
+    return { processed: 0, skipped: 0, errors: 1, total: 0, details: [error.message], remainingUnrated: -1 }
   }
 
   if (!matches || matches.length === 0) {
-    return { processed: 0, skipped: 0, errors: 0, total: 0 }
+    const remaining = tournamentId ? await countUnratedCompleted(tournamentId) : 0
+    return { processed: 0, skipped: 0, errors: 0, total: 0, details: [], remainingUnrated: remaining }
   }
 
   onProgress?.(0, matches.length, 'A iniciar processamento...')
 
   const playerCache: PlayerCache = new Map()
-
   let processed = 0
   let skipped = 0
   let errors = 0
+  const details: string[] = []
 
-  for (let i = 0; i < matches.length; i++) {
-    const match = matches[i]
-    try {
-      const result = await processMatchRating(match.id, playerCache)
-      if (!result) {
+  const runBatch = async (batch: typeof matches) => {
+    for (let i = 0; i < batch.length; i++) {
+      const match = batch[i]
+      try {
+        const result = await processMatchRating(match.id, playerCache)
+        if (!result) {
+          errors++
+          details.push(`❌ ${match.id}: falha desconhecida`)
+        } else if (result.error) {
+          errors++
+          details.push(`❌ ${match.id}: ${result.message || 'erro'}`)
+        } else if (result.skipped) {
+          skipped++
+          if (result.message && result.message !== 'Already processed') {
+            details.push(`⏭️ ${match.id}: ${result.message}`)
+          }
+        } else {
+          processed++
+        }
+      } catch (err) {
+        console.error('[RatingEngine] Error processing match:', match.id, err)
         errors++
-      } else if (result.skipped) {
-        skipped++
-      } else {
-        processed++
+        details.push(`❌ ${match.id}: ${err instanceof Error ? err.message : String(err)}`)
       }
-    } catch (err) {
-      console.error('[RatingEngine] Error processing match:', match.id, err)
-      errors++
-    }
 
-    if ((i + 1) % 5 === 0 || i === matches.length - 1) {
-      onProgress?.(i + 1, matches.length, `Processados: ${processed} | Saltados: ${skipped} | Erros: ${errors}`)
+      if ((i + 1) % 5 === 0 || i === batch.length - 1) {
+        onProgress?.(i + 1, batch.length, `Processados: ${processed} | Saltados: ${skipped} | Erros: ${errors}`)
+      }
     }
   }
 
-  const uniquePlayers = playerCache.size
-  const maxMatches = Math.max(0, ...Array.from(playerCache.values()).map(p => p.matchCount))
-  const summary = `CONCLUÍDO: ${processed} processados, ${skipped} saltados, ${errors} erros de ${matches.length} total | ${uniquePlayers} jogadores atualizados (max ${maxMatches} jogos rated)`
+  await runBatch(matches)
+
+  // One automatic retry for remaining unrated (transient RPC / network)
+  if (tournamentId) {
+    let remaining = await countUnratedCompleted(tournamentId)
+    if (remaining > 0) {
+      details.push(`⟳ Retry automático: ${remaining} jogo(s) ainda sem rating`)
+      const { data: retryMatches } = await supabase
+        .from('matches')
+        .select('id, scheduled_time, match_number, tournament_id')
+        .eq('tournament_id', tournamentId)
+        .eq('status', 'completed')
+        .or('rating_processed.is.null,rating_processed.eq.false')
+        .order('scheduled_time', { ascending: true })
+        .order('match_number', { ascending: true })
+        .order('id', { ascending: true })
+      if (retryMatches && retryMatches.length > 0) {
+        await runBatch(retryMatches)
+      }
+      remaining = await countUnratedCompleted(tournamentId)
+    }
+  }
+
+  const remainingUnrated = tournamentId ? await countUnratedCompleted(tournamentId) : 0
+  if (remainingUnrated > 0) {
+    details.push(`⚠️ FICARAM ${remainingUnrated} jogo(s) completed SEM rating — usar «Reprocessar ratings»`)
+  }
+
+  const summary = `CONCLUÍDO: ${processed} processados, ${skipped} saltados, ${errors} erros de ${matches.length} | por processar: ${remainingUnrated}`
   onProgress?.(matches.length, matches.length, summary)
 
-  return { processed, skipped, errors, total: matches.length }
+  return { processed, skipped, errors, total: matches.length, details, remainingUnrated }
+}
+
+// ============================================
+// Pódio (bónus ELO campeão/finalista) — parity with Player app
+// ============================================
+
+function resolveTournamentTierForPodium(tournament: {
+  name?: string | null
+  format?: string | null
+  round_robin_type?: string | null
+  ranking_tier?: string | null
+}): 'master' | 'regular' | 'social' {
+  const explicit = String(tournament.ranking_tier || '').toLowerCase().trim()
+  if (explicit === 'master' || explicit === 'oficial' || explicit === 'oficial_apc') return 'master'
+  if (explicit === 'regular' || explicit === 'open') return 'regular'
+  if (explicit === 'social' || explicit === 'americano' || explicit === 'american') return 'social'
+  const name = String(tournament.name || '').toUpperCase()
+  const format = String(tournament.format || '').toLowerCase()
+  const rr = String(tournament.round_robin_type || '').toLowerCase()
+  if (/\bMASTER\b/.test(name) || /\bOFICIAL\b/.test(name)) return 'master'
+  if (/\bAPC\b/.test(name) && !/SOCIAL|AMERICANO/.test(name)) return 'master'
+  if (format === 'mixed_american' || rr === 'individual' || /SOCIAL|AMERICANO|AMERICAN/.test(name)) return 'social'
+  return 'regular'
+}
+
+const TIER_PLACEMENT_POINTS: Record<'master' | 'regular' | 'social', { first: number; second: number }> = {
+  master: { first: 1000, second: 600 },
+  regular: { first: 500, second: 300 },
+  social: { first: 250, second: 150 },
+}
+
+/**
+ * Applies fixed podium ELO bonuses: champion +0.10 / finalist +0.05.
+ * Idempotent via player_level_history (source_id=tournamentId, delta=bonus).
+ * Also writes ranking_point_transactions for 12m ranking.
+ */
+export async function applyTournamentPodiumBonuses(
+  tournamentId: string,
+  categoryId?: string | null,
+): Promise<PodiumBonusResult> {
+  const empty: PodiumBonusResult = { applied: false, champions: [], finalists: [] }
+
+  const { data: tournament } = await supabase
+    .from('tournaments')
+    .select('id, club_id, name, format, round_robin_type, ranking_tier')
+    .eq('id', tournamentId)
+    .maybeSingle()
+
+  if (!tournament) {
+    return { ...empty, message: 'Torneio não encontrado' }
+  }
+
+  const organizationId = (tournament.club_id as string | null) || null
+  const tier = resolveTournamentTierForPodium(tournament)
+
+  let championPlayerIds: string[] = []
+  let finalistPlayerIds: string[] = []
+
+  let teamsQuery = supabase
+    .from('teams')
+    .select('id, player1_id, player2_id, final_position, category_id')
+    .eq('tournament_id', tournamentId)
+    .in('final_position', [1, 2])
+  if (categoryId) teamsQuery = teamsQuery.eq('category_id', categoryId)
+  const { data: podiumTeams } = await teamsQuery
+
+  if (podiumTeams && podiumTeams.length > 0) {
+    for (const t of podiumTeams) {
+      const ids = [t.player1_id, t.player2_id].filter(Boolean) as string[]
+      if (t.final_position === 1) championPlayerIds.push(...ids)
+      else if (t.final_position === 2) finalistPlayerIds.push(...ids)
+    }
+  }
+
+  if (championPlayerIds.length === 0 && finalistPlayerIds.length === 0) {
+    let playersQuery = supabase
+      .from('players')
+      .select('id, final_position, category_id')
+      .eq('tournament_id', tournamentId)
+      .in('final_position', [1, 2])
+    if (categoryId) playersQuery = playersQuery.eq('category_id', categoryId)
+    const { data: podiumPlayers } = await playersQuery
+    if (podiumPlayers) {
+      for (const p of podiumPlayers) {
+        if (p.final_position === 1) championPlayerIds.push(p.id)
+        else if (p.final_position === 2) finalistPlayerIds.push(p.id)
+      }
+    }
+  }
+
+  championPlayerIds = [...new Set(championPlayerIds)]
+  finalistPlayerIds = [...new Set(finalistPlayerIds)].filter((id) => !championPlayerIds.includes(id))
+
+  if (championPlayerIds.length === 0 && finalistPlayerIds.length === 0) {
+    return { ...empty, message: 'Não foi possível determinar campeões/finalistas (final_position)' }
+  }
+
+  const allPlayerIds = [...championPlayerIds, ...finalistPlayerIds]
+  const { data: playersData } = await supabase
+    .from('players')
+    .select('id, name, user_id, player_account_id, phone_number')
+    .in('id', allPlayerIds)
+
+  if (!playersData?.length) {
+    return { ...empty, message: 'Jogadores do pódio não encontrados' }
+  }
+
+  const accountByPlayer = new Map<string, any>()
+  for (const p of playersData) {
+    let account: any = null
+    if ((p as any).player_account_id) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select('id, user_id, name, level, rated_matches')
+        .eq('id', (p as any).player_account_id)
+        .maybeSingle()
+      account = data
+    }
+    if (!account && p.user_id) {
+      const { data } = await supabase
+        .from('player_accounts')
+        .select('id, user_id, name, level, rated_matches')
+        .eq('user_id', p.user_id)
+        .maybeSingle()
+      account = data
+    }
+    if (account) accountByPlayer.set(p.id, account)
+  }
+
+  const champions: PodiumBonusResult['champions'] = []
+  const finalists: PodiumBonusResult['finalists'] = []
+
+  const applyBonus = async (
+    playerId: string,
+    bonus: number,
+    reason: 'tournament_winner' | 'tournament_finalist',
+    position: 1 | 2,
+  ) => {
+    const acct = accountByPlayer.get(playerId)
+    if (!acct) return
+
+    const { data: already } = await supabase
+      .from('player_level_history')
+      .select('id')
+      .eq('player_account_id', acct.id)
+      .eq('source_id', tournamentId)
+      .eq('delta', bonus)
+      .limit(1)
+    if (already && already.length > 0) return
+
+    const levelBefore = Number(acct.level ?? 3.0)
+    const levelAfter = Math.max(0.5, Math.min(7.0, parseFloat((levelBefore + bonus).toFixed(2))))
+
+    const { error: updErr } = await supabase
+      .from('player_accounts')
+      .update({ level: levelAfter, updated_at: new Date().toISOString() })
+      .eq('id', acct.id)
+    if (updErr) {
+      console.error('[RatingEngine] Podium level update failed:', acct.id, updErr)
+      return
+    }
+
+    await supabase.from('player_level_history').insert({
+      player_account_id: acct.id,
+      level_before: parseFloat(levelBefore.toFixed(2)),
+      level_after: parseFloat(levelAfter.toFixed(2)),
+      delta: parseFloat(bonus.toFixed(4)),
+      match_type: 'tournament',
+      match_won: reason === 'tournament_winner',
+      source_id: tournamentId,
+    })
+
+    if (organizationId && acct.user_id) {
+      const points = position === 1 ? TIER_PLACEMENT_POINTS[tier].first : TIER_PLACEMENT_POINTS[tier].second
+      const { data: existingTx } = await supabase
+        .from('ranking_point_transactions')
+        .select('id')
+        .eq('user_id', acct.user_id)
+        .eq('reference_id', tournamentId)
+        .eq('reason', reason)
+        .limit(1)
+      if (!existingTx?.length) {
+        await supabase.from('ranking_point_transactions').insert({
+          user_id: acct.user_id,
+          organization_id: organizationId,
+          points_awarded: points,
+          reason,
+          reference_id: tournamentId,
+        })
+      }
+    }
+
+    const row = {
+      id: acct.id as string,
+      name: (acct.name || '') as string,
+      levelBefore,
+      levelAfter,
+      bonus,
+    }
+    if (position === 1) champions.push(row)
+    else finalists.push(row)
+  }
+
+  for (const pid of championPlayerIds) {
+    await applyBonus(pid, PODIUM_BONUS_CHAMPION, 'tournament_winner', 1)
+  }
+  for (const pid of finalistPlayerIds) {
+    await applyBonus(pid, PODIUM_BONUS_FINALIST, 'tournament_finalist', 2)
+  }
+
+  return {
+    applied: champions.length + finalists.length > 0,
+    champions,
+    finalists,
+    message: champions.length + finalists.length > 0
+      ? `Pódio: ${champions.length} campeão(ões) +${PODIUM_BONUS_CHAMPION}, ${finalists.length} finalista(s) +${PODIUM_BONUS_FINALIST}`
+      : 'Pódio já aplicado ou sem contas',
+  }
+}
+
+/**
+ * Full tournament rating close-out: chronological unrated batch + verify + podium.
+ * Use from Finalizar / Reprocessar so organizers never get silent partial runs.
+ */
+export async function finalizeTournamentRatings(
+  tournamentId: string,
+  onProgress?: (current: number, total: number, info: string) => void,
+): Promise<TournamentRatingReport> {
+  const rating = await processAllUnratedMatches(undefined, onProgress, tournamentId)
+  const podium = await applyTournamentPodiumBonuses(tournamentId)
+  const remainingUnrated = await countUnratedCompleted(tournamentId)
+  const details = [...(rating.details || [])]
+  if (podium.message) details.push(`🏆 ${podium.message}`)
+  for (const c of podium.champions) {
+    details.push(`🥇 ${c.name}: ${c.levelBefore.toFixed(2)} → ${c.levelAfter.toFixed(2)} (+${c.bonus})`)
+  }
+  for (const f of podium.finalists) {
+    details.push(`🥈 ${f.name}: ${f.levelBefore.toFixed(2)} → ${f.levelAfter.toFixed(2)} (+${f.bonus})`)
+  }
+  if (remainingUnrated > 0) {
+    details.push(`⚠️ AINDA HÁ ${remainingUnrated} jogo(s) sem rating — NÃO está OK`)
+  }
+  return {
+    processed: rating.processed,
+    skipped: rating.skipped,
+    errors: rating.errors,
+    total: rating.total,
+    remainingUnrated,
+    details,
+    podium,
+  }
 }
 
 // ============================================

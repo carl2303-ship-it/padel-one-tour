@@ -22,7 +22,7 @@ import ManageCategoriesModal from './ManageCategoriesModal';
 import ManageInvitesModal from './ManageInvitesModal';
 import MatchScheduleView from './MatchScheduleView';
 import { ManualGroupAssignmentModal } from './ManualGroupAssignmentModal';
-import { processAllUnratedMatches, reprocessTournamentRatings, awardTournamentRewardPoints } from '../lib/ratingEngine';
+import { finalizeTournamentRatings, reprocessTournamentRatings, awardTournamentRewardPoints, applyTournamentPodiumBonuses } from '../lib/ratingEngine';
 import { generateTournamentSchedule, packMatchesIntoCourtSlots } from '../lib/scheduler';
 import { generateAmericanSchedule } from '../lib/americanScheduler';
 import { generateIndividualGroupsKnockoutSchedule } from '../lib/individualGroupsKnockoutScheduler';
@@ -6859,26 +6859,33 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       // 3. Now update league standings (after status is 'completed')
       await updateLeagueStandings(tournament.id);
 
-      // 4. Process ratings ONLY for matches in THIS tournament (not all tournaments!)
+      // 4. Ratings + pódio (ordem cronológica estável, retry, verificação, bónus vencedor)
       let ratingInfo = '';
       try {
-        const ratingResult = await processAllUnratedMatches(undefined, undefined, tournament.id);
+        const ratingResult = await finalizeTournamentRatings(tournament.id);
         ratingInfo = `\n\n📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.errors} erros de ${ratingResult.total} jogos`;
+        if (ratingResult.remainingUnrated > 0) {
+          ratingInfo += `\n\n⚠️ ATENÇÃO: ${ratingResult.remainingUnrated} jogo(s) completed ficaram SEM rating. Usa «Reprocessar ratings».`;
+        }
+        if (ratingResult.podium.message) {
+          ratingInfo += `\n\n${ratingResult.podium.message}`;
+        }
+        if (ratingResult.details.length > 0 && (ratingResult.errors > 0 || ratingResult.remainingUnrated > 0)) {
+          ratingInfo += '\n\nDetalhes:\n' + ratingResult.details.slice(0, 20).join('\n');
+        }
       } catch (ratingErr) {
         console.error('[FINALIZE] Error processing ratings:', ratingErr);
         ratingInfo = '\n\n⚠️ Erro ao processar ratings dos jogadores';
       }
 
-      // 5. Award reward points to all tournament participants
+      // 5. Award reward points (club loyalty points) to all tournament participants
       let rewardInfo = '';
       try {
         const rewardResult = await awardTournamentRewardPoints(tournament.id);
         if (rewardResult.awarded > 0 || rewardResult.skipped > 0 || rewardResult.errors > 0) {
-          rewardInfo = `\n\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
-          if (rewardResult.details.length > 0) {
-          }
+          rewardInfo = `\n\n🎁 Club rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
         } else if (rewardResult.details.length > 0) {
-          rewardInfo = `\n\nℹ️ Rewards: ${rewardResult.details[0]}`;
+          rewardInfo = `\n\nℹ️ Club rewards: ${rewardResult.details[0]}`;
         }
       } catch (rewardErr) {
         console.error('[FINALIZE] Error awarding rewards:', rewardErr);
@@ -6889,7 +6896,7 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
       await fetchTournamentData();
       setCurrentTournament({ ...currentTournament, status: 'completed', image_url: undefined });
       
-      alert(`Torneio finalizado com sucesso!${ratingInfo}${rewardInfo}`);
+      alert(`Torneio finalizado!${ratingInfo}${rewardInfo}`);
     } catch (error) {
       console.error('Error finalizing tournament:', error);
       alert('Erro ao finalizar o torneio. Tente novamente.');
@@ -7067,16 +7074,22 @@ export default function TournamentDetail({ tournament, onBack }: TournamentDetai
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!confirm('Reprocessar ratings e rewards para todos os jogos deste torneio?')) return;
+                      if (!confirm('Reprocessar ratings (com reversão segura), pódio e rewards para todos os jogos deste torneio?')) return;
                       setLoading(true);
                       try {
                         const ratingResult = await reprocessTournamentRatings(tournament.id);
+                        const podiumResult = await applyTournamentPodiumBonuses(tournament.id);
                         const rewardResult = await awardTournamentRewardPoints(tournament.id);
 
                         let msg = `📊 Ratings: ${ratingResult.processed} processados, ${ratingResult.skipped} saltados, ${ratingResult.blocked} bloqueados (sem histórico p/ reverter em segurança), ${ratingResult.errors} erros`;
-                        msg += `\n🏆 Rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
-                        if (rewardResult.details.length > 0) {
-                          msg += '\n\nDetalhes:\n' + rewardResult.details.join('\n');
+                        if (podiumResult.message) msg += `\n\n🏆 ${podiumResult.message}`;
+                        msg += `\n🎁 Club rewards: ${rewardResult.awarded} atribuídos, ${rewardResult.skipped} saltados, ${rewardResult.errors} erros`;
+                        const detailLines = [
+                          ...(ratingResult.details || []).slice(0, 15),
+                          ...rewardResult.details.slice(0, 10),
+                        ];
+                        if (detailLines.length > 0) {
+                          msg += '\n\nDetalhes:\n' + detailLines.join('\n');
                         }
                         alert(msg);
                       } catch (err) {
