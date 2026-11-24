@@ -125,6 +125,65 @@ async function fetchAllTeamsForTournaments(tournamentIds: string[]): Promise<Tea
   return all;
 }
 
+async function fetchAllOrganizerPlayers(organizerId: string): Promise<OrganizerPlayer[]> {
+  const all: OrganizerPlayer[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('organizer_players')
+      .select('id, name, email, phone_number, player_category')
+      .eq('organizer_id', organizerId)
+      .order('name')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error('[OrganizerPlayersModal] organizer_players fetch:', error);
+      break;
+    }
+    if (!data?.length) break;
+    all.push(...(data as OrganizerPlayer[]));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
+async function fetchAllPlayerAccountsLite(): Promise<Array<{
+  id: string;
+  name: string;
+  phone_number: string | null;
+  player_category: string | null;
+  level: number | null;
+  level_reliability_percent: number | null;
+  gender: string | null;
+}>> {
+  const all: Array<{
+    id: string;
+    name: string;
+    phone_number: string | null;
+    player_category: string | null;
+    level: number | null;
+    level_reliability_percent: number | null;
+    gender: string | null;
+  }> = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('player_accounts')
+      .select('id, name, phone_number, player_category, level, level_reliability_percent, gender')
+      .order('name')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error('[OrganizerPlayersModal] player_accounts fetch:', error);
+      break;
+    }
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return all;
+}
+
 type PlayerCategory = typeof PLAYER_CATEGORIES[number]['value'] | null;
 
 interface PlayerRecord {
@@ -216,31 +275,20 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       .eq('user_id', user.id)
       .order('start_date', { ascending: false });
 
-    if (!userTournaments || userTournaments.length === 0) {
-      setPlayers([]);
-      setTournaments([]);
-      setLoading(false);
-      return;
-    }
+    const tournamentsList = userTournaments || [];
+    setTournaments(tournamentsList.map(t => ({ id: t.id, name: t.name, date: t.start_date })));
+    const tournamentIds = tournamentsList.map(t => t.id);
 
-    setTournaments(userTournaments.map(t => ({ id: t.id, name: t.name, date: t.start_date })));
-    const tournamentIds = userTournaments.map(t => t.id);
-
-    const [playersData, teamsData, organizerPlayersResult, playerAccountsResult] = await Promise.all([
+    // HUB-97: roster (organizer_players) is the CRM source of truth for "Membros → Jogadores".
+    // Previously we early-returned when the organizer had no tournaments, and even with
+    // tournaments we only listed people who appeared in `players`/`teams` — so the
+    // auto-linked Sports Events roster (~900) never showed up.
+    const [playersData, teamsData, organizerPlayersData, playerAccountsData] = await Promise.all([
       fetchAllPlayersForTournaments(tournamentIds),
       fetchAllTeamsForTournaments(tournamentIds),
-      supabase
-        .from('organizer_players')
-        .select('id, name, email, phone_number, player_category')
-        .eq('organizer_id', user.id),
-      // Fetch ALL player_accounts to get level and reliability data
-      supabase
-        .from('player_accounts')
-        .select('id, name, phone_number, player_category, level, level_reliability_percent, gender'),
+      fetchAllOrganizerPlayers(user.id),
+      fetchAllPlayerAccountsLite(),
     ]);
-
-    const organizerPlayersData = organizerPlayersResult.data || [];
-    const playerAccountsData = playerAccountsResult.data || [];
 
     // Build player_accounts lookup maps (by national phone key and by name)
     const accountsByPhone = new Map<string, any>();
@@ -271,7 +319,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
 
     const organizerPlayersMap = new Map<string, OrganizerPlayer>();
     organizerPlayersData.forEach(op => {
-      organizerPlayersMap.set(normalizeName(op.name), op as OrganizerPlayer);
+      organizerPlayersMap.set(normalizeName(op.name), op);
     });
 
     const playerMap = new Map<string, PlayerRecord>();
@@ -318,16 +366,20 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
       name: string,
       email: string | null,
       phone: string | null,
-      tournamentId: string,
+      tournamentId: string | null,
       playerAccountId?: string | null
     ) => {
-      const tournament = userTournaments.find(t => t.id === tournamentId);
-      if (!tournament || !name) return;
+      if (!name) return;
+      const tournament = tournamentId
+        ? tournamentsList.find(t => t.id === tournamentId)
+        : undefined;
+      // Tournament rows require a known tournament; roster-only rows pass null.
+      if (tournamentId && !tournament) return;
 
       const normalizedName = normalizeName(name);
       const organizerPlayer = organizerPlayersMap.get(normalizedName);
       const playerAccount = playerAccountId
-        ? playerAccountsData.find((pa: any) => pa.id === playerAccountId)
+        ? playerAccountsData.find((pa) => pa.id === playerAccountId)
         : findPlayerAccount(phone || organizerPlayer?.phone_number || null, name);
       const resolvedPhone = pickDisplayPhone(
         playerAccount?.phone_number,
@@ -337,11 +389,14 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
 
       const existing = findExistingRecord(name, resolvedPhone, playerAccount?.id || playerAccountId);
       if (existing) {
-        if (!existing.tournaments.find(t => t.id === tournamentId)) {
+        if (tournament && !existing.tournaments.find(t => t.id === tournament.id)) {
           existing.tournaments.push({ id: tournament.id, name: tournament.name, date: tournament.start_date });
           existing.tournaments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         }
         if (!existing.email && email) existing.email = email;
+        if (!existing.organizerPlayerId && organizerPlayer?.id) {
+          existing.organizerPlayerId = organizerPlayer.id;
+        }
         const betterPhone = pickDisplayPhone(
           playerAccount?.phone_number,
           resolvedPhone,
@@ -356,7 +411,7 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           existing.level_reliability_percent = playerAccount.level_reliability_percent;
           existing.gender = playerAccount.gender || existing.gender;
           if (!existing.player_category && playerAccount.player_category) {
-            existing.player_category = playerAccount.player_category;
+            existing.player_category = playerAccount.player_category as PlayerCategory;
           }
         }
         if (playerAccount?.name) existing.displayName = playerAccount.name;
@@ -368,12 +423,17 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
           displayName: playerAccount?.name || name.trim(),
           email: organizerPlayer?.email || email,
           phone_number: resolvedPhone,
-          player_category: playerAccount?.player_category || organizerPlayer?.player_category || null,
+          player_category:
+            (playerAccount?.player_category as PlayerCategory) ||
+            organizerPlayer?.player_category ||
+            null,
           level: playerAccount?.level || null,
           level_reliability_percent: playerAccount?.level_reliability_percent || null,
           player_account_id: playerAccount?.id || null,
           gender: playerAccount?.gender || null,
-          tournaments: [{ id: tournament.id, name: tournament.name, date: tournament.start_date }],
+          tournaments: tournament
+            ? [{ id: tournament.id, name: tournament.name, date: tournament.start_date }]
+            : [],
           organizerPlayerId: organizerPlayer?.id || null,
         });
       }
@@ -403,6 +463,13 @@ export default function OrganizerPlayersModal({ isOpen = true, onClose, embedded
         );
       }
     });
+
+    // Include every Sports Events / organizer roster contact, even if they never
+    // played in this organizer's own tournaments (e.g. linked from Player App).
+    for (const op of organizerPlayersData) {
+      if (!op.name?.trim()) continue;
+      addPlayerToMap(op.name, op.email, op.phone_number, null, null);
+    }
 
     const uniquePlayers = Array.from(playerMap.values());
     uniquePlayers.sort((a, b) => a.displayName.localeCompare(b.displayName));
