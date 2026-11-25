@@ -231,14 +231,16 @@ function App() {
       setNeedsLicense(false);
       if (ownedClub) {
         const mods = await fetchClientModules('club', ownedClub.id);
-        const liteClubMode = mods.hasTournaments && !mods.hasManager;
+        const liteClubMode = mods.hasTournaments && !mods.hasManager && !mods.hasManagerLite;
         setShowOrganizerHub(liteClubMode);
         setIsIndependentOrganizer(false);
         if (liteClubMode) goOrganizerHome();
       } else {
-        setShowOrganizerHub(true);
+        const orgMods = await fetchClientModules('organizer', user.id);
+        // Cutover seco: manager_lite activo → Tour só torneios (sem hub CRM)
+        setShowOrganizerHub(!orgMods.hasManagerLite);
         setIsIndependentOrganizer(true);
-        goOrganizerHome();
+        if (!orgMods.hasManagerLite) goOrganizerHome();
       }
       setUserRole(settings?.role || 'organizer');
       return;
@@ -266,7 +268,9 @@ function App() {
           setUserRole('organizer');
           return;
         }
-        const liteClubMode = mods.hasTournaments && !mods.hasManager;
+        // Club with manager_lite also loses Tour hub (same cutover as independent org)
+        const liteClubMode =
+          mods.hasTournaments && !mods.hasManager && !mods.hasManagerLite;
         setNeedsModule(false);
         setNeedsLicense(false);
         setShowOrganizerHub(liteClubMode);
@@ -311,10 +315,19 @@ function App() {
 
       setNeedsModule(false);
       setNeedsLicense(false);
-      setShowOrganizerHub(true);
+      // Cutover seco: com manager_lite o hub CRM vive na Manager
+      setShowOrganizerHub(!mods.hasManagerLite);
       setIsIndependentOrganizer(true);
       setUserRole('organizer');
-      goOrganizerHome();
+      if (!mods.hasManagerLite) {
+        goOrganizerHome();
+      } else if (!hasPublicDeepLink) {
+        setView((currentView) =>
+          currentView === 'dashboard' || currentView === 'members' || currentView === 'metrics' || currentView === 'sponsors'
+            ? 'list'
+            : currentView
+        );
+      }
       return;
     }
 

@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase';
 
-export type ModuleCode = 'tournaments' | 'manager' | 'bar' | 'ai_full' | 'ai_light';
+export type ModuleCode =
+  | 'tournaments'
+  | 'manager'
+  | 'manager_lite'
+  | 'bar'
+  | 'ai_full'
+  | 'ai_light';
 export type PlayerAppMode = 'lite' | 'full';
 export type EntityType = 'club' | 'organizer';
 
@@ -9,6 +15,7 @@ export interface ClientModulesResult {
   modules: ModuleCode[];
   playerMode: PlayerAppMode;
   hasManager: boolean;
+  hasManagerLite: boolean;
   hasTournaments: boolean;
   hasBar: boolean;
   hasAiFull: boolean;
@@ -19,6 +26,7 @@ const EMPTY: ClientModulesResult = {
   modules: [],
   playerMode: 'full',
   hasManager: false,
+  hasManagerLite: false,
   hasTournaments: false,
   hasBar: false,
   hasAiFull: false,
@@ -33,6 +41,7 @@ function parseModules(data: unknown): ClientModulesResult {
     modules,
     playerMode: (obj.player_mode as PlayerAppMode) || 'full',
     hasManager: !!obj.has_manager,
+    hasManagerLite: !!obj.has_manager_lite || modules.includes('manager_lite'),
     hasTournaments: !!obj.has_tournaments,
     hasBar: !!obj.has_bar,
     hasAiFull: !!obj.has_ai_full,
