@@ -22,7 +22,7 @@ import OrganizerDashboard from './components/OrganizerDashboard';
 import OrganizerMembers from './components/OrganizerMembers';
 import OrganizerMetrics from './components/OrganizerMetrics';
 import OrganizerSponsors from './components/OrganizerSponsors';
-import { fetchClientModules } from './lib/useClientModules';
+import { fetchClientModules, isManagerLiteEntitled } from './lib/useClientModules';
 import { loadOrganizerBrandColors } from './lib/organizerBrandColors';
 import { LogOut, Settings, Menu, X, Trophy, CheckCircle } from 'lucide-react';
 
@@ -231,16 +231,31 @@ function App() {
       setNeedsLicense(false);
       if (ownedClub) {
         const mods = await fetchClientModules('club', ownedClub.id);
-        const liteClubMode = mods.hasTournaments && !mods.hasManager && !mods.hasManagerLite;
-        setShowOrganizerHub(liteClubMode);
+        // Pack: Tournaments ⇒ Manager Lite — CRM fora da Tour
+        const hideHub = mods.hasManager || isManagerLiteEntitled(mods);
+        setShowOrganizerHub(!hideHub);
         setIsIndependentOrganizer(false);
-        if (liteClubMode) goOrganizerHome();
+        if (!hideHub) goOrganizerHome();
+        else if (!hasPublicDeepLink) {
+          setView((currentView) =>
+            currentView === 'dashboard' || currentView === 'members' || currentView === 'metrics' || currentView === 'sponsors'
+              ? 'list'
+              : currentView
+          );
+        }
       } else {
         const orgMods = await fetchClientModules('organizer', user.id);
-        // Cutover seco: manager_lite activo → Tour só torneios (sem hub CRM)
-        setShowOrganizerHub(!orgMods.hasManagerLite);
+        const hideHub = orgMods.hasManager || isManagerLiteEntitled(orgMods);
+        setShowOrganizerHub(!hideHub);
         setIsIndependentOrganizer(true);
-        if (!orgMods.hasManagerLite) goOrganizerHome();
+        if (!hideHub) goOrganizerHome();
+        else if (!hasPublicDeepLink) {
+          setView((currentView) =>
+            currentView === 'dashboard' || currentView === 'members' || currentView === 'metrics' || currentView === 'sponsors'
+              ? 'list'
+              : currentView
+          );
+        }
       }
       setUserRole(settings?.role || 'organizer');
       return;
@@ -268,15 +283,21 @@ function App() {
           setUserRole('organizer');
           return;
         }
-        // Club with manager_lite also loses Tour hub (same cutover as independent org)
-        const liteClubMode =
-          mods.hasTournaments && !mods.hasManager && !mods.hasManagerLite;
+        // Pack: Tournaments ⇒ Manager Lite (ou Manager full) → CRM na Manager, Tour só torneios
+        const hideHub = mods.hasManager || isManagerLiteEntitled(mods);
         setNeedsModule(false);
         setNeedsLicense(false);
-        setShowOrganizerHub(liteClubMode);
+        setShowOrganizerHub(!hideHub);
         setIsIndependentOrganizer(false);
         setUserRole('organizer');
-        if (liteClubMode) goOrganizerHome();
+        if (!hideHub) goOrganizerHome();
+        else if (!hasPublicDeepLink) {
+          setView((currentView) =>
+            currentView === 'dashboard' || currentView === 'members' || currentView === 'metrics' || currentView === 'sponsors'
+              ? 'list'
+              : currentView
+          );
+        }
         return;
       }
       setLicenseMessage(
@@ -315,11 +336,12 @@ function App() {
 
       setNeedsModule(false);
       setNeedsLicense(false);
-      // Cutover seco: com manager_lite o hub CRM vive na Manager
-      setShowOrganizerHub(!mods.hasManagerLite);
+      // Pack: Tournaments ⇒ Lite — hub CRM na Manager
+      const hideHub = mods.hasManager || isManagerLiteEntitled(mods);
+      setShowOrganizerHub(!hideHub);
       setIsIndependentOrganizer(true);
       setUserRole('organizer');
-      if (!mods.hasManagerLite) {
+      if (!hideHub) {
         goOrganizerHome();
       } else if (!hasPublicDeepLink) {
         setView((currentView) =>

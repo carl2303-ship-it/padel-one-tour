@@ -95,3 +95,13 @@ export async function fetchClientModules(
   if (error || !data) return EMPTY;
   return parseModules(data);
 }
+
+/**
+ * Pack rule (Carlos 2026-11-25): Tournaments ⇒ Manager Lite (CRM na Manager).
+ * Tour hub CRM esconde-se quando isto é true. manager_lite row é override HQ opcional.
+ */
+export function isManagerLiteEntitled(
+  m: Pick<ClientModulesResult, 'hasManager' | 'hasTournaments' | 'hasManagerLite'>
+): boolean {
+  return !m.hasManager && (m.hasTournaments || m.hasManagerLite);
+}

@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v7-20261125-phase2-selectonly';
+const CACHE_VERSION = 'v8-20261125-packs-lite-hub';
 const STATIC_CACHE = `padel-hub-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `padel-hub-dynamic-${CACHE_VERSION}`;
 
