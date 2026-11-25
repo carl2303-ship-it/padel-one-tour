@@ -903,26 +903,22 @@ export async function applyTournamentPodiumBonuses(
     if (already && already.length > 0) return
 
     const levelBefore = Number(acct.level ?? 3.0)
-    const levelAfter = Math.max(0.5, Math.min(7.0, parseFloat((levelBefore + bonus).toFixed(2))))
-
-    const { error: updErr } = await supabase
-      .from('player_accounts')
-      .update({ level: levelAfter, updated_at: new Date().toISOString() })
-      .eq('id', acct.id)
-    if (updErr) {
-      console.error('[RatingEngine] Podium level update failed:', acct.id, updErr)
+    // SECURITY DEFINER RPC: organizers cannot UPDATE other players' accounts via RLS
+    // (policy "Players can update own account"). Direct .update() silently changed 0 rows
+    // while history insert still succeeded — see HUB-105 Americano M6 2026-11-24.
+    const { data: levelAfterRpc, error: deltaErr } = await supabase.rpc('apply_player_level_delta', {
+      p_player_account_id: acct.id,
+      p_delta: bonus,
+      p_source_id: tournamentId,
+      p_match_type: 'tournament',
+      p_match_won: reason === 'tournament_winner',
+    })
+    if (deltaErr) {
+      console.error('[RatingEngine] Podium level delta RPC failed:', acct.id, deltaErr)
       return
     }
-
-    await supabase.from('player_level_history').insert({
-      player_account_id: acct.id,
-      level_before: parseFloat(levelBefore.toFixed(2)),
-      level_after: parseFloat(levelAfter.toFixed(2)),
-      delta: parseFloat(bonus.toFixed(4)),
-      match_type: 'tournament',
-      match_won: reason === 'tournament_winner',
-      source_id: tournamentId,
-    })
+    const levelAfter = Number(levelAfterRpc ?? Math.max(0.5, Math.min(7.0, levelBefore + bonus)))
+    acct.level = levelAfter
 
     if (organizationId && acct.user_id) {
       const points = position === 1 ? TIER_PLACEMENT_POINTS[tier].first : TIER_PLACEMENT_POINTS[tier].second
