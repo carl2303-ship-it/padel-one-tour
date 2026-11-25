@@ -29,6 +29,11 @@ type Props = {
   onChangeCourts: (courtNames: string[]) => void;
   /** Hide court pickers (e.g. club league — calendar has no court grid) */
   hideCourts?: boolean;
+  /**
+   * Manager lite cutover: only select existing organizer_venues / link directory clubs.
+   * CRUD (novo clube custom, editar campos, remover) vive na Manager.
+   */
+  selectOnly?: boolean;
 };
 
 type VenueForm = {
@@ -52,6 +57,7 @@ export default function OrganizerVenuePicker({
   selectedCourtNames,
   onChangeCourts,
   hideCourts = false,
+  selectOnly = false,
 }: Props) {
   const [directoryClubs, setDirectoryClubs] = useState<DirectoryClub[]>([]);
   const [venues, setVenues] = useState<OrganizerVenue[]>([]);
@@ -439,16 +445,20 @@ export default function OrganizerVenuePicker({
         <div>
           <p className="text-sm font-medium text-gray-800">Clubes do universo Padel1</p>
           <p className="text-xs text-gray-500">
-            Seleciona um ou mais clubes já registados. Podes também adicionar um clube novo.
+            {selectOnly
+              ? 'Selecciona clubes da tua lista (gestão de venues e campos na Manager).'
+              : 'Seleciona um ou mais clubes já registados. Podes também adicionar um clube novo.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <Plus className="w-4 h-4" /> Novo clube
-        </button>
+        {!selectOnly && (
+          <button
+            type="button"
+            onClick={openCreate}
+            className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" /> Novo clube
+          </button>
+        )}
       </div>
 
       <div className="relative">
@@ -471,8 +481,12 @@ export default function OrganizerVenuePicker({
       {filteredClubs.length === 0 ? (
         <p className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-3">
           {search.trim()
-            ? 'Nenhum clube corresponde à pesquisa. Cria um novo com o botão acima.'
-            : 'Ainda não há clubes ativos no Padel1. Cria o primeiro com Novo clube.'}
+            ? selectOnly
+              ? 'Nenhum clube corresponde à pesquisa.'
+              : 'Nenhum clube corresponde à pesquisa. Cria um novo com o botão acima.'
+            : selectOnly
+              ? 'Ainda não há clubes activos no Padel1. Gere venues na Manager.'
+              : 'Ainda não há clubes ativos no Padel1. Cria o primeiro com Novo clube.'}
         </p>
       ) : (
         <div className="border border-gray-200 rounded-lg divide-y max-h-72 overflow-y-auto bg-white">
@@ -503,7 +517,7 @@ export default function OrganizerVenuePicker({
                     {club.owner_id ? '' : ' · diretório'}
                   </p>
                 </div>
-                {venue && (
+                {venue && !selectOnly && (
                   <>
                     <button
                       type="button"
@@ -557,7 +571,9 @@ export default function OrganizerVenuePicker({
           </div>
           {availableCourts.length === 0 ? (
             <p className="text-sm text-amber-700 bg-amber-50 p-3 rounded-lg">
-              Os clubes selecionados não têm campos. Edita o clube (lápis) e adiciona nomes de campos.
+              {selectOnly
+                ? 'Os clubes seleccionados não têm campos. Define os nomes dos campos na Manager (Clubes / venues).'
+                : 'Os clubes selecionados não têm campos. Edita o clube (lápis) e adiciona nomes de campos.'}
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
@@ -587,7 +603,7 @@ export default function OrganizerVenuePicker({
         </div>
       )}
 
-      {showForm && (
+      {showForm && !selectOnly && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-4 space-y-3">
             <div className="flex items-center justify-between">

@@ -1287,6 +1287,7 @@ export default function CreateTournamentModal({ onClose, onSuccess, isIndependen
                   selectedCourtNames={selectedCourtNames}
                   onChangeCourts={setSelectedCourtNames}
                   hideCourts={formData.format === 'club_league'}
+                  selectOnly
                 />
               )}
 

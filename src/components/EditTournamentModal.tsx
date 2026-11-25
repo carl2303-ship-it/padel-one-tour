@@ -904,6 +904,7 @@ export default function EditTournamentModal({ tournament, onClose, onSuccess, is
                   selectedCourtNames={selectedCourtNames}
                   onChangeCourts={setSelectedCourtNames}
                   hideCourts={formData.format === 'club_league'}
+                  selectOnly
                 />
               ) : (
               <>

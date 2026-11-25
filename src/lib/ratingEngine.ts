@@ -1015,7 +1015,7 @@ export async function awardTournamentRewardPoints(
 
   const { data: tournament, error: tErr } = await supabase
     .from('tournaments')
-    .select('id, name, club_id')
+    .select('id, name, club_id, user_id')
     .eq('id', tournamentId)
     .single()
 
@@ -1024,20 +1024,47 @@ export async function awardTournamentRewardPoints(
     return { awarded: 0, skipped: 0, errors: 1, details: ['Torneio não encontrado'] }
   }
 
-  if (!tournament.club_id) {
-    return { awarded: 0, skipped: 0, errors: 0, details: ['Torneio sem clube associado - sem rewards'] }
+  // Prefer club rules; fall back to organizer rules (Manager lite R1)
+  let rule: { id: string; points: number } | null = null
+  let awardClubId: string | null = tournament.club_id || null
+  let awardOrganizerId: string | null = null
+
+  if (tournament.club_id) {
+    const { data } = await supabase
+      .from('reward_rules')
+      .select('id, points')
+      .eq('club_id', tournament.club_id)
+      .eq('action_type', 'tournament_played')
+      .eq('is_active', true)
+      .maybeSingle()
+    rule = data
   }
 
-  const { data: rule } = await supabase
-    .from('reward_rules')
-    .select('id, points')
-    .eq('club_id', tournament.club_id)
-    .eq('action_type', 'tournament_played')
-    .eq('is_active', true)
-    .maybeSingle()
+  if (!rule && tournament.user_id) {
+    const { data } = await supabase
+      .from('reward_rules')
+      .select('id, points')
+      .eq('organizer_id', tournament.user_id)
+      .eq('action_type', 'tournament_played')
+      .eq('is_active', true)
+      .maybeSingle()
+    if (data) {
+      rule = data
+      awardClubId = null
+      awardOrganizerId = tournament.user_id
+    }
+  }
 
   if (!rule) {
-    return { awarded: 0, skipped: 0, errors: 0, details: ['Sem regra de reward "tournament_played" ativa neste clube'] }
+    if (!tournament.club_id && !tournament.user_id) {
+      return { awarded: 0, skipped: 0, errors: 0, details: ['Torneio sem clube/organizador — sem rewards'] }
+    }
+    return {
+      awarded: 0,
+      skipped: 0,
+      errors: 0,
+      details: ['Sem regra de reward "tournament_played" ativa (clube ou organizador)'],
+    }
   }
 
   const { data: players } = await supabase
@@ -1088,10 +1115,11 @@ export async function awardTournamentRewardPoints(
 
     const { data: result, error: awardErr } = await supabase.rpc('award_reward_points', {
       p_player_account_id: playerAccountId,
-      p_club_id: tournament.club_id,
+      p_club_id: awardClubId,
       p_action_type: 'tournament_played',
       p_reference_id: tournamentId,
       p_custom_description: `Participou no torneio "${tournament.name}"`,
+      p_organizer_id: awardOrganizerId,
     })
 
     if (awardErr) {
