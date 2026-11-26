@@ -286,8 +286,18 @@ export async function processMatchRating(matchId: string, cache?: PlayerCache): 
   const gamesTotal1 = s1[0] + s2[0] + s3[0]
   const gamesTotal2 = s1[1] + s2[1] + s3[1]
 
-  if (sets1 === 0 && sets2 === 0) {
-    return { error: true, skipped: true, message: 'Sem sets válidos (scores a 0)' }
+  // Social/timed matches often put all games in set1 (ex: 7-3, 5-5). A draw has
+  // sets1=sets2=0 but valid games — calculateNewRatings already handles empate.
+  // True 0-0 (bye / completed sem scores): mark processed as soft skip, NOT error,
+  // so finalize stays at 0 erros and remainingUnrated=0.
+  if (sets1 === 0 && sets2 === 0 && gamesTotal1 + gamesTotal2 === 0) {
+    try {
+      await supabase.rpc('mark_match_rating_processed', { p_match_id: matchId })
+    } catch {
+      /* ignore */
+    }
+    await supabase.from('matches').update({ rating_processed: true }).eq('id', matchId)
+    return { skipped: true, message: 'Sem scores (bye/walkover) — rating não aplicável' }
   }
 
   const score: MatchScore = { sets1, sets2, gamesTotal1, gamesTotal2 }

@@ -816,9 +816,17 @@ export default function MatchModal({ tournamentId, tournament, matchId, onClose,
                       formData.team1_score_set2 > 0 || formData.team2_score_set2 > 0 ||
                       formData.team1_score_set3 > 0 || formData.team2_score_set3 > 0;
 
+    // Nunca marcar completed sem scores (evita 0-0 "jogados" que falham no rating).
+    // Empates com games (ex: 5-5) são válidos e ficam completed com winner_id null.
+    if (formData.status === 'completed' && !hasScores) {
+      setError('Não é possível concluir um jogo sem scores. Introduz o resultado ou cancela (bye/WO).');
+      setLoading(false);
+      return;
+    }
+
     const finalStatus = formData.status === 'cancelled'
       ? 'cancelled'
-      : (hasScores ? 'completed' : formData.status);
+      : (hasScores ? 'completed' : (formData.status === 'completed' ? 'scheduled' : formData.status));
     const winner = (hasScores && formData.status !== 'cancelled') ? calculateWinner() : null;
 
     const matchData: any = {

@@ -66,7 +66,8 @@ export default function TournamentList({ onSelectTournament, onCreateTournament,
       .from('tournaments')
       .select('*')
       .eq('user_id', user.id)
-      .order('start_date', { ascending: false });
+      // Activos: do próximo ao último (ASC). Completados: mais recente primeiro (DESC).
+      .order('start_date', { ascending: filter === 'active' });
 
     if (filter === 'active') {
       // Ativos + rascunhos (em preparação) — evita carregar o histórico completo
